@@ -1,0 +1,48 @@
+{
+	"name": "@narumitw/pi-cbmem",
+	"version": "0.0.0",
+	"description": "Private Pi package for Codebase Memory knowledge graph tools and guidance.",
+	"type": "module",
+	"license": "MIT",
+	"private": true,
+	"keywords": [
+		"pi-package",
+		"pi-extension",
+		"pi",
+		"codebase-memory",
+		"knowledge-graph",
+		"mcp"
+	],
+	"files": [
+		"src",
+		"skills",
+		"README.md",
+		"LICENSE"
+	],
+	"pi": {
+		"extensions": [
+			"./src/index.ts"
+		],
+		"skills": [
+			"./skills"
+		]
+	},
+	"piExtension": {
+		"lifecycle": "stable"
+	},
+	"scripts": {
+		"check": "biome check . && npm run typecheck",
+		"format": "biome check --write .",
+		"typecheck": "tsc --noEmit"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.5.10",
+		"@types/node": "26.2.0",
+		"typescript": "7.0.2"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/narumiruna/pi-extensions",
+		"directory": "packages/pi-cbmem"
+	}
+}
