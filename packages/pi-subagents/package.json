@@ -4,7 +4,7 @@
 	"description": "Bounded subagent jobs with asynchronous main-agent messaging for Pi.",
 	"type": "module",
 	"license": "MIT",
-	"private": false,
+	"private": true,
 	"keywords": [
 		"pi-package",
 		"pi-extension",

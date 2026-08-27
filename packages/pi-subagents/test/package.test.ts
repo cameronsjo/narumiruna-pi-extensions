@@ -14,6 +14,7 @@ test("package declares one source extension and one bundled operating skill", ()
 		readFileSync(path.join(packageDirectory, "package.json"), "utf8"),
 	) as {
 		name: string;
+		private: boolean;
 		files: string[];
 		pi: { extensions: string[]; skills: string[] };
 		piExtension: { lifecycle: string };
@@ -21,6 +22,7 @@ test("package declares one source extension and one bundled operating skill", ()
 		repository: { directory: string };
 	};
 	assert.equal(manifest.name, "@narumitw/pi-subagents");
+	assert.equal(manifest.private, true);
 	assert.equal(manifest.repository.directory, "packages/pi-subagents");
 	assert.deepEqual(manifest.pi.extensions, ["./src/index.ts"]);
 	assert.deepEqual(manifest.pi.skills, ["./skills"]);
