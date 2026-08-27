@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { type MessageBroker, sanitizeTerminalText } from "./message-broker.js";
+import type { MessageBroker } from "./message-broker.js";
+import { modelVisibleJson } from "./model-output.js";
 import { runChild as defaultRunChild } from "./process.js";
 import {
 	type ChildRequest,
@@ -15,12 +16,18 @@ const MAX_RETAINED_TERMINAL_JOBS = 32;
 const TERMINAL_RETENTION_MS = 24 * 60 * 60 * 1_000;
 const COMPLETION_MESSAGE_TYPE = "pi-subagents-completion";
 
+interface StopRequest {
+	child: ChildResult;
+	deliver: boolean;
+}
+
 interface InternalJob extends JobSummary {
 	controller: AbortController;
 	tools: string[];
 	terminal: Promise<void>;
 	resolveTerminal: () => void;
 	task?: Promise<void>;
+	stopRequest?: StopRequest;
 	result?: string;
 	error?: string;
 	limitations: string[];
@@ -137,6 +144,10 @@ export class SubagentRuntime {
 		this.notifyJobsChanged();
 		job.task = Promise.resolve().then(async () => {
 			if (job.state !== "queued" || job.generation !== this.generation) return;
+			if (job.stopRequest) {
+				this.finish(job, job.stopRequest.child, job.stopRequest.deliver);
+				return;
+			}
 			job.state = "running";
 			job.startedAt = this.now();
 			this.notifyJobsChanged();
@@ -162,7 +173,8 @@ export class SubagentRuntime {
 				};
 			}
 			if (job.state !== "running" || job.generation !== this.generation) return;
-			this.finish(job, child, true);
+			const outcome = job.stopRequest ?? { child, deliver: true };
+			this.finish(job, outcome.child, outcome.deliver);
 		});
 		return {
 			jobId,
@@ -183,20 +195,17 @@ export class SubagentRuntime {
 
 	async cancel(jobId: string): Promise<{ jobId: string; state: SubagentJobState }> {
 		const job = this.requireJob(jobId);
-		if (!isTerminal(job.state)) {
-			this.finish(
-				job,
-				{
-					state: "cancelled",
-					error: "Subagent execution was cancelled.",
-					limitations: [],
-					truncated: false,
-				},
-				true,
-			);
-			job.controller.abort(new DOMException("Subagent job cancelled", "AbortError"));
-		}
-		await job.task;
+		await this.stop(
+			job,
+			{
+				state: "cancelled",
+				error: "Subagent execution was cancelled.",
+				limitations: [],
+				truncated: false,
+			},
+			true,
+			new DOMException("Subagent job cancelled", "AbortError"),
+		);
 		return { jobId, state: job.state };
 	}
 
@@ -257,23 +266,40 @@ export class SubagentRuntime {
 		if (!this.sessionActive) return;
 		this.deliveryEnabled = false;
 		this.sessionActive = false;
-		this.generation++;
 		const active = [...this.jobs.values()].filter((job) => !isTerminal(job.state));
-		for (const job of active) {
-			this.finish(
-				job,
-				{
-					state: "cancelled",
-					error: "Subagent session shut down.",
-					limitations: [],
-					truncated: false,
-				},
-				false,
-			);
-			job.controller.abort(new DOMException("Subagent session shut down", "AbortError"));
-		}
-		await Promise.allSettled(active.map((job) => job.task));
+		await Promise.allSettled(
+			active.map((job) =>
+				this.stop(
+					job,
+					{
+						state: "cancelled",
+						error: "Subagent session shut down.",
+						limitations: [],
+						truncated: false,
+					},
+					false,
+					new DOMException("Subagent session shut down", "AbortError"),
+				),
+			),
+		);
+		this.generation++;
 		this.notifyJobsChanged();
+	}
+
+	private async stop(
+		job: InternalJob,
+		child: ChildResult,
+		deliver: boolean,
+		reason: DOMException,
+	): Promise<void> {
+		if (isTerminal(job.state)) return;
+		job.stopRequest ??= { child, deliver };
+		this.broker.revokeJob(job.jobId);
+		if (!job.controller.signal.aborted) job.controller.abort(reason);
+		await job.task;
+		if (!isTerminal(job.state)) {
+			this.finish(job, job.stopRequest.child, job.stopRequest.deliver);
+		}
 	}
 
 	private notifyJobsChanged(): void {
@@ -308,7 +334,7 @@ export class SubagentRuntime {
 			this.pi.sendMessage(
 				{
 					customType: COMPLETION_MESSAGE_TYPE,
-					content: `Subagent job completion:\n${sanitizeTerminalText(JSON.stringify(payload))}`,
+					content: modelVisibleJson(payload, { prefix: "Subagent job completion:\n" }),
 					display: true,
 					details: payload,
 				},

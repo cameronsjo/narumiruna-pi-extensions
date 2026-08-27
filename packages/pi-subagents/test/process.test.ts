@@ -1,13 +1,16 @@
 import assert from "node:assert/strict";
+import type { ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, test } from "vitest";
+import { afterEach, beforeEach, test, vi } from "vitest";
 import {
 	buildPiArgs,
 	childCommunicationBridgePath,
 	resolveTimeoutMs,
 	runChild,
+	terminateWindowsProcessTree,
 } from "../src/process.js";
 import type { ChildRequest } from "../src/types.js";
 
@@ -23,6 +26,7 @@ afterEach(() => {
 	if (previousPackageDirectory === undefined) delete process.env.PI_PACKAGE_DIR;
 	else process.env.PI_PACKAGE_DIR = previousPackageDirectory;
 	rmSync(directory, { recursive: true, force: true });
+	vi.restoreAllMocks();
 });
 
 test("buildPiArgs isolates the child and preserves selected communication tools", () => {
@@ -149,6 +153,58 @@ test("runChild enforces an optional execution timeout and caller cancellation", 
 	setTimeout(() => controller.abort(), 25);
 	const cancelled = await work;
 	assert.equal(cancelled.state, "cancelled");
+});
+
+test("runChild reuses one termination flow when timeout and cancellation race", {
+	skip: process.platform === "win32",
+}, async () => {
+	installFakePi(`
+process.on("SIGTERM", () => undefined);
+setInterval(() => {}, 1000);
+`);
+	const signals: Array<string | number | undefined> = [];
+	const originalKill = process.kill.bind(process);
+	vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+		if (pid < 0) signals.push(signal);
+		return originalKill(pid, signal);
+	});
+	const controller = new AbortController();
+	const work = runChild(childRequest({ signal: controller.signal, timeout: 0.5 }));
+	setTimeout(() => controller.abort(), 600);
+	const result = await work;
+	assert.equal(result.state, "cancelled");
+	assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+});
+
+test("Windows process-tree termination awaits taskkill completion", async () => {
+	const childKill = vi.fn();
+	const child = {
+		pid: 4242,
+		kill: childKill,
+	} as unknown as ChildProcess;
+	const treeKiller = new EventEmitter() as ChildProcess;
+	treeKiller.kill = vi.fn();
+	const spawnTreeKillerMock = vi.fn(() => treeKiller);
+	const spawnTreeKiller =
+		spawnTreeKillerMock as unknown as typeof import("node:child_process").spawn;
+	let settled = false;
+	const work = terminateWindowsProcessTree(
+		child,
+		spawnTreeKiller,
+		"C:\\Windows\\System32\\taskkill.exe",
+	).then(() => {
+		settled = true;
+	});
+	await Promise.resolve();
+	assert.equal(settled, false);
+	assert.deepEqual(spawnTreeKillerMock.mock.calls[0]?.slice(0, 2), [
+		"C:\\Windows\\System32\\taskkill.exe",
+		["/PID", "4242", "/T", "/F"],
+	]);
+	assert.equal(childKill.mock.calls.length, 0);
+	treeKiller.emit("close", 0, null);
+	await work;
+	assert.equal(settled, true);
 });
 
 function childRequest(overrides: Partial<ChildRequest> = {}): ChildRequest {

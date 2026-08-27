@@ -137,26 +137,44 @@ async function executeProcess(
 	const settlement = await new Promise<ProcessSettlement>((resolve) => {
 		let process: ChildProcess;
 		let settled = false;
+		let finishRequested = false;
 		let spawned = false;
+		let terminating = false;
 		let cancelled = false;
 		let timedOut = false;
 		let deadline: NodeJS.Timeout | undefined;
 		let forceClose: NodeJS.Timeout | undefined;
 		let escalation: NodeJS.Timeout | undefined;
+		let termination: Promise<void> | undefined;
 		const finish = (code: number, launchError?: string) => {
-			if (settled) return;
-			settled = true;
-			if (deadline) clearTimeout(deadline);
-			if (forceClose) clearTimeout(forceClose);
-			if (escalation) clearTimeout(escalation);
-			request.signal.removeEventListener("abort", onAbort);
-			resolve({ code, cancelled, timedOut, launchError });
+			if (settled || finishRequested) return;
+			finishRequested = true;
+			const complete = () => {
+				if (settled) return;
+				settled = true;
+				if (deadline) clearTimeout(deadline);
+				if (forceClose) clearTimeout(forceClose);
+				if (escalation) clearTimeout(escalation);
+				request.signal.removeEventListener("abort", onAbort);
+				resolve({ code, cancelled, timedOut, launchError });
+			};
+			if (termination) void termination.then(complete, complete);
+			else complete();
 		};
 		const terminate = (code: number) => {
-			if (settled) return;
-			signalProcess(process, "SIGTERM");
-			escalation = setTimeout(() => signalProcess(process, "SIGKILL"), KILL_GRACE_MS);
-			escalation.unref();
+			if (settled || terminating) return;
+			terminating = true;
+			if (deadline) {
+				clearTimeout(deadline);
+				deadline = undefined;
+			}
+			if (globalThis.process.platform === "win32") {
+				termination = terminateWindowsProcessTree(process);
+			} else {
+				signalPosixProcess(process, "SIGTERM");
+				escalation = setTimeout(() => signalPosixProcess(process, "SIGKILL"), KILL_GRACE_MS);
+				escalation.unref();
+			}
 			forceClose = setTimeout(() => {
 				decoder.finish();
 				process.stdout?.destroy();
@@ -301,8 +319,8 @@ function resolvePiInvocation(args: string[]): { command: string; args: string[] 
 	return { command: globalThis.process.execPath, args: [cliPath, ...args] };
 }
 
-function signalProcess(process: ChildProcess, signal: NodeJS.Signals): void {
-	if (globalThis.process.platform !== "win32" && process.pid) {
+function signalPosixProcess(process: ChildProcess, signal: NodeJS.Signals): void {
+	if (process.pid) {
 		try {
 			globalThis.process.kill(-process.pid, signal);
 			return;
@@ -312,6 +330,53 @@ function signalProcess(process: ChildProcess, signal: NodeJS.Signals): void {
 	}
 	try {
 		process.kill(signal);
+	} catch {
+		// The process may already be terminal.
+	}
+}
+
+export function terminateWindowsProcessTree(
+	process: ChildProcess,
+	spawnProcess: typeof spawn = spawn,
+	taskkillPath = resolveTaskkillPath(),
+): Promise<void> {
+	if (!process.pid || !taskkillPath) {
+		killImmediateChild(process);
+		return Promise.resolve();
+	}
+	return new Promise((resolve) => {
+		let settled = false;
+		let treeKiller: ChildProcess;
+		const finish = (fallback: boolean) => {
+			if (settled) return;
+			settled = true;
+			if (fallback) killImmediateChild(process);
+			resolve();
+		};
+		try {
+			treeKiller = spawnProcess(taskkillPath, ["/PID", String(process.pid), "/T", "/F"], {
+				stdio: "ignore",
+				windowsHide: true,
+			});
+		} catch {
+			killImmediateChild(process);
+			resolve();
+			return;
+		}
+		treeKiller.once("error", () => finish(true));
+		treeKiller.once("close", (code) => finish(code !== 0));
+	});
+}
+
+function resolveTaskkillPath(): string | undefined {
+	const systemRoot = globalThis.process.env.SystemRoot ?? globalThis.process.env.WINDIR;
+	if (!systemRoot || !path.win32.isAbsolute(systemRoot)) return undefined;
+	return path.win32.join(systemRoot, "System32", "taskkill.exe");
+}
+
+function killImmediateChild(process: ChildProcess): void {
+	try {
+		process.kill("SIGKILL");
 	} catch {
 		// The process may already be terminal.
 	}

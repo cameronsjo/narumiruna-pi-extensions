@@ -6,6 +6,7 @@ import { afterEach, beforeEach, test, vi } from "vitest";
 import { createMockContext, createMockPi } from "../../../test/support.js";
 import { createBrokerClient } from "../src/child-communication-bridge.js";
 import { MessageBroker } from "../src/message-broker.js";
+import { MAX_MODEL_TEXT_BYTES, MAX_MODEL_TEXT_LINES } from "../src/model-output.js";
 import subagents, { type SubagentsDependencies } from "../src/subagents.js";
 import type { ChildRequest, ChildResult } from "../src/types.js";
 import { SUBAGENT_WIDGET_KEY } from "../src/widget.js";
@@ -418,6 +419,26 @@ test("delivers child questions, interrupts parent waits, and returns plain-text 
 	await cancelJob(mock, context, String(spawned.details.jobId));
 });
 
+test("bounds model-visible child questions including protocol metadata", async () => {
+	let request!: ChildRequest;
+	const { mock, context } = await setup({
+		runChild: async (candidate) => {
+			request = candidate;
+			return waitForCancellation(candidate);
+		},
+	});
+	const spawned = await spawnJob(mock, context, "Ask a large question");
+	await Promise.resolve();
+	const client = createBrokerClient(request.communication);
+	await client.ask("q".repeat(50 * 1024), undefined);
+	const delivery = mock.sentMessages.find(
+		(entry) => (entry.message as { customType?: string }).customType === "pi-subagents-question",
+	);
+	assert.ok(delivery);
+	assertModelTextBounded((delivery.message as { content: string }).content);
+	await cancelJob(mock, context, String(spawned.details.jobId));
+});
+
 test("sanitizes terminal controls at child-output display boundaries", async () => {
 	const raw = "reported\u001b[31m output";
 	const { mock, context } = await setup({ runChild: async () => completed(raw) });
@@ -432,6 +453,73 @@ test("sanitizes terminal controls at child-output display boundaries", async () 
 	assert.equal(
 		(completion.message as { content: string }).content.includes(String.fromCharCode(27)),
 		false,
+	);
+});
+
+test("bounds tool and completion text after JSON serialization", async () => {
+	const raw = '"\\'.repeat(16 * 1024);
+	assert.ok(Buffer.byteLength(raw, "utf8") < MAX_MODEL_TEXT_BYTES);
+	const { mock, context } = await setup({ runChild: async () => completed(raw) });
+	const spawned = await spawnJob(mock, context, "Report quoted output");
+	const waited = await waitFor(mock, context, String(spawned.details.jobId));
+	assert.equal(waited.details.result, raw);
+	assertModelTextBounded(waited.content[0]?.text ?? "");
+	const completion = mock.sentMessages.find(
+		(entry) => (entry.message as { customType?: string }).customType === "pi-subagents-completion",
+	);
+	assert.ok(completion);
+	assertModelTextBounded((completion.message as { content: string }).content);
+});
+
+test("publishes cancellation only after child teardown settles", async () => {
+	let aborted = false;
+	let releaseTeardown!: () => void;
+	const { mock, context } = await setup({
+		runChild: ({ signal }) =>
+			new Promise<ChildResult>((resolve) => {
+				signal.addEventListener(
+					"abort",
+					() => {
+						aborted = true;
+						releaseTeardown = () => resolve(cancelled());
+					},
+					{ once: true },
+				);
+			}),
+	});
+	const spawned = await spawnJob(mock, context, "Writer");
+	const jobId = String(spawned.details.jobId);
+	await Promise.resolve();
+	const waiter = waitFor(mock, context, jobId);
+	let waiterSettled = false;
+	void waiter.then(() => {
+		waiterSettled = true;
+	});
+	const cancellation = cancelJob(mock, context, jobId);
+	let cancellationSettled = false;
+	void cancellation.then(() => {
+		cancellationSettled = true;
+	});
+	await Promise.resolve();
+	assert.equal(aborted, true);
+	assert.equal(waiterSettled, false);
+	assert.equal(cancellationSettled, false);
+	assert.equal(
+		mock.sentMessages.some(
+			(entry) =>
+				(entry.message as { customType?: string }).customType === "pi-subagents-completion",
+		),
+		false,
+	);
+	releaseTeardown();
+	assert.equal((await cancellation).details.state, "cancelled");
+	assert.equal((await waiter).details.state, "cancelled");
+	assert.equal(
+		mock.sentMessages.filter(
+			(entry) =>
+				(entry.message as { customType?: string }).customType === "pi-subagents-completion",
+		).length,
+		1,
 	);
 });
 
@@ -511,6 +599,44 @@ test("broker startup failure leaves inspect available and prevents child launch"
 		/messaging is unavailable.*synthetic bind failure/i,
 	);
 	assert.equal(launched, false);
+});
+
+test("session shutdown waits for child teardown without delivering stale completion", async () => {
+	let aborted = false;
+	let releaseTeardown!: () => void;
+	const { mock, context } = await setup({
+		runChild: ({ signal }) =>
+			new Promise<ChildResult>((resolve) => {
+				signal.addEventListener(
+					"abort",
+					() => {
+						aborted = true;
+						releaseTeardown = () => resolve(cancelled());
+					},
+					{ once: true },
+				);
+			}),
+	});
+	await spawnJob(mock, context, "Old writer");
+	await Promise.resolve();
+	const shutdown = emit(mock, "session_shutdown", { reason: "reload" }, context.ctx);
+	let shutdownSettled = false;
+	void shutdown.then(() => {
+		shutdownSettled = true;
+	});
+	await Promise.resolve();
+	assert.equal(aborted, true);
+	assert.equal(shutdownSettled, false);
+	releaseTeardown();
+	await shutdown;
+	assert.equal(shutdownSettled, true);
+	assert.equal(
+		mock.sentMessages.some(
+			(entry) =>
+				(entry.message as { customType?: string }).customType === "pi-subagents-completion",
+		),
+		false,
+	);
 });
 
 test("session replacement cancels old jobs and permits a clean new session", async () => {
@@ -605,4 +731,10 @@ function cancelled(): ChildResult {
 		limitations: [],
 		truncated: false,
 	};
+}
+
+function assertModelTextBounded(text: string): void {
+	assert.ok(Buffer.byteLength(text, "utf8") <= MAX_MODEL_TEXT_BYTES);
+	assert.ok(text.split("\n").length <= MAX_MODEL_TEXT_LINES);
+	assert.match(text, /… \[truncated\]$/u);
 }
