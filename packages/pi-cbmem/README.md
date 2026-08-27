@@ -73,7 +73,11 @@ The Codebase Memory binary runs with the Pi process environment and user permiss
 
 Tool calls can read and index repositories, inspect source, persist graph data, manage architecture decisions and traces, or delete indexed projects.
 
+Deleting a project or replacing its Architecture Decision Records requires explicit confirmation in TUI or RPC mode and is rejected in non-interactive modes.
+
 Repository content returned by graph tools can be sent to the selected model provider as tool output.
+
+Terminal controls are removed only from the TUI rendering boundary; the validated raw result remains available to the model.
 
 The extension starts one local CLI child process per tool call in the active session directory and does not start background work during extension factory load.
 
@@ -94,6 +98,7 @@ packages/pi-cbmem/
 ├── src/
 │   ├── index.ts                    # Thin Pi entrypoint
 │   ├── cbmem.ts                    # Bounded Codebase Memory CLI runner
+│   ├── render-result.ts            # Terminal-safe result rendering
 │   └── tool-definitions.ts         # Pi tool metadata and TypeBox schemas
 ├── skills/codebase-memory/
 │   └── SKILL.md                    # Graph-first operating guidance

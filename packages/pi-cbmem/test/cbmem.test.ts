@@ -8,6 +8,7 @@ import {
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
 	type ExtensionAPI,
+	type ExtensionContext,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { afterAll, beforeAll, test } from "vitest";
@@ -94,7 +95,98 @@ test("cbmem registers complete Pi tool definitions", () => {
 		assert.match(tool.description, /output is limited/i);
 		assert.equal((tool.parameters as { type?: unknown }).type, "object");
 		assert.equal(typeof tool.execute, "function");
+		assert.equal(typeof tool.renderResult, "function");
 	}
+});
+
+test("destructive tools require observable confirmation before spawning", async () => {
+	const tools = registerTools(fixtureBinary);
+	const confirmations: Array<{ title: string; message: string }> = [];
+	const acceptedContext = toolContext(async (title, message) => {
+		confirmations.push({ title, message });
+		return true;
+	});
+	const unsafeProject = "demo\u001b[31m-red\u001b[0m\u202e";
+
+	await executeTool(tools, "delete_project", { project: unsafeProject }, acceptedContext);
+	await executeTool(
+		tools,
+		"manage_adr",
+		{ project: unsafeProject, mode: "update", content: "replacement" },
+		acceptedContext,
+	);
+	await executeTool(tools, "manage_adr", { project: unsafeProject, mode: "get" }, acceptedContext);
+
+	assert.equal(confirmations.length, 2);
+	assert.match(confirmations[0]?.title ?? "", /Delete Codebase Memory project/);
+	assert.match(confirmations[0]?.message ?? "", /Project: demo-red/);
+	assert.match(confirmations[1]?.title ?? "", /Replace Codebase Memory ADRs/);
+	assert.match(confirmations[1]?.message ?? "", /11 bytes/);
+	for (const confirmation of confirmations) {
+		// biome-ignore lint/suspicious/noControlCharactersInRegex: Verify terminal-control sanitization.
+		assert.doesNotMatch(`${confirmation.title}\n${confirmation.message}`, /\u001b|\u202e/u);
+	}
+
+	const unavailableTools = registerTools(path.join(fixtureDirectory, "missing-binary"));
+	const declinedContext = toolContext(async () => false);
+	for (const [name, params] of [
+		["delete_project", { project: "demo" }],
+		["manage_adr", { project: "demo", mode: "update", content: "replacement" }],
+	] as const) {
+		await assert.rejects(
+			executeTool(unavailableTools, name, params, declinedContext),
+			(error: Error) => error.name === "AbortError",
+		);
+	}
+
+	const nonUiContext = toolContext(async () => {
+		throw new Error("confirmation must not be attempted without observable UI");
+	}, "print");
+	await assert.rejects(
+		executeTool(unavailableTools, "delete_project", { project: "demo" }, nonUiContext),
+		/requires user confirmation in TUI or RPC mode/,
+	);
+
+	const controller = new AbortController();
+	const cancelledContext = toolContext(async (_title, _message, options) => {
+		assert.equal(options?.signal, controller.signal);
+		controller.abort();
+		return true;
+	});
+	await assert.rejects(
+		executeTool(
+			unavailableTools,
+			"delete_project",
+			{ project: "demo" },
+			cancelledContext,
+			controller.signal,
+		),
+		(error: Error) => error.name === "AbortError",
+	);
+});
+
+test("tool result rendering sanitizes display text without changing model-visible output", () => {
+	const tool = registerTools(fixtureBinary).find(({ name }) => name === "search_graph");
+	assert.ok(tool?.renderResult);
+	const raw =
+		"safe \u001b[31mred\u001b[0m \u001b]8;;https://example.invalid\u0007link\u001b]8;;\u0007 \u009b31mcyan\u009b0m \u202espoof";
+	const result = {
+		content: [{ type: "text" as const, text: raw }],
+		details: { truncated: false, totalBytes: raw.length, totalLines: 1 },
+	};
+	const theme = { fg: (_color: string, text: string) => text };
+	const rendered = tool.renderResult(
+		result,
+		{ expanded: true, isPartial: false },
+		theme as never,
+		{} as never,
+	);
+	const display = rendered.render(200).join("\n");
+
+	assert.equal(result.content[0]?.text, raw);
+	assert.match(display, /safe red link cyan spoof/);
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: Verify terminal-control sanitization.
+	assert.doesNotMatch(display, /\u001b|\u009b|\u202e/u);
 });
 
 test("CLI calls use the session cwd and preserve split UTF-8 output", async () => {
@@ -218,10 +310,13 @@ test("aborting a running call terminates its child", async () => {
 });
 
 test("bundled skill enforces graph-first evidence and valid project-scoped calls", async () => {
-	const skill = await readFile(
-		path.join(packageDirectory, "skills", "codebase-memory", "SKILL.md"),
-		"utf8",
-	);
+	const skillDirectory = path.join(packageDirectory, "skills");
+	const skill = await readFile(path.join(skillDirectory, "codebase-memory", "SKILL.md"), "utf8");
+	const rootManifest = JSON.parse(
+		await readFile(path.resolve(packageDirectory, "..", "..", "package.json"), "utf8"),
+	) as { pi?: { skills?: string[] } };
+
+	assert.ok(rootManifest.pi?.skills?.includes("./packages/pi-cbmem/skills"));
 
 	for (const evidence of [
 		/always prefer MCP graph tools/i,
@@ -266,6 +361,41 @@ test("bundled skill enforces graph-first evidence and valid project-scoped calls
 		"expected documented search_graph calls to omit its unsupported direction argument",
 	);
 });
+
+function registerTools(binary: string): ToolDefinition[] {
+	const tools: ToolDefinition[] = [];
+	const api = {
+		registerTool(tool: ToolDefinition) {
+			tools.push(tool);
+		},
+	} as unknown as ExtensionAPI;
+	cbmem(api, binary);
+	return tools;
+}
+
+function toolContext(
+	confirm: (title: string, message: string, options?: { signal?: AbortSignal }) => Promise<boolean>,
+	mode: "tui" | "rpc" | "print" | "json" = "tui",
+): ExtensionContext {
+	return {
+		cwd: fixtureDirectory,
+		mode,
+		hasUI: mode === "tui" || mode === "rpc",
+		ui: { confirm },
+	} as unknown as ExtensionContext;
+}
+
+async function executeTool(
+	tools: ToolDefinition[],
+	name: string,
+	params: Record<string, unknown>,
+	ctx: ExtensionContext,
+	signal?: AbortSignal,
+) {
+	const tool = tools.find((candidate) => candidate.name === name);
+	assert.ok(tool, `expected registered tool ${name}`);
+	return await tool.execute("test-call", params, signal, undefined, ctx);
+}
 
 function resultText(result: Awaited<ReturnType<typeof callCodebaseMemory>>): string {
 	const content = result.content[0];

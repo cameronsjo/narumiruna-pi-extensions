@@ -1,8 +1,14 @@
 import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { AgentToolResult, ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type {
+	AgentToolResult,
+	ExtensionAPI,
+	ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "@earendil-works/pi-coding-agent";
+import { sanitizeTerminalText } from "@narumitw/pi-tui-kit/terminal-text";
+import { renderCodebaseMemoryResult } from "./render-result.js";
 import { type BridgeToolDefinition, TOOL_DEFINITIONS, type ToolName } from "./tool-definitions.js";
 
 export { TOOL_NAMES } from "./tool-definitions.js";
@@ -172,22 +178,74 @@ export async function callCodebaseMemory(
 	});
 }
 
-export default function cbmem(pi: ExtensionAPI): void {
-	for (const definition of TOOL_DEFINITIONS) registerBridgeTool(pi, definition);
+export default function cbmem(pi: ExtensionAPI, binary = BIN): void {
+	for (const definition of TOOL_DEFINITIONS) registerBridgeTool(pi, definition, binary);
 }
 
-function registerBridgeTool(pi: ExtensionAPI, definition: BridgeToolDefinition): void {
+function registerBridgeTool(
+	pi: ExtensionAPI,
+	definition: BridgeToolDefinition,
+	binary: string,
+): void {
 	pi.registerTool({
 		...definition,
+		renderResult: renderCodebaseMemoryResult,
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			return await callCodebaseMemory(
-				definition.name as ToolName,
-				params as Record<string, unknown>,
-				signal,
-				ctx.cwd,
-			);
+			const tool = definition.name as ToolName;
+			const args = params as Record<string, unknown>;
+			await confirmDestructiveCall(tool, args, signal, ctx);
+			return await callCodebaseMemory(tool, args, signal, ctx.cwd, binary);
 		},
 	});
+}
+
+async function confirmDestructiveCall(
+	tool: ToolName,
+	args: Record<string, unknown>,
+	signal: AbortSignal | undefined,
+	ctx: ExtensionContext,
+): Promise<void> {
+	const prompt = destructivePrompt(tool, args);
+	if (!prompt) return;
+
+	signal?.throwIfAborted();
+	if (!ctx.hasUI || (ctx.mode !== "tui" && ctx.mode !== "rpc")) {
+		throw new Error(
+			`Codebase Memory ${tool} requires user confirmation in TUI or RPC mode before it can run.`,
+		);
+	}
+	const confirmed = await ctx.ui.confirm(prompt.title, prompt.message, { signal });
+	signal?.throwIfAborted();
+	if (!confirmed) {
+		throw new DOMException(`Codebase Memory ${tool} was cancelled by the user.`, "AbortError");
+	}
+}
+
+function destructivePrompt(
+	tool: ToolName,
+	args: Record<string, unknown>,
+): { title: string; message: string } | undefined {
+	const project = safeArgument(args.project, "unknown project");
+	if (tool === "delete_project") {
+		return {
+			title: "Delete Codebase Memory project?",
+			message: `Project: ${project}\nThis permanently removes the project's Codebase Memory index.`,
+		};
+	}
+	if (tool === "manage_adr" && args.mode === "update") {
+		const contentBytes =
+			typeof args.content === "string" ? Buffer.byteLength(args.content, "utf8") : 0;
+		return {
+			title: "Replace Codebase Memory ADRs?",
+			message: `Project: ${project}\nReplace the complete ADR document with ${contentBytes} bytes of content.`,
+		};
+	}
+	return undefined;
+}
+
+function safeArgument(value: unknown, fallback: string): string {
+	if (typeof value !== "string") return fallback;
+	return sanitizeTerminalText(value) || fallback;
 }
 
 function extractLastJson(output: string): string {
