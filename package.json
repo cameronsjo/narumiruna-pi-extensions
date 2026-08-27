@@ -12,6 +12,7 @@
 			"./packages/pi-accounts/src/index.ts",
 			"./packages/pi-btw/src/index.ts",
 			"./packages/pi-caffeinate/src/index.ts",
+			"./packages/pi-cbmem/src/index.ts",
 			"./packages/pi-chrome-devtools/src/index.ts",
 			"./packages/pi-codex-compact/src/index.ts",
 			"./packages/pi-file-context/src/index.ts",
@@ -30,6 +31,9 @@
 			"./packages/pi-tool/src/index.ts",
 			"./packages/pi-usage/src/index.ts",
 			"./packages/pi-worktree/src/index.ts"
+		],
+		"skills": [
+			"./packages/pi-cbmem/skills"
 		]
 	},
 	"scripts": {
