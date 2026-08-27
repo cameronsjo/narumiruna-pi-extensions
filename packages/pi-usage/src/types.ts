@@ -60,7 +60,12 @@ export interface UsageProviderAdapter {
 	displayName: string;
 	semantics: UsageSemantics;
 	publishesStatusline?: boolean;
-	query(auth: ResolvedUsageAuth, signal: AbortSignal, timeoutMs: number): Promise<UsageReport>;
+	query(
+		auth: ResolvedUsageAuth,
+		signal: AbortSignal,
+		timeoutMs: number,
+		guard?: () => Promise<void>,
+	): Promise<UsageReport>;
 }
 
 export type ProviderUsageState =
@@ -107,6 +112,15 @@ export type KimiCodingUsagePayload = {
 	usage?: unknown;
 	limits?: unknown;
 	boosterWallet?: unknown;
+};
+
+export type XaiUserPayload = {
+	userId?: unknown;
+	subscriptionTier?: unknown;
+};
+
+export type XaiBillingPayload = {
+	config?: unknown;
 };
 
 export type CodexBackendPayload = {
