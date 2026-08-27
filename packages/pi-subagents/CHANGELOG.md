@@ -1,5 +1,11 @@
 # @narumitw/pi-subagents
 
+## 2.1.4
+
+### Patch Changes
+
+- 58300b9: Warn once when Pi loads the extension that version 3.0.0 will adopt the bounded-job runtime and list the major features and tool APIs that will be removed.
+
 ## 2.1.3
 
 ### Patch Changes
