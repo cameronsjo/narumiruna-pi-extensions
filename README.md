@@ -6,7 +6,8 @@ Independently installable [Pi Coding Agent](https://pi.dev) extensions and reusa
 libraries for coding, research, browser automation, workflow management, observability, and terminal
 ergonomics.
 
-Install only what you need. Every package is published separately under the `@narumitw` npm scope.
+Install only what you need.
+Published packages use the `@narumitw` npm scope, and package READMEs identify source-only exceptions.
 
 ## 🚀 Quick start
 
@@ -58,7 +59,7 @@ These extensions are part of my daily Pi setup:
 | [`pi-file-context`](./packages/pi-file-context) | Browse project files, preview text, select exact lines or Git diff hunks, and attach immutable snapshots with Git provenance to the next prompt. Open it with configurable `Ctrl+Shift+X` or `/file-context`. | `pi install npm:@narumitw/pi-file-context` |
 | [`pi-lsp`](./packages/pi-lsp) | Language-server diagnostics and code actions across JavaScript, TypeScript, Python, Rust, Go, Ruby, C/C++, JVM, .NET, Swift, shell, infrastructure formats, and more. | `pi install npm:@narumitw/pi-lsp` |
 | [`pi-plan-mode`](./packages/pi-plan-mode) | Codex-like, read-only `/plan` collaboration before implementation begins. | `pi install npm:@narumitw/pi-plan-mode` |
-| [`pi-subagents`](./packages/pi-subagents) | Delegate isolated work in single, parallel, or chained execution modes. | `pi install npm:@narumitw/pi-subagents` |
+| [`pi-subagents`](./packages/pi-subagents) | Start bounded background Pi jobs with authenticated main-agent messaging. | [Install from source](./packages/pi-subagents#-install) |
 
 ### Browser and research
 

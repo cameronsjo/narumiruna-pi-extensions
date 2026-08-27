@@ -1,6 +1,6 @@
 # LLM-Agent Least Privilege and Runtime Enforcement
 
-> **Historical research input:** Role names and automation described here summarize external systems and do not define current `pi-subagents` built-ins or routing; see the [current direction](../../packages/pi-subagents/docs/implementation-notes/pi-subagents-current-direction.md).
+> **Historical research input:** Role names and automation described here summarize external systems and do not define current `pi-subagents` built-ins or routing; see the [current bounded-job runtime](../../packages/pi-subagents/README.md).
 
 ## Executive findings
 
