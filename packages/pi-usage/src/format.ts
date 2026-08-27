@@ -42,6 +42,9 @@ export function formatUsageStatusline(report: UsageReport, model?: UsageModel): 
 	}
 	if (report.providerId === "opencode-go") return formatOpenCodeZenStatusline(report);
 	if (report.providerId === "kimi-coding") return formatKimiCodingStatusline(report);
+	if (report.providerId === "zai" || report.providerId === "zai-coding-cn") {
+		return formatZaiStatusline(report);
+	}
 	return undefined;
 }
 
@@ -205,6 +208,22 @@ function formatKimiCodingStatusline(report: UsageReport): string | undefined {
 	const parts = ["kimi"];
 	for (const bucket of selected) {
 		if (!bucket.limit || bucket.remaining === undefined) continue;
+		const fallback = bucket.id === "weekly" ? "weekly" : "5h";
+		parts.push(
+			`${percentRemaining(bucket)}% ${formatWindowLabel(bucket.windowMinutes, fallback, true)}`,
+		);
+	}
+	return parts.length > 1 ? parts.join(" ") : undefined;
+}
+
+function formatZaiStatusline(report: UsageReport): string | undefined {
+	const selected = [
+		report.buckets.find((bucket) => bucket.id === "five-hour"),
+		report.buckets.find((bucket) => bucket.id === "weekly"),
+	];
+	const parts = ["zai"];
+	for (const bucket of selected) {
+		if (!bucket?.limit || bucket.remaining === undefined) continue;
 		const fallback = bucket.id === "weekly" ? "weekly" : "5h";
 		parts.push(
 			`${percentRemaining(bucket)}% ${formatWindowLabel(bucket.windowMinutes, fallback, true)}`,

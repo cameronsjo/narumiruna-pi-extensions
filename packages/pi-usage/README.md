@@ -244,7 +244,7 @@ Disable `xaiUsage` to stop all xAI consumer usage traffic while preserving other
 - Semantics: GLM Coding Plan quota windows—the rolling 5-hour and weekly plan-usage windows plus the monthly MCP allowance
 - Source: Z.AI's undocumented `GET {origin}/api/monitor/usage/quota/limit` endpoint, also used by its official coding plugin, with the origin derived from the model base URL (`https://api.z.ai` or `https://open.bigmodel.cn`)
 - Displayed data: explicit used and remaining values, reset times, provider-reported per-tool MCP details, and the reported plan level. Windows that report only a percentage remain percent-based
-- Statusline: not published; Z.AI is queried only through `/usage` actions
+- Statusline: publishes remaining plan percentages such as `zai 87% 5h 76% wk`; monthly MCP details remain available through `/usage`
 
 The monitor endpoint is not a published API contract and may return legacy `TOKENS_LIMIT` or newer `CREDIT_LIMIT` window names.
 The extension classifies both forms by the provider's window unit and does not label provider-reported counts as tokens or calls.
@@ -269,6 +269,7 @@ After the active runtime credential changes, the next command, turn, or schedule
 The `usage` status item is active only for selected providers that publish statusline usage.
 It refreshes every five minutes while the session remains on such a provider and is cleared when the model changes to an unsupported or menu-only provider.
 xAI is always menu-only and never starts a scheduled status refresh.
+Z.AI statusline usage refreshes every five minutes while the selected model remains on Z.AI.
 
 Manual another-provider and all-provider queries never publish to the statusline.
 `@narumitw/pi-statusline` supplies the default `📊` icon; `pi-usage` publishes text-only values.

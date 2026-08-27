@@ -828,7 +828,7 @@ test("current Kimi usage follows account changes and clears status on model repl
 	assert.equal(statuses.get("usage"), undefined);
 });
 
-test("menu-only providers query through /usage without automatic status refresh", async (t) => {
+test("Z.AI providers publish statusline usage and refresh through /usage", async (t) => {
 	const originalFetch = globalThis.fetch;
 	t.onTestFinished(() => {
 		globalThis.fetch = originalFetch;
@@ -839,7 +839,10 @@ test("menu-only providers query through /usage without automatic status refresh"
 		return new Response(
 			JSON.stringify({
 				data: {
-					limits: [{ type: "CREDIT_LIMIT", unit: 3, percentage: 10 }],
+					limits: [
+						{ type: "CREDIT_LIMIT", unit: 3, percentage: 10 },
+						{ type: "CREDIT_LIMIT", unit: 6, usage: 100, currentValue: 20 },
+					],
 					level: "lite",
 				},
 			}),
@@ -870,15 +873,18 @@ test("menu-only providers query through /usage without automatic status refresh"
 
 	mock.events.get("session_start")?.[0]?.({}, ctx);
 	await settle();
+	assert.equal(fetches, 1);
+	assert.equal(statuses.get("usage"), "zai 90% 5h 80% wk");
+
 	mock.events.get("turn_start")?.[0]?.({}, ctx);
 	await settle();
-	assert.equal(fetches, 0);
-	assert.equal(statuses.get("usage"), undefined);
+	assert.equal(fetches, 1);
+	assert.equal(statuses.get("usage"), "zai 90% 5h 80% wk");
 
 	await command.handler("", ctx);
 	assert.equal(fetches, 1);
 	assert.match(titles[0] ?? "", /5h window:\s+10% used · 90% left/);
-	assert.equal(statuses.get("usage"), undefined);
+	assert.equal(statuses.get("usage"), "zai 90% 5h 80% wk");
 });
 
 test("automatic provider failures back off instead of retrying every turn", async (t) => {
