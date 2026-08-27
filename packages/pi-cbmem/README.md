@@ -21,13 +21,14 @@ Install it from this repository checkout:
 pi install ./packages/pi-cbmem
 ```
 
-Try it without adding a persistent package setting:
+Build and try it without adding a persistent package setting:
 
 ```bash
+npm --workspace @narumitw/pi-cbmem run build
 pi --no-extensions -e ./packages/pi-cbmem
 ```
 
-The package uses its source entrypoint and does not require a build before local loading.
+The package declares `dist/index.ts`, so an unbuilt local checkout must run the build before Pi loads the package directory.
 
 Pi extensions run with your user permissions.
 
@@ -95,6 +96,9 @@ The extension exposes static tool schemas that match the bundled Codebase Memory
 
 ```text
 packages/pi-cbmem/
+├── dist/                           # Generated source-mapped Jiti runtime
+├── scripts/
+│   └── build-runtime.mjs           # Deterministic runtime builder and validator
 ├── src/
 │   ├── index.ts                    # Thin Pi entrypoint
 │   ├── cbmem.ts                    # Bounded Codebase Memory CLI runner
@@ -103,12 +107,15 @@ packages/pi-cbmem/
 ├── skills/codebase-memory/
 │   └── SKILL.md                    # Graph-first operating guidance
 ├── test/
+│   ├── build-runtime.test.ts       # Generated-runtime and Jiti loader coverage
 │   └── cbmem.test.ts               # Tool registration coverage
 ├── package.json                    # Private Pi extension and skill declarations
 ├── tsconfig.json
 ├── README.md
 └── LICENSE
 ```
+
+The generated runtime is built from the authoritative `src/index.ts` graph and does not import back into `src`.
 
 ## 🔎 Keywords
 
