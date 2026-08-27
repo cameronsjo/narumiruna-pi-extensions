@@ -1,5 +1,14 @@
 # @narumitw/pi-usage
 
+## 0.54.0
+
+### Minor Changes
+
+- c00bcfe: Add source-backed Kimi For Coding plan-window and booster-wallet usage reporting.
+- 2681749: Add default-enabled xAI OAuth subscription usage reporting based on the official Grok Build implementation.
+  
+  xAI API-key accounts remain unsupported and are directed to the xAI console.
+
 ## 0.53.0
 
 ### Minor Changes
