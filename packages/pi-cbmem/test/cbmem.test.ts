@@ -54,10 +54,13 @@ process.stdin.on("end", () => {
     case "noJson":
       process.stdout.write("not a JSON response");
       return;
-    case "wait":
-      fs.writeFileSync(args.readyPath, String(process.pid));
+    case "wait": {
+      const readyTempPath = args.readyPath + ".tmp";
+      fs.writeFileSync(readyTempPath, String(process.pid));
+      fs.renameSync(readyTempPath, args.readyPath);
       setInterval(() => {}, 1000);
       return;
+    }
     default:
       process.stdout.write(JSON.stringify({ ok: true }));
   }
@@ -208,9 +211,10 @@ test("aborting a running call terminates its child", async () => {
 	await ready;
 	watcher.close();
 	const pid = Number(await readFile(readyPath, "utf8"));
+	assert.ok(Number.isSafeInteger(pid) && pid > 0, `expected a valid child PID, received ${pid}`);
 	controller.abort();
 	await assert.rejects(pending, (error: Error) => error.name === "AbortError");
-	assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+	await waitForProcessExit(pid);
 });
 
 test("bundled skill enforces graph-first evidence and valid project-scoped calls", async () => {
@@ -272,4 +276,22 @@ function resultText(result: Awaited<ReturnType<typeof callCodebaseMemory>>): str
 function countLines(text: string): number {
 	if (!text) return 0;
 	return text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
+}
+
+async function waitForProcessExit(pid: number): Promise<void> {
+	const deadline = Date.now() + 1_000;
+	while (processExists(pid) && Date.now() < deadline) {
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+	assert.equal(processExists(pid), false, `expected process ${pid} to exit after cancellation`);
+}
+
+function processExists(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+		throw error;
+	}
 }
