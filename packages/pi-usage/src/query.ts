@@ -133,7 +133,6 @@ export const SUPPORTED_ADAPTERS: readonly UsageProviderAdapter[] = [
 		id: "zai",
 		displayName: "Z.AI",
 		semantics: { kind: "consumer-subscription", label: "GLM Coding Plan usage" },
-		publishesStatusline: false,
 		async query(auth, signal, timeoutMs) {
 			const payload = await fetchProviderJson(
 				zaiMonitorUrl(auth.model.baseUrl),
@@ -149,7 +148,6 @@ export const SUPPORTED_ADAPTERS: readonly UsageProviderAdapter[] = [
 		id: "zai-coding-cn",
 		displayName: "Z.AI Coding CN",
 		semantics: { kind: "consumer-subscription", label: "GLM Coding Plan usage" },
-		publishesStatusline: false,
 		async query(auth, signal, timeoutMs) {
 			const payload = await fetchProviderJson(
 				zaiMonitorUrl(auth.model.baseUrl),

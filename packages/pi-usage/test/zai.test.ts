@@ -130,7 +130,7 @@ test("Z.AI adapter normalizes 5h, weekly, and MCP monthly windows", () => {
 	assert.match(rendered, /5h window:\s+13% used · 87% left \(resets /);
 	assert.match(rendered, /Weekly window:\s+120000 of 500000 used · 380000 left \(resets /);
 	assert.match(rendered, /search-prime:\s+67/);
-	assert.equal(formatUsageStatusline(report), undefined);
+	assert.equal(formatUsageStatusline(report), "zai 87% 5h 76% wk");
 });
 
 test("Z.AI adapter keeps percentage-only 5h windows displayable without weekly data", () => {
@@ -164,6 +164,7 @@ test("Z.AI adapter keeps percentage-only 5h windows displayable without weekly d
 	});
 	assert.equal(report.notes, undefined);
 	assert.equal(report.metrics.length, 0);
+	assert.equal(formatUsageStatusline(report), "zai 60% 5h");
 });
 
 test("Z.AI adapter shows percentage-only weekly windows as percent buckets", () => {
