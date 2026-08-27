@@ -233,6 +233,9 @@ test("bundled skill enforces graph-first evidence and valid project-scoped calls
 	}
 	assert.doesNotMatch(skill, /delegate_task|Hermes/i);
 
+	const documentedCalls = (tool: string) => [
+		...skill.matchAll(new RegExp(`\\b${tool}\\(([^)]*)\\)`, "g")),
+	];
 	for (const tool of [
 		"search_graph",
 		"trace_path",
@@ -243,13 +246,21 @@ test("bundled skill enforces graph-first evidence and valid project-scoped calls
 		"check_index_coverage",
 		"detect_changes",
 	]) {
-		const calls = [...skill.matchAll(new RegExp(`\\b${tool}\\(([^)]*)\\)`, "g"))];
+		const calls = documentedCalls(tool);
 		assert.ok(calls.length > 0, `expected at least one documented ${tool} call`);
 		assert.ok(
 			calls.every((call) => call[1]?.includes('project="<name>"')),
 			`expected every documented ${tool} call to include project`,
 		);
 	}
+	assert.ok(
+		documentedCalls("trace_path").every((call) => call[1]?.includes("function_name=")),
+		"expected every documented trace_path call to include function_name",
+	);
+	assert.ok(
+		documentedCalls("search_graph").every((call) => !call[1]?.includes("direction=")),
+		"expected documented search_graph calls to omit its unsupported direction argument",
+	);
 });
 
 function resultText(result: Awaited<ReturnType<typeof callCodebaseMemory>>): string {
