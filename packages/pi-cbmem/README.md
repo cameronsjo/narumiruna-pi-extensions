@@ -7,7 +7,7 @@ pi-cbmem is a private package that bundles the local Codebase Memory extension a
 ## ✨ Features
 
 - Registers all 15 Codebase Memory graph, search, indexing, coverage, trace, and architecture tools.
-- Invokes the local `codebase-memory-mcp` CLI with cancellation support.
+- Invokes the local `codebase-memory-mcp` CLI with cancellation, failure reporting, and bounded output.
 - Bundles the `codebase-memory` skill for evidence-tier and graph-first workflows.
 - Keeps the extension and skill available through one package declaration.
 
@@ -59,7 +59,13 @@ The extension registers these tools:
 - `manage_adr`
 - `ingest_traces`
 
-Each tool delegates to `codebase-memory-mcp cli <tool> <json-args>` and returns the last JSON line written to standard output.
+Each tool sends JSON arguments to `codebase-memory-mcp cli <tool>` over standard input and returns the last JSON response written to standard output.
+
+Tool output is capped at Pi's 50 KB or 2,000-line limit, whichever is reached first.
+
+The result states when additional CLI output was omitted.
+
+Spawn failures, nonzero exits, and missing JSON responses are reported as failed tool calls.
 
 ## 🔒 Security and privacy
 
@@ -69,7 +75,9 @@ Tool calls can read and index repositories, inspect source, persist graph data, 
 
 Repository content returned by graph tools can be sent to the selected model provider as tool output.
 
-The extension starts one local CLI child process per tool call and does not start background work during extension factory load.
+The extension starts one local CLI child process per tool call in the active session directory and does not start background work during extension factory load.
+
+Cancelling a tool call terminates its child process.
 
 ## 🚧 Limitations
 
@@ -77,7 +85,7 @@ The package expects the binary at `~/.local/bin/codebase-memory-mcp` for the cur
 
 It does not install or update the Codebase Memory binary.
 
-The extension preserves the installer-generated `name` and `run` tool bridge expected by the current Pi environment.
+The extension exposes static tool schemas that match the bundled Codebase Memory skill and delegates final argument validation to the installed CLI.
 
 ## 🗂️ Package layout
 
@@ -85,7 +93,8 @@ The extension preserves the installer-generated `name` and `run` tool bridge exp
 packages/pi-cbmem/
 ├── src/
 │   ├── index.ts                    # Thin Pi entrypoint
-│   └── cbmem.ts                    # Codebase Memory CLI tool bridge
+│   ├── cbmem.ts                    # Bounded Codebase Memory CLI runner
+│   └── tool-definitions.ts         # Pi tool metadata and TypeBox schemas
 ├── skills/codebase-memory/
 │   └── SKILL.md                    # Graph-first operating guidance
 ├── test/

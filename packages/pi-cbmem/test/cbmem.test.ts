@@ -1,30 +1,210 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { watch } from "node:fs";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { test } from "vitest";
-import cbmem, { TOOL_NAMES } from "../src/cbmem.js";
+import {
+	DEFAULT_MAX_BYTES,
+	DEFAULT_MAX_LINES,
+	type ExtensionAPI,
+	type ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
+import { afterAll, beforeAll, test } from "vitest";
+import cbmem, { callCodebaseMemory, TOOL_NAMES } from "../src/cbmem.js";
 
 const packageDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+let fixtureDirectory: string;
+let fixtureBinary: string;
 
-test("cbmem registers every Codebase Memory tool", () => {
-	const registered: Array<{ name: string; run: unknown }> = [];
+beforeAll(async () => {
+	fixtureDirectory = await mkdtemp(path.join(tmpdir(), "pi-cbmem-test-"));
+	fixtureBinary = path.join(fixtureDirectory, "codebase-memory-mcp.cjs");
+	await writeFile(
+		fixtureBinary,
+		`#!/usr/bin/env node
+const fs = require("node:fs");
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { input += chunk; });
+process.stdin.on("end", () => {
+  const args = JSON.parse(input || "{}");
+  switch (args.testMode) {
+    case "splitUtf8": {
+      const output = Buffer.from(JSON.stringify({ cwd: process.cwd(), text: "你好🙂" }));
+      const split = output.indexOf(Buffer.from("你")) + 1;
+      process.stdout.write(output.subarray(0, split));
+      setImmediate(() => process.stdout.end(output.subarray(split)));
+      return;
+    }
+    case "large":
+      process.stdout.write(JSON.stringify({ payload: "界".repeat(30000), tail: "must-not-appear" }));
+      return;
+    case "manyLines":
+      process.stdout.write(JSON.stringify({ rows: Array.from({ length: 2500 }, (_, i) => i) }, null, 2));
+      return;
+    case "stderr":
+      process.stderr.write("x".repeat(100000));
+      process.stderr.write("\\nimportant failure");
+      process.exitCode = 7;
+      return;
+    case "noJson":
+      process.stdout.write("not a JSON response");
+      return;
+    case "wait":
+      fs.writeFileSync(args.readyPath, String(process.pid));
+      setInterval(() => {}, 1000);
+      return;
+    default:
+      process.stdout.write(JSON.stringify({ ok: true }));
+  }
+});
+`,
+		{ mode: 0o700 },
+	);
+	await chmod(fixtureBinary, 0o700);
+});
 
-	cbmem({
-		registerTool(tool) {
+afterAll(async () => {
+	await rm(fixtureDirectory, { recursive: true, force: true });
+});
+
+test("cbmem registers complete Pi tool definitions", () => {
+	const registered: ToolDefinition[] = [];
+	const api = {
+		registerTool(tool: ToolDefinition) {
 			registered.push(tool);
 		},
-	});
+	} as unknown as ExtensionAPI;
+
+	cbmem(api);
 
 	assert.deepEqual(
 		registered.map((tool) => tool.name),
 		TOOL_NAMES,
 	);
-	assert.ok(registered.every((tool) => typeof tool.run === "function"));
+	for (const tool of registered) {
+		assert.ok(tool.label);
+		assert.match(tool.description, /truncated/i);
+		assert.equal((tool.parameters as { type?: unknown }).type, "object");
+		assert.equal(typeof tool.execute, "function");
+	}
 });
 
-test("bundled skill enforces graph-first evidence and safe subagent handoff", () => {
-	const skill = readFileSync(
+test("CLI calls use the session cwd and preserve split UTF-8 output", async () => {
+	const cwd = await mkdtemp(path.join(fixtureDirectory, "cwd-"));
+	const result = await callCodebaseMemory(
+		"list_projects",
+		{ testMode: "splitUtf8" },
+		undefined,
+		cwd,
+		fixtureBinary,
+	);
+
+	assert.deepEqual(JSON.parse(resultText(result)), { cwd, text: "你好🙂" });
+	assert.equal(result.details.truncated, false);
+});
+
+test("CLI output is bounded by Pi's byte and line limits", async () => {
+	for (const testMode of ["large", "manyLines"]) {
+		const result = await callCodebaseMemory(
+			"query_graph",
+			{ testMode },
+			undefined,
+			fixtureDirectory,
+			fixtureBinary,
+		);
+		const text = resultText(result);
+		assert.equal(result.details.truncated, true);
+		assert.match(text, /additional output was omitted/);
+		assert.ok(Buffer.byteLength(text, "utf8") <= DEFAULT_MAX_BYTES);
+		assert.ok(countLines(text) <= DEFAULT_MAX_LINES);
+	}
+});
+
+test("CLI spawn, exit, and response failures reject", async () => {
+	await assert.rejects(
+		callCodebaseMemory(
+			"list_projects",
+			{},
+			undefined,
+			fixtureDirectory,
+			path.join(fixtureDirectory, "missing-binary"),
+		),
+		/ENOENT/,
+	);
+
+	await assert.rejects(
+		callCodebaseMemory(
+			"list_projects",
+			{ testMode: "stderr" },
+			undefined,
+			fixtureDirectory,
+			fixtureBinary,
+		),
+		(error: Error) => {
+			assert.match(error.message, /exited with code 7/);
+			assert.match(error.message, /important failure/);
+			assert.match(error.message, /earlier stderr omitted/);
+			assert.ok(Buffer.byteLength(error.message, "utf8") < 9 * 1024);
+			return true;
+		},
+	);
+
+	await assert.rejects(
+		callCodebaseMemory(
+			"list_projects",
+			{ testMode: "noJson" },
+			undefined,
+			fixtureDirectory,
+			fixtureBinary,
+		),
+		/no JSON response/,
+	);
+});
+
+test("pre-aborted calls reject before spawning", async () => {
+	const controller = new AbortController();
+	controller.abort();
+	await assert.rejects(
+		callCodebaseMemory(
+			"delete_project",
+			{},
+			controller.signal,
+			fixtureDirectory,
+			path.join(fixtureDirectory, "missing-binary"),
+		),
+		(error: Error) => error.name === "AbortError",
+	);
+});
+
+test("aborting a running call terminates its child", async () => {
+	const readyPath = path.join(fixtureDirectory, `ready-${Date.now()}`);
+	const controller = new AbortController();
+	const watcher = watch(fixtureDirectory);
+	const ready = new Promise<void>((resolve) => {
+		watcher.on("change", (_event, filename) => {
+			if (filename === path.basename(readyPath)) resolve();
+		});
+	});
+	const pending = callCodebaseMemory(
+		"index_repository",
+		{ testMode: "wait", readyPath },
+		controller.signal,
+		fixtureDirectory,
+		fixtureBinary,
+	);
+
+	await ready;
+	watcher.close();
+	const pid = Number(await readFile(readyPath, "utf8"));
+	controller.abort();
+	await assert.rejects(pending, (error: Error) => error.name === "AbortError");
+	assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+});
+
+test("bundled skill enforces graph-first evidence and extension-neutral handoff", async () => {
+	const skill = await readFile(
 		path.join(packageDirectory, "skills", "codebase-memory", "SKILL.md"),
 		"utf8",
 	);
@@ -41,4 +221,16 @@ test("bundled skill enforces graph-first evidence and safe subagent handoff", ()
 	]) {
 		assert.match(skill, evidence);
 	}
+	assert.doesNotMatch(skill, /delegate_task|Hermes/i);
 });
+
+function resultText(result: Awaited<ReturnType<typeof callCodebaseMemory>>): string {
+	const content = result.content[0];
+	assert.equal(content?.type, "text");
+	return content.text;
+}
+
+function countLines(text: string): number {
+	if (!text) return 0;
+	return text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
+}
