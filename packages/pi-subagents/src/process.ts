@@ -150,7 +150,6 @@ async function executeProcess(
 		let forceClose: NodeJS.Timeout | undefined;
 		let escalation: NodeJS.Timeout | undefined;
 		let termination: Promise<void> | undefined;
-		let removeCredentialErrorListener = () => undefined;
 		const finish = (code: number, launchError?: string) => {
 			if (settled || finishRequested) return;
 			finishRequested = true;
@@ -160,7 +159,6 @@ async function executeProcess(
 				if (deadline) clearTimeout(deadline);
 				if (forceClose) clearTimeout(forceClose);
 				if (escalation) clearTimeout(escalation);
-				removeCredentialErrorListener();
 				request.signal.removeEventListener("abort", onAbort);
 				resolve({ code, cancelled, timedOut, launchError });
 			};
@@ -247,13 +245,16 @@ async function executeProcess(
 			terminate(1);
 		} else {
 			const onCredentialError = () => {
+				if (settled || finishRequested) return;
 				errorMessage = "Subagent broker credential transfer failed.";
 				terminate(1);
 			};
-			credentialPipe.once("error", onCredentialError);
-			removeCredentialErrorListener = () => {
+			const removeCredentialListeners = () => {
 				credentialPipe.removeListener("error", onCredentialError);
+				credentialPipe.removeListener("close", removeCredentialListeners);
 			};
+			credentialPipe.on("error", onCredentialError);
+			credentialPipe.once("close", removeCredentialListeners);
 			try {
 				credentialPipe.end(serializeBrokerCredentials(request.communication));
 			} catch {

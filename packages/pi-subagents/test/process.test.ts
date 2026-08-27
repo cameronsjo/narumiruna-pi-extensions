@@ -159,6 +159,18 @@ console.log(JSON.stringify({
 	});
 });
 
+test("handles late credential-pipe errors after child launch failure", async () => {
+	installFakePi("");
+	const removedCwd = path.join(directory, "removed-cwd");
+	mkdirSync(removedCwd);
+	rmSync(removedCwd, { recursive: true });
+
+	const result = await runChild(childRequest({ cwd: removedCwd }));
+	assert.equal(result.state, "failed");
+	assert.match(result.error ?? "", /ENOENT|not found/iu);
+	await new Promise<void>((resolve) => setImmediate(resolve));
+});
+
 test("resolves optional execution timeouts with Pi bash semantics", () => {
 	assert.equal(resolveTimeoutMs(undefined), undefined);
 	assert.equal(resolveTimeoutMs(0.025), 25);

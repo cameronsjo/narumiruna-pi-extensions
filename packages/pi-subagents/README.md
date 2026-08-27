@@ -22,19 +22,26 @@ A bundled `subagents` skill owns delegation strategy, least-privilege tool selec
 
 ## 📦 Install
 
-Install persistently:
+The bounded-job runtime is not published to npm yet.
+
+The npm package remains on the legacy 2.x runtime and does not provide the tools documented below.
+
+Install the repository source as one Pi package:
 
 ```bash
-pi install npm:@narumitw/pi-subagents
+pi install git:github.com/narumiruna/pi-extensions
 ```
 
-Try from npm without installing permanently:
+This Git installation enables every stable extension listed in the repository root manifest, including Pi Subagents.
+
+To install only Pi Subagents, clone the repository and install its package directory:
 
 ```bash
-pi -e npm:@narumitw/pi-subagents
+git clone https://github.com/narumiruna/pi-extensions.git
+pi install ./pi-extensions/packages/pi-subagents
 ```
 
-Try the extension and bundled skill from a local checkout:
+Try the extension and bundled skill without installing from a local checkout:
 
 ```bash
 pi --no-extensions -e ./packages/pi-subagents
