@@ -26,6 +26,7 @@ afterEach(() => {
 	if (previousPackageDirectory === undefined) delete process.env.PI_PACKAGE_DIR;
 	else process.env.PI_PACKAGE_DIR = previousPackageDirectory;
 	rmSync(directory, { recursive: true, force: true });
+	vi.useRealTimers();
 	vi.restoreAllMocks();
 });
 
@@ -134,6 +135,30 @@ console.log(JSON.stringify({
 	assert.match(result.limitations.join("\n"), /truncated/i);
 });
 
+test("passes broker credentials through a private descriptor outside the initial environment", async () => {
+	installFakePi(`
+const initialEnvironment = process.platform === "linux"
+  ? fs.readFileSync("/proc/self/environ")
+  : Buffer.from(Object.entries(process.env).map(([key, value]) => key + "=" + value).join("\\0"));
+const text = JSON.stringify({
+  credentialsReceived: brokerCredentials.host === "127.0.0.1" && brokerCredentials.port === 31337,
+  initialEnvironmentContainsToken: initialEnvironment.includes(Buffer.from(brokerCredentials.token)),
+  descriptorMarker: process.env.PI_SUBAGENT_BROKER_FD,
+});
+console.log(JSON.stringify({
+  type: "message_end",
+  message: { role: "assistant", content: [{ type: "text", text }], stopReason: "stop" }
+}));
+`);
+	const result = await runChild(childRequest());
+	assert.equal(result.state, "completed");
+	assert.deepEqual(JSON.parse(result.result ?? "{}"), {
+		credentialsReceived: true,
+		initialEnvironmentContainsToken: false,
+		descriptorMarker: "3",
+	});
+});
+
 test("resolves optional execution timeouts with Pi bash semantics", () => {
 	assert.equal(resolveTimeoutMs(undefined), undefined);
 	assert.equal(resolveTimeoutMs(0.025), 25);
@@ -207,6 +232,37 @@ test("Windows process-tree termination awaits taskkill completion", async () => 
 	assert.equal(settled, true);
 });
 
+test("Windows process-tree termination bounds a hung taskkill helper", async () => {
+	vi.useFakeTimers();
+	const childKill = vi.fn();
+	const child = {
+		pid: 4242,
+		kill: childKill,
+	} as unknown as ChildProcess;
+	const treeKiller = new EventEmitter() as ChildProcess;
+	const treeKillerKill = vi.fn();
+	treeKiller.kill = treeKillerKill;
+	const spawnTreeKiller = vi.fn(
+		() => treeKiller,
+	) as unknown as typeof import("node:child_process").spawn;
+	let settled = false;
+	const work = terminateWindowsProcessTree(
+		child,
+		spawnTreeKiller,
+		"C:\\Windows\\System32\\taskkill.exe",
+		10,
+	).then(() => {
+		settled = true;
+	});
+	await vi.advanceTimersByTimeAsync(9);
+	assert.equal(settled, false);
+	await vi.advanceTimersByTimeAsync(1);
+	await work;
+	assert.equal(settled, true);
+	assert.deepEqual(treeKillerKill.mock.calls, [["SIGKILL"]]);
+	assert.deepEqual(childKill.mock.calls, [["SIGKILL"]]);
+});
+
 function childRequest(overrides: Partial<ChildRequest> = {}): ChildRequest {
 	return {
 		task: "task",
@@ -228,7 +284,10 @@ function childRequest(overrides: Partial<ChildRequest> = {}): ChildRequest {
 function installFakePi(source: string): void {
 	const packageDirectory = path.join(directory, "pi-core");
 	mkdirSync(packageDirectory, { recursive: true });
-	writeFileSync(path.join(packageDirectory, "fake-pi.mjs"), source);
+	writeFileSync(
+		path.join(packageDirectory, "fake-pi.mjs"),
+		`import fs from "node:fs";\nconst brokerCredentials = JSON.parse(fs.readFileSync(3, "utf8"));\n${source}`,
+	);
 	writeFileSync(
 		path.join(packageDirectory, "package.json"),
 		JSON.stringify({

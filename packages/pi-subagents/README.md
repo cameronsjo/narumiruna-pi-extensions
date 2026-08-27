@@ -143,7 +143,9 @@ The session starts one TCP broker on `127.0.0.1` with an operating-system-assign
 
 Each job receives one cryptographically random token bound to its job identity and session generation.
 
-The child bridge captures and deletes the broker environment variables before model tool execution.
+The parent passes the broker credentials once through a private inherited pipe instead of placing them in the child's initial environment or command line.
+
+The child bridge reads and closes that descriptor before model tool execution.
 
 Each tool call uses one bounded request-scoped connection, while a child response wait uses an abortable long poll.
 
@@ -198,6 +200,8 @@ Provider selection therefore supports Pi's child-visible built-in and configured
 Credentials must be available independently to the child through Pi's stored credentials or its inherited environment.
 
 The broker accepts only loopback TCP connections with an active per-job token.
+
+The token is bootstrapped through a private inherited pipe and is absent from the child's initial environment and command line.
 
 A child question is visible model context, but its envelope explicitly identifies it as untrusted subagent content rather than user authorization.
 

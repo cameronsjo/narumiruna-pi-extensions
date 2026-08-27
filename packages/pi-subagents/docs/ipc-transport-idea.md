@@ -4,13 +4,13 @@
 
 This document records an unverified implementation idea for later evaluation.
 
-The current loopback TCP broker remains the implemented and authoritative transport.
+The current loopback TCP broker with private inherited-pipe credential bootstrap remains the implemented and authoritative transport.
 
 Do not treat this document as an approved migration plan or compatibility guarantee.
 
 ## Motivation
 
-The TCP broker provides authenticated cross-process messaging but requires a server, ephemeral port, per-job tokens, socket lifecycle management, NDJSON framing, connection deadlines, and long-poll handling.
+The TCP broker provides authenticated cross-process messaging but requires a server, ephemeral port, per-job tokens, private credential bootstrap, socket lifecycle management, NDJSON framing, connection deadlines, and long-poll handling.
 
 A private communication channel created with each child process may preserve the messaging contract with fewer transport concepts and less lifecycle code.
 
@@ -47,7 +47,7 @@ The exact wire messages and ownership boundaries remain undecided.
 A successful IPC design may remove:
 
 - The loopback TCP server and ephemeral port.
-- Per-job broker tokens and broker environment variables.
+- Per-job broker tokens and their private bootstrap pipe.
 - Socket connection and connection-limit management.
 - Custom NDJSON request and response framing.
 - Connection and frame deadlines.

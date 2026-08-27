@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
 import { visibleWidth } from "@earendil-works/pi-tui";
+import { Check } from "typebox/value";
 import { afterEach, beforeEach, test, vi } from "vitest";
 import { createMockContext, createMockPi } from "../../../test/support.js";
 import { createBrokerClient } from "../src/child-communication-bridge.js";
@@ -87,6 +88,14 @@ test("registers five fixed main-agent tools with bounded stable schemas", async 
 		jobId: "job_old",
 		timeout: 30,
 	});
+	for (const [candidate, malformedAlias] of [
+		[tools[0], { task: "legacy", timeoutMs: "1500" }],
+		[tools[3], { jobId: "job_old", timeoutMs: "30000" }],
+	] as const) {
+		const preparedMalformed = candidate?.prepareArguments?.(malformedAlias);
+		assert.deepEqual(preparedMalformed, malformedAlias);
+		assert.equal(Check(candidate?.parameters, preparedMalformed), false);
+	}
 	assert.match(tools[0]?.description ?? "", /task defines.*selected tools define/is);
 	assert.deepEqual([...mock.commands.keys()], []);
 	const definitions = JSON.stringify(

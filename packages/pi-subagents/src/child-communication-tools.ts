@@ -100,8 +100,10 @@ function resolveTimeoutMs(timeout: number | undefined): number | undefined {
 function prepareWaitArguments(args: unknown): WaitArguments {
 	if (!args || typeof args !== "object") return args as WaitArguments;
 	if (!Object.hasOwn(args, "timeoutMs")) return args as WaitArguments;
-	const { timeoutMs, ...prepared } = args as Record<string, unknown>;
-	if (prepared.timeout === undefined && typeof timeoutMs === "number") {
+	const record = args as Record<string, unknown>;
+	if (typeof record.timeoutMs !== "number") return record as WaitArguments;
+	const { timeoutMs, ...prepared } = record;
+	if (prepared.timeout === undefined) {
 		return { ...prepared, timeout: timeoutMs / 1000 } as WaitArguments;
 	}
 	return prepared as WaitArguments;

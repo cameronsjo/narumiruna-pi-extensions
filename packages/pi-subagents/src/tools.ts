@@ -319,10 +319,10 @@ function prepareWaitArguments(args: unknown): WaitArguments {
 function prepareTimeoutArguments(args: unknown): Record<string, unknown> {
 	if (!args || typeof args !== "object") return args as Record<string, unknown>;
 	if (!Object.hasOwn(args, "timeoutMs")) return args as Record<string, unknown>;
-	const { timeoutMs, ...prepared } = args as Record<string, unknown>;
-	if (prepared.timeout === undefined && typeof timeoutMs === "number") {
-		return { ...prepared, timeout: timeoutMs / 1000 };
-	}
+	const record = args as Record<string, unknown>;
+	if (typeof record.timeoutMs !== "number") return record;
+	const { timeoutMs, ...prepared } = record;
+	if (prepared.timeout === undefined) return { ...prepared, timeout: timeoutMs / 1000 };
 	return prepared;
 }
 

@@ -1,20 +1,17 @@
 import net from "node:net";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
+import { captureBrokerCredentials } from "./broker-credentials.js";
 import {
 	type ChildCommunicationClient,
 	createChildCommunicationExtension,
 } from "./child-communication-tools.js";
-import {
-	BROKER_ENV,
-	BROKER_HOST,
-	MAX_FRAME_BYTES,
-	MAX_IDENTIFIER_LENGTH,
-} from "./message-broker.js";
+import { MAX_FRAME_BYTES, MAX_IDENTIFIER_LENGTH } from "./message-broker.js";
+import type { BrokerCredentials } from "./types.js";
 
 const CONNECT_TIMEOUT_MS = 2_000;
 const ASK_RESPONSE_TIMEOUT_MS = 5_000;
 
-const captured = captureBrokerEnvironment();
+const captured = captureBrokerCredentials();
 
 const childCommunicationBridge: ExtensionFactory = captured
 	? createChildCommunicationExtension(createBrokerClient(captured))
@@ -22,42 +19,12 @@ const childCommunicationBridge: ExtensionFactory = captured
 
 export default childCommunicationBridge;
 
-export interface CapturedBrokerEnvironment {
-	host: typeof BROKER_HOST;
-	port: number;
-	token: string;
-}
-
-export function captureBrokerEnvironment(): CapturedBrokerEnvironment | undefined {
-	const host = process.env[BROKER_ENV.host];
-	const rawPort = process.env[BROKER_ENV.port];
-	const token = process.env[BROKER_ENV.token];
-	delete process.env[BROKER_ENV.host];
-	delete process.env[BROKER_ENV.port];
-	delete process.env[BROKER_ENV.token];
-	if (!host && !rawPort && !token) return undefined;
-	const port = Number(rawPort);
-	if (
-		host !== BROKER_HOST ||
-		!Number.isSafeInteger(port) ||
-		port < 1 ||
-		port > 65_535 ||
-		!token ||
-		!/^[a-f0-9]{64}$/u.test(token)
-	) {
-		throw new Error("Invalid pi-subagents broker environment.");
-	}
-	return { host, port, token };
-}
-
-export function createBrokerClient(
-	environment: CapturedBrokerEnvironment,
-): ChildCommunicationClient {
+export function createBrokerClient(credentials: BrokerCredentials): ChildCommunicationClient {
 	return {
 		async ask(message, signal) {
 			const response = await requestBroker(
-				environment,
-				{ type: "ask", token: environment.token, message },
+				credentials,
+				{ type: "ask", token: credentials.token, message },
 				signal,
 				ASK_RESPONSE_TIMEOUT_MS,
 			);
@@ -73,10 +40,10 @@ export function createBrokerClient(
 		},
 		async wait(requestId, timeoutMs, signal) {
 			const response = await requestBroker(
-				environment,
+				credentials,
 				{
 					type: "wait",
-					token: environment.token,
+					token: credentials.token,
 					requestId,
 					...(timeoutMs !== undefined ? { timeoutMs } : {}),
 				},
@@ -92,14 +59,14 @@ export function createBrokerClient(
 }
 
 function requestBroker(
-	environment: CapturedBrokerEnvironment,
+	credentials: BrokerCredentials,
 	request: Record<string, unknown>,
 	signal?: AbortSignal,
 	responseTimeoutMs?: number,
 ): Promise<Record<string, unknown>> {
 	if (signal?.aborted) return Promise.reject(abortError("Subagent broker request was cancelled."));
 	return new Promise((resolve, reject) => {
-		const socket = net.createConnection({ host: environment.host, port: environment.port });
+		const socket = net.createConnection({ host: credentials.host, port: credentials.port });
 		let response = Buffer.alloc(0);
 		let settled = false;
 		let responseTimer: NodeJS.Timeout | undefined;

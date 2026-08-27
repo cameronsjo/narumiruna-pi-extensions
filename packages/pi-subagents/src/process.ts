@@ -4,8 +4,12 @@ import * as path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import { getPackageDir } from "@earendil-works/pi-coding-agent";
+import {
+	BROKER_CREDENTIAL_FD,
+	brokerCredentialEnvironment,
+	serializeBrokerCredentials,
+} from "./broker-credentials.js";
 import { CHILD_COMMUNICATION_TOOL_NAMES } from "./child-communication-tools.js";
-import { brokerEnvironment } from "./message-broker.js";
 import type { ChildRequest, ChildResult } from "./types.js";
 
 const CORE_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
@@ -146,6 +150,7 @@ async function executeProcess(
 		let forceClose: NodeJS.Timeout | undefined;
 		let escalation: NodeJS.Timeout | undefined;
 		let termination: Promise<void> | undefined;
+		let removeCredentialErrorListener = () => undefined;
 		const finish = (code: number, launchError?: string) => {
 			if (settled || finishRequested) return;
 			finishRequested = true;
@@ -155,6 +160,7 @@ async function executeProcess(
 				if (deadline) clearTimeout(deadline);
 				if (forceClose) clearTimeout(forceClose);
 				if (escalation) clearTimeout(escalation);
+				removeCredentialErrorListener();
 				request.signal.removeEventListener("abort", onAbort);
 				resolve({ code, cancelled, timedOut, launchError });
 			};
@@ -194,10 +200,10 @@ async function executeProcess(
 				cwd: request.cwd,
 				detached: globalThis.process.platform !== "win32",
 				shell: false,
-				stdio: ["ignore", "pipe", "pipe"],
+				stdio: ["ignore", "pipe", "pipe", "pipe"],
 				env: {
 					...globalThis.process.env,
-					...brokerEnvironment(request.communication),
+					...brokerCredentialEnvironment(),
 					PI_SUBAGENT_DEPTH: String(
 						(Number.parseInt(globalThis.process.env.PI_SUBAGENT_DEPTH ?? "0", 10) || 0) + 1,
 					),
@@ -235,6 +241,25 @@ async function executeProcess(
 			if (spawned) terminate(1);
 			else finish(1, error.message);
 		});
+		const credentialPipe = process.stdio[BROKER_CREDENTIAL_FD];
+		if (!credentialPipe || !("end" in credentialPipe)) {
+			errorMessage = "Subagent broker credential pipe is unavailable.";
+			terminate(1);
+		} else {
+			const onCredentialError = () => {
+				errorMessage = "Subagent broker credential transfer failed.";
+				terminate(1);
+			};
+			credentialPipe.once("error", onCredentialError);
+			removeCredentialErrorListener = () => {
+				credentialPipe.removeListener("error", onCredentialError);
+			};
+			try {
+				credentialPipe.end(serializeBrokerCredentials(request.communication));
+			} catch {
+				onCredentialError();
+			}
+		}
 	});
 
 	const output = terminalOutput ?? latestOutput;
@@ -339,6 +364,7 @@ export function terminateWindowsProcessTree(
 	process: ChildProcess,
 	spawnProcess: typeof spawn = spawn,
 	taskkillPath = resolveTaskkillPath(),
+	helperTimeoutMs = KILL_GRACE_MS,
 ): Promise<void> {
 	if (!process.pid || !taskkillPath) {
 		killImmediateChild(process);
@@ -347,9 +373,16 @@ export function terminateWindowsProcessTree(
 	return new Promise((resolve) => {
 		let settled = false;
 		let treeKiller: ChildProcess;
-		const finish = (fallback: boolean) => {
+		let deadline: NodeJS.Timeout | undefined;
+		const onError = () => finish(true, false);
+		const onClose = (code: number | null) => finish(code !== 0, false);
+		const finish = (fallback: boolean, terminateHelper: boolean) => {
 			if (settled) return;
 			settled = true;
+			if (deadline) clearTimeout(deadline);
+			treeKiller.removeListener("error", onError);
+			treeKiller.removeListener("close", onClose);
+			if (terminateHelper) killImmediateChild(treeKiller);
 			if (fallback) killImmediateChild(process);
 			resolve();
 		};
@@ -363,8 +396,10 @@ export function terminateWindowsProcessTree(
 			resolve();
 			return;
 		}
-		treeKiller.once("error", () => finish(true));
-		treeKiller.once("close", (code) => finish(code !== 0));
+		treeKiller.once("error", onError);
+		treeKiller.once("close", onClose);
+		deadline = setTimeout(() => finish(true, true), helperTimeoutMs);
+		deadline.unref();
 	});
 }
 

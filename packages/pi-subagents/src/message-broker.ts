@@ -3,11 +3,6 @@ import net, { type AddressInfo, type Server, type Socket } from "node:net";
 import type { BrokerCredentials } from "./types.js";
 
 export const BROKER_HOST = "127.0.0.1" as const;
-export const BROKER_ENV = {
-	host: "PI_SUBAGENT_BROKER_HOST",
-	port: "PI_SUBAGENT_BROKER_PORT",
-	token: "PI_SUBAGENT_BROKER_TOKEN",
-} as const;
 export const MAX_MESSAGE_BYTES = 50 * 1024;
 export const MAX_FRAME_BYTES = 384 * 1024;
 export const MAX_ERROR_BYTES = 8 * 1024;
@@ -408,14 +403,6 @@ export class MessageBroker {
 		this.sockets.clear();
 		this.address = undefined;
 	}
-}
-
-export function brokerEnvironment(credentials: BrokerCredentials): NodeJS.ProcessEnv {
-	return {
-		[BROKER_ENV.host]: credentials.host,
-		[BROKER_ENV.port]: String(credentials.port),
-		[BROKER_ENV.token]: credentials.token,
-	};
 }
 
 export function validateMessage(message: string, label: string): void {

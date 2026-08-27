@@ -5,7 +5,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DefaultResourceLoader, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { test } from "vitest";
-import { BROKER_ENV } from "../src/message-broker.js";
 
 const packageDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -85,9 +84,6 @@ test("Pi's Jiti loader resolves the package entry and child bridge", async () =>
 	try {
 		mkdirSync(agentDir, { recursive: true });
 		process.env.PI_CODING_AGENT_DIR = agentDir;
-		process.env[BROKER_ENV.host] = "127.0.0.1";
-		process.env[BROKER_ENV.port] = "31337";
-		process.env[BROKER_ENV.token] = "a".repeat(64);
 		const mainLoader = new DefaultResourceLoader({
 			cwd: packageDirectory,
 			agentDir,
@@ -118,17 +114,8 @@ test("Pi's Jiti loader resolves the package entry and child bridge", async () =>
 		const loadedChild = childLoader.getExtensions();
 		assert.deepEqual(loadedChild.errors, []);
 		assert.equal(loadedChild.extensions.length, 1);
-		assert.deepEqual(
-			[...(loadedChild.extensions[0]?.tools.keys() ?? [])],
-			["subagent-ask", "subagent-wait"],
-		);
-		assert.equal(process.env[BROKER_ENV.host], undefined);
-		assert.equal(process.env[BROKER_ENV.port], undefined);
-		assert.equal(process.env[BROKER_ENV.token], undefined);
+		assert.deepEqual([...(loadedChild.extensions[0]?.tools.keys() ?? [])], []);
 	} finally {
-		delete process.env[BROKER_ENV.host];
-		delete process.env[BROKER_ENV.port];
-		delete process.env[BROKER_ENV.token];
 		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 		rmSync(root, { recursive: true, force: true });

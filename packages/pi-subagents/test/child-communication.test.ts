@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
+import { Check } from "typebox/value";
 import { afterEach, test } from "vitest";
 import { createMockPi } from "../../../test/support.js";
 import {
-	type CapturedBrokerEnvironment,
-	captureBrokerEnvironment,
-} from "../src/child-communication-bridge.js";
+	BROKER_CREDENTIAL_FD,
+	BROKER_CREDENTIAL_FD_ENV,
+	captureBrokerCredentials,
+} from "../src/broker-credentials.js";
 import {
 	type ChildCommunicationClient,
 	createChildCommunicationExtension,
 } from "../src/child-communication-tools.js";
-import { BROKER_ENV } from "../src/message-broker.js";
+import type { BrokerCredentials } from "../src/types.js";
 
 interface RegisteredTool {
 	name: string;
@@ -23,9 +25,7 @@ interface RegisteredTool {
 }
 
 afterEach(() => {
-	delete process.env[BROKER_ENV.host];
-	delete process.env[BROKER_ENV.port];
-	delete process.env[BROKER_ENV.token];
+	delete process.env[BROKER_CREDENTIAL_FD_ENV];
 });
 
 test("registers fixed ask and wait schemas and returns plain-text results", async () => {
@@ -56,6 +56,10 @@ test("registers fixed ask and wait schemas and returns plain-text results", asyn
 		requestId: "req_1",
 		timeout: 1.5,
 	});
+	const malformedAlias = { requestId: "req_1", timeoutMs: "1500" };
+	const preparedMalformed = tools[1]?.prepareArguments?.(malformedAlias);
+	assert.deepEqual(preparedMalformed, malformedAlias);
+	assert.equal(Check(tools[1]?.parameters, preparedMalformed), false);
 	const asked = await tools[0]?.execute("ask", { message: "Question" });
 	assert.deepEqual(asked, {
 		content: [{ type: "text", text: "req_1" }],
@@ -90,23 +94,26 @@ test("child tool failures throw and preserve AbortError", async () => {
 	);
 });
 
-test("captures and deletes valid broker environment", () => {
-	const expected: CapturedBrokerEnvironment = {
+test("captures credentials from the declared private descriptor", () => {
+	const expected: BrokerCredentials = {
 		host: "127.0.0.1",
 		port: 31_337,
 		token: "a".repeat(64),
 	};
-	process.env[BROKER_ENV.host] = expected.host;
-	process.env[BROKER_ENV.port] = String(expected.port);
-	process.env[BROKER_ENV.token] = expected.token;
-	assert.deepEqual(captureBrokerEnvironment(), expected);
-	assert.equal(process.env[BROKER_ENV.host], undefined);
-	assert.equal(process.env[BROKER_ENV.port], undefined);
-	assert.equal(process.env[BROKER_ENV.token], undefined);
+	process.env[BROKER_CREDENTIAL_FD_ENV] = String(BROKER_CREDENTIAL_FD);
+	assert.deepEqual(
+		captureBrokerCredentials(() => JSON.stringify(expected)),
+		expected,
+	);
+	assert.equal(process.env[BROKER_CREDENTIAL_FD_ENV], undefined);
 });
 
-test("rejects partial broker environment after deleting it", () => {
-	process.env[BROKER_ENV.host] = "127.0.0.1";
-	assert.throws(() => captureBrokerEnvironment(), /invalid.*broker environment/i);
-	assert.equal(process.env[BROKER_ENV.host], undefined);
+test("rejects invalid credential descriptors and payloads after deleting the marker", () => {
+	process.env[BROKER_CREDENTIAL_FD_ENV] = "4";
+	assert.throws(() => captureBrokerCredentials(() => "{}"), /invalid.*descriptor/i);
+	assert.equal(process.env[BROKER_CREDENTIAL_FD_ENV], undefined);
+
+	process.env[BROKER_CREDENTIAL_FD_ENV] = String(BROKER_CREDENTIAL_FD);
+	assert.throws(() => captureBrokerCredentials(() => "{}"), /invalid.*credentials/i);
+	assert.equal(process.env[BROKER_CREDENTIAL_FD_ENV], undefined);
 });
