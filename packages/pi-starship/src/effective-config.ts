@@ -18,6 +18,7 @@ export function projectEffectiveConfig(config: StarshipConfig): TomlTable {
 			symbol: module.symbol,
 		};
 		if (definition.styleDefaults) {
+			if (definition.fallbackStyle) table.style = module.style;
 			for (const field of Object.keys(definition.styleDefaults)) {
 				table[field] = module.styles[field] ?? "";
 			}

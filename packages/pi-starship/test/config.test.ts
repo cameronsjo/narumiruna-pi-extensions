@@ -357,6 +357,52 @@ test("model truncation options normalize values and reject invalid directions in
 	assert.equal(oversized.diagnostics[0]?.path, "model.truncation_length");
 });
 
+test("thinking level styles preserve and validate the legacy fallback independently", () => {
+	assert.deepEqual(BUILT_IN_CONFIG.modules.thinking.styles, {
+		style_off: "",
+		style_minimal: "",
+		style_low: "",
+		style_medium: "",
+		style_high: "",
+		style_xhigh: "",
+		style_max: "",
+	});
+
+	const valid = normalizeConfig({
+		thinking: {
+			style: "fg:#010203 bg:#040506 bold",
+			style_high: "italic red",
+		},
+	});
+	assert.equal(valid.config.modules.thinking.style, "fg:#010203 bg:#040506 bold");
+	assert.equal(valid.config.modules.thinking.styles.style_high, "italic red");
+	assert.deepEqual(valid.diagnostics, []);
+
+	const invalid = normalizeConfig({
+		thinking: { style: "not-a-color", style_low: "also-not-a-color", style_high: 7 },
+		username: { style: "blue" },
+	});
+	assert.equal(invalid.config.modules.thinking.style, BUILT_IN_CONFIG.modules.thinking.style);
+	assert.equal(invalid.config.modules.thinking.styles.style_low, "");
+	assert.equal(invalid.config.modules.thinking.styles.style_high, "");
+	assert.deepEqual(
+		invalid.diagnostics.map((item) => item.path),
+		["thinking.style_high", "username.style", "thinking.style", "thinking.style_low"],
+	);
+});
+
+test("provider aliases normalize as exact string mappings", () => {
+	assert.deepEqual(BUILT_IN_CONFIG.modules.provider.options, { provider_aliases: {} });
+	const normalized = normalizeConfig({
+		provider: { provider_aliases: { "openai-codex": "codex", anthropic: "claude" } },
+	});
+	assert.deepEqual(normalized.config.modules.provider.options.provider_aliases, {
+		"openai-codex": "codex",
+		anthropic: "claude",
+	});
+	assert.deepEqual(normalized.diagnostics, []);
+});
+
 test("valid TOML loads root, palette, module, and extension status settings", () => {
 	const root = mkdtempSync(join(tmpdir(), "pi-starship-config-"));
 	const path = join(root, CONFIG_FILE_NAME);

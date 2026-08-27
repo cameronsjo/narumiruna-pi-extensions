@@ -279,6 +279,9 @@ export function normalizeConfig(value: unknown): {
 		);
 		validateLiteralStyles(module.formatAst, palette, `${name}.format`, diagnostics);
 		if (definition.styleDefaults) {
+			if (definition.fallbackStyle) {
+				validateModuleStyleField(name, "style", module, palette, diagnostics);
+			}
 			for (const field of Object.keys(definition.styleDefaults)) {
 				validateModuleStyleField(name, field, module, palette, diagnostics);
 			}
@@ -301,6 +304,7 @@ function normalizeModule(
 	const optionSchemas: Readonly<Record<string, ModuleOptionSchema>> = definition.options ?? {};
 	const known = new Set(["format", "symbol", "disabled", ...Object.keys(optionSchemas)]);
 	if (definition.styleDefaults) {
+		if (definition.fallbackStyle) known.add("style");
 		for (const field of Object.keys(definition.styleDefaults)) known.add(field);
 	} else if (!definition.displayDefaults) known.add("style");
 	if (definition.displayDefaults) known.add("display");
@@ -335,6 +339,11 @@ function normalizeModule(
 		if (typeof value.symbol !== "string") {
 			diagnostics.push(typeDiagnostic(`${name}.symbol`, "string"));
 		} else module.symbol = value.symbol;
+	}
+	if (definition.styleDefaults && definition.fallbackStyle && value.style !== undefined) {
+		if (typeof value.style !== "string") {
+			diagnostics.push(typeDiagnostic(`${name}.style`, "string"));
+		} else module.style = value.style;
 	}
 	if (definition.styleDefaults) {
 		for (const field of Object.keys(definition.styleDefaults)) {
