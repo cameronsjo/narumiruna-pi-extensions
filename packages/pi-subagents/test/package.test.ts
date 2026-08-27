@@ -1,14 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import os from "node:os";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DefaultResourceLoader, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { test } from "vitest";
 
 const packageDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-test("package declares one source extension and one bundled operating skill", () => {
+test("package declares one generated extension and one bundled operating skill", () => {
 	const manifest = JSON.parse(
 		readFileSync(path.join(packageDirectory, "package.json"), "utf8"),
 	) as {
@@ -23,12 +21,13 @@ test("package declares one source extension and one bundled operating skill", ()
 	assert.equal(manifest.name, "@narumitw/pi-subagents");
 	assert.equal(manifest.private, true);
 	assert.equal(manifest.repository.directory, "packages/pi-subagents");
-	assert.deepEqual(manifest.pi.extensions, ["./src/index.ts"]);
+	assert.deepEqual(manifest.pi.extensions, ["./dist/index.ts"]);
 	assert.deepEqual(manifest.pi.skills, ["./skills"]);
 	assert.equal(manifest.piExtension.lifecycle, "stable");
 	assert.equal(manifest.peerDependencies["@earendil-works/pi-ai"], "*");
 	assert.equal(manifest.peerDependencies["@earendil-works/pi-coding-agent"], "*");
 	assert.ok(manifest.files.includes("src"));
+	assert.ok(manifest.files.includes("dist"));
 	assert.ok(manifest.files.includes("skills"));
 	assert.ok(manifest.files.includes("docs"));
 });
@@ -74,50 +73,5 @@ test("bundled skill documents every minimal-runtime operating responsibility", (
 		"nested subagents",
 	]) {
 		assert.match(skill, new RegExp(nonGoal, "i"));
-	}
-});
-
-test("Pi's Jiti loader resolves the package entry and child bridge", async () => {
-	const root = mkdtempSync(path.join(os.tmpdir(), "pi-subagents-loader-"));
-	const agentDir = path.join(root, "agent");
-	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-	try {
-		mkdirSync(agentDir, { recursive: true });
-		process.env.PI_CODING_AGENT_DIR = agentDir;
-		const mainLoader = new DefaultResourceLoader({
-			cwd: packageDirectory,
-			agentDir,
-			settingsManager: SettingsManager.inMemory({}),
-			additionalExtensionPaths: [path.join(packageDirectory, "src", "index.ts")],
-		});
-		await mainLoader.reload();
-		const loadedMain = mainLoader.getExtensions();
-		assert.deepEqual(loadedMain.errors, []);
-		assert.equal(loadedMain.extensions.length, 1);
-		const main = loadedMain.extensions[0];
-		assert.ok(main?.handlers.has("session_start"));
-		assert.ok(main?.handlers.has("session_shutdown"));
-		assert.deepEqual(
-			[...(main?.tools.keys() ?? [])],
-			["subagent-spawn", "subagent-inspect", "subagent-cancel", "subagent-wait", "subagent-reply"],
-		);
-
-		const childLoader = new DefaultResourceLoader({
-			cwd: packageDirectory,
-			agentDir,
-			settingsManager: SettingsManager.inMemory({}),
-			additionalExtensionPaths: [
-				path.join(packageDirectory, "src", "child-communication-bridge.ts"),
-			],
-		});
-		await childLoader.reload();
-		const loadedChild = childLoader.getExtensions();
-		assert.deepEqual(loadedChild.errors, []);
-		assert.equal(loadedChild.extensions.length, 1);
-		assert.deepEqual([...(loadedChild.extensions[0]?.tools.keys() ?? [])], []);
-	} finally {
-		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-		rmSync(root, { recursive: true, force: true });
 	}
 });

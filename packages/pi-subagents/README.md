@@ -34,20 +34,26 @@ pi install git:github.com/narumiruna/pi-extensions
 
 This Git installation enables every stable extension listed in the repository root manifest, including Pi Subagents.
 
-To install only Pi Subagents, clone the repository and install its package directory:
+To install only Pi Subagents, clone the repository, install dependencies, build its generated runtime, and install its package directory:
 
 ```bash
 git clone https://github.com/narumiruna/pi-extensions.git
-pi install ./pi-extensions/packages/pi-subagents
+cd pi-extensions
+npm install
+npm --workspace @narumitw/pi-subagents run build
+pi install ./packages/pi-subagents
 ```
 
-Try the extension and bundled skill without installing from a local checkout:
+Build before trying the extension and bundled skill from a local checkout:
 
 ```bash
+npm --workspace @narumitw/pi-subagents run build
 pi --no-extensions -e ./packages/pi-subagents
 ```
 
-The package uses its source entrypoint and does not require a build before local loading.
+The package entry is generated at `dist/index.ts` and loaded through Pi's Jiti runtime.
+
+An unbuilt local package directory cannot load its declared extension entry.
 
 Pi extensions and children with `bash`, `powershell`, `edit`, or `write` execute with your user permissions.
 
@@ -240,7 +246,9 @@ Jobs, broker requests, and retained results do not survive extension reload, ses
 
 ```text
 packages/pi-subagents/
+├── dist/                        # Generated Jiti runtime and child bridge
 ├── docs/                        # Concise tools and design references
+├── scripts/                     # Deterministic runtime builder
 ├── src/                         # Extension, broker, child bridge, and subprocess runtime
 ├── skills/subagents/           # Delegation and messaging operating manual
 ├── test/                        # Protocol, lifecycle, process, and policy tests
