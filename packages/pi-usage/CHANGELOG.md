@@ -1,5 +1,11 @@
 # @narumitw/pi-usage
 
+## 0.55.0
+
+### Minor Changes
+
+- 948affd: Publish Z.AI remaining five-hour and weekly plan percentages in the statusline.
+
 ## 0.54.0
 
 ### Minor Changes
