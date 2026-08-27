@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { sep } from "node:path";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { test } from "vitest";
-import { BUILT_IN_CONFIG, validateConfigDocument } from "../src/config.js";
+import { BUILT_IN_CONFIG, normalizeConfig, validateConfigDocument } from "../src/config.js";
 import { parseFormat } from "../src/format/formatter.js";
 import {
 	formatCount,
@@ -139,6 +139,76 @@ test("built-in root renders exactly the reachable nine module categories without
 		assert.doesNotMatch(plain, omitted);
 	}
 	assert.ok(rendered.chunks.every((chunk) => chunk.style?.background === undefined));
+});
+
+test("thinking level styles override the compatible module fallback", () => {
+	const { config, diagnostics } = normalizeConfig({
+		format: "$thinking",
+		thinking: {
+			format: "[$level]($style)",
+			style: "fg:#010203 bg:#040506 bold",
+			style_high: "italic red",
+		},
+	});
+	assert.deepEqual(diagnostics, []);
+
+	const high = renderStatusline(config, fixture({ thinkingLevel: "high" })).modules.thinking[0];
+	assert.deepEqual(high?.style, {
+		foreground: { kind: "named", name: "red" },
+		italic: true,
+	});
+	const low = renderStatusline(config, fixture({ thinkingLevel: "low" })).modules.thinking[0];
+	assert.deepEqual(low?.style, {
+		foreground: { kind: "rgb", red: 1, green: 2, blue: 3 },
+		background: { kind: "rgb", red: 4, green: 5, blue: 6 },
+		bold: true,
+	});
+	const future = renderStatusline(config, fixture({ thinkingLevel: "future" })).modules.thinking[0];
+	assert.deepEqual(future?.style, low?.style);
+});
+
+test("thinking fallback keeps bundled Powerline preset backgrounds and modifiers", () => {
+	for (const id of [
+		"catppuccin-powerline",
+		"gruvbox-rainbow",
+		"pastel-powerline",
+		"tokyo-night",
+	] as const) {
+		const preset = STARSHIP_PRESETS.find((candidate) => candidate.id === id);
+		assert.ok(preset, id);
+		const loaded = validateConfigDocument(`/presets/${id}.toml`, preset.rawDocument);
+		const style = renderStatusline(loaded.config, fixture()).modules.thinking[0]?.style;
+		assert.notEqual(style?.background, undefined, id);
+		assert.equal(style?.bold, true, id);
+	}
+});
+
+test("provider aliases are exact, empty-capable, and terminal-safe", () => {
+	const aliased = normalizeConfig({
+		format: "$provider",
+		provider: {
+			format: "$provider",
+			provider_aliases: {
+				"openai-codex": "codex\u001b[31m\nsafe",
+				anthropic: "",
+			},
+		},
+	}).config;
+	assert.equal(
+		renderStatusline(aliased, fixture({ model: { provider: "openai-codex", id: "gpt-5.6" } })).ansi,
+		"codex safe",
+	);
+	assert.equal(
+		renderStatusline(aliased, fixture({ model: { provider: "anthropic", id: "claude" } })).ansi,
+		"",
+	);
+	assert.equal(
+		renderStatusline(
+			aliased,
+			fixture({ model: { provider: "openai\u001b[31m\nunsafe", id: "gpt-5.6" } }),
+		).ansi,
+		"openai unsafe",
+	);
 });
 
 test("context supports native percentage/window precision", () => {

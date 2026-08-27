@@ -168,6 +168,7 @@ export interface ModuleDefinition<Name extends string> {
 	variables: readonly string[];
 	defaults: ModuleDefaults;
 	styleDefaults?: Readonly<Record<string, string>>;
+	fallbackStyle?: boolean;
 	displayDefaults?: readonly ModuleDisplayConfig[];
 	styleVariables?: readonly string[];
 	resolveStyleVariables?(context: ModuleStyleContext): Readonly<Record<string, string>> | undefined;

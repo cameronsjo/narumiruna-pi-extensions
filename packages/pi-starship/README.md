@@ -200,6 +200,7 @@ icons = { "foo:*" = "🧪", "third_party/key" = "◎", fallback = "•" }
 Every module table supports `format`, `symbol`, and `disabled`.
 Most modules also support one `style`.
 The exceptions are `git_metrics` (`added_style` and `deleted_style`), `username` (`style_user` and `style_root`), and the threshold-selected `context` and `cost` `display` arrays described below.
+`thinking` retains its `style` fallback and also accepts the per-level overrides documented below.
 Module-specific options are catalog-owned and type-checked; unknown options warn and stay inactive.
 Version formats replace `$raw`.
 Detection arrays replace defaults when non-empty and inspect only one listing of the current directory.
@@ -264,6 +265,22 @@ An invalid root format falls back to the built-in root format; an invalid module
 
 The background-free direct defaults are: `brand = "bold white"`, `provider`/`model` = `"bold blue"`, `thinking`/`git_branch`/`turn` = `"bold purple"`, `directory`/`git_worktree` = `"cyan bold"`, `github_pr = "bold blue"`, `git_commit = "green bold"`, `git_state`/`activity`/`time` = `"bold yellow"`, `git_status = "red bold"`, `tokens = "bold cyan"`, `cache = "bold green"`, `extension_status = "dimmed white"`, `direnv = "bold bright-yellow"`, and `fill = "bold black"`.
 Context, cost, Git metrics, and username use the state/multi-style defaults below.
+
+### Thinking level styles
+
+`thinking` can override its appearance for `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max` independently:
+
+```toml
+[thinking]
+style = "bold purple"
+style_low = "bold blue"
+style_high = "bold yellow"
+style_max = "bold red"
+```
+
+The matching `style_<level>` wins when it is non-empty.
+Every unset or empty level override uses the existing `style`, including levels added by a future Pi release.
+Invalid fallback and level styles warn and fall back independently without changing other levels.
 
 ### State-selected styles
 
@@ -421,7 +438,7 @@ Hostname trimming runs before exact alias lookup, matching Starship.
 These transformations affect display only.
 Collectors retain bounded, control-sanitized source metadata.
 
-### Model aliases and truncation
+### Model and provider aliases and model truncation
 
 The model module accepts exact `model_aliases`, Starship-style `truncation_length` and `truncation_symbol` options, plus the Pi-specific `truncation_direction` option:
 
@@ -440,6 +457,16 @@ When no alias matches, truncation runs after the built-in Claude/GPT shortening 
 It always changes display only—the provider model ID is untouched.
 Terminal control sequences in model IDs and truncation symbols are removed at render time.
 An empty symbol truncates without a marker.
+
+The provider module accepts exact display aliases without changing the selected provider or model:
+
+```toml
+[provider]
+provider_aliases = { "openai-codex" = "codex", "amazon-bedrock" = "bedrock" }
+```
+
+An empty alias hides only the provider text.
+Provider names and aliases are stripped of terminal controls at render time.
 For example, `middle` can retain both a Hugging Face model family and its variant, while `start` is useful when a llama.cpp server reports an absolute model path.
 pi-starship treats model IDs as opaque strings and does not parse paths, repositories, GGUF suffixes, or quantization names.
 
