@@ -7,6 +7,7 @@ import {
 } from "./oauth-credential-source.js";
 import { normalizeCodexBackendPayload } from "./providers/codex.js";
 import { normalizeGitHubCopilotUsagePayload } from "./providers/github-copilot.js";
+import { normalizeKimiCodingUsagePayload } from "./providers/kimi-coding.js";
 import { normalizeOpenCodeZenPayload } from "./providers/opencode-zen.js";
 import { normalizeOpenRouterKeyPayload } from "./providers/openrouter.js";
 import { normalizeXaiBillingPayload } from "./providers/xai.js";
@@ -14,6 +15,7 @@ import { normalizeZaiQuotaPayload } from "./providers/zai.js";
 import type {
 	CodexBackendPayload,
 	GitHubCopilotUsagePayload,
+	KimiCodingUsagePayload,
 	OpenCodeZenPayload,
 	OpenRouterKeyPayload,
 	PiModel,
@@ -29,6 +31,7 @@ const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 const GITHUB_COPILOT_USAGE_URL = "https://api.github.com/copilot_internal/user";
 const OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key";
 const OPENCODE_GO_USAGE_URL = "https://opencode.ai/zen/go/v1/usage";
+const KIMI_CODING_USAGE_URL = "https://api.kimi.com/coding/v1/usages";
 const XAI_USER_URL = "https://cli-chat-proxy.grok.com/v1/user?include=subscription";
 const XAI_BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
 const XAI_CLIENT_HEADERS = Object.freeze({
@@ -108,6 +111,22 @@ export const SUPPORTED_ADAPTERS: readonly UsageProviderAdapter[] = [
 				"OpenCode Zen usage endpoint",
 			);
 			return normalizeOpenCodeZenPayload(payload as OpenCodeZenPayload, Date.now());
+		},
+	},
+	{
+		id: "kimi-coding",
+		displayName: "Kimi For Coding",
+		semantics: { kind: "consumer-subscription", label: "Kimi Coding Plan usage" },
+		async query(auth, signal, timeoutMs) {
+			const payload = await fetchProviderJson(
+				KIMI_CODING_USAGE_URL,
+				auth,
+				signal,
+				timeoutMs,
+				"Kimi Coding usage endpoint",
+				{ redirect: "error" },
+			);
+			return normalizeKimiCodingUsagePayload(payload as KimiCodingUsagePayload, Date.now());
 		},
 	},
 	{
@@ -374,6 +393,7 @@ export async function fetchProviderJson(
 			...(request.redirect ? { redirect: request.redirect } : {}),
 			signal: controller.signal,
 		});
+		if (response.redirected) throw new Error(`${description} refused a redirected response.`);
 		if (controller.signal.aborted)
 			throw Object.assign(new Error("Usage query aborted."), { name: "AbortError" });
 		const text = await readBoundedResponse(
@@ -667,6 +687,7 @@ function hasOfficialUrlOrigin(value: string, providerId: string): boolean {
 		if (providerId === "openai-codex") return url.origin === "https://chatgpt.com";
 		if (providerId === "openrouter") return url.origin === "https://openrouter.ai";
 		if (providerId === "opencode-go") return url.origin === "https://opencode.ai";
+		if (providerId === "kimi-coding") return url.origin === "https://api.kimi.com";
 		if (providerId === "xai") return url.origin === "https://api.x.ai";
 		if (providerId === "zai") return url.origin === "https://api.z.ai";
 		if (providerId === "zai-coding-cn") return url.origin === "https://open.bigmodel.cn";

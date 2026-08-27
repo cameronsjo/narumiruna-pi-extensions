@@ -34,6 +34,7 @@ export {
 export { formatProviderStates, formatUsageReport, formatUsageStatusline } from "./format.js";
 export { normalizeCodexBackendPayload } from "./providers/codex.js";
 export { normalizeGitHubCopilotUsagePayload } from "./providers/github-copilot.js";
+export { normalizeKimiCodingUsagePayload } from "./providers/kimi-coding.js";
 export { normalizeOpenCodeZenPayload } from "./providers/opencode-zen.js";
 export { normalizeOpenRouterKeyPayload } from "./providers/openrouter.js";
 export { normalizeXaiBillingPayload } from "./providers/xai.js";
@@ -61,6 +62,7 @@ export {
 	usageSettingsPath,
 } from "./settings.js";
 export type {
+	KimiCodingUsagePayload,
 	ProviderUsageState,
 	ResolvedUsageAuth,
 	UsageBucket,
