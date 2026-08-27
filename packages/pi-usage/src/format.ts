@@ -215,10 +215,10 @@ function formatKimiCodingStatusline(report: UsageReport): string | undefined {
 
 function formatCurrencyMetric(metric: UsageReport["metrics"][number]): string {
 	if (typeof metric.value !== "number") return String(metric.value);
-	const currency = metric.currency ?? "USD";
-	if (currency === "USD") return `$${metric.value.toFixed(2)}`;
-	if (currency === "CNY") return `¥${metric.value.toFixed(2)}`;
-	return `${metric.value.toFixed(2)} ${currency}`;
+	if (!metric.currency) return "unavailable";
+	if (metric.currency === "USD") return `$${metric.value.toFixed(2)}`;
+	if (metric.currency === "CNY") return `¥${metric.value.toFixed(2)}`;
+	return `${metric.value.toFixed(2)} ${metric.currency}`;
 }
 
 function formatXaiReport(lines: string[], report: UsageReport): void {

@@ -128,32 +128,49 @@ function parseBoosterWallet(value: unknown): UsageMetric[] {
 	const leftRaw = asNonnegativeInteger(balance.amountLeft) ?? 0;
 	const monthlyLimit = parseMoney(wallet.monthlyChargeLimit);
 	const monthlyUsed = parseMoney(wallet.monthlyUsed);
-	const currency = monthlyLimit?.currency ?? monthlyUsed?.currency ?? "USD";
+	const currencies = new Set(
+		[monthlyLimit?.currency, monthlyUsed?.currency].filter(
+			(currency): currency is string => currency !== undefined,
+		),
+	);
+	if (currencies.size !== 1) return [];
+	const currency = currencies.values().next().value;
+	if (!currency) return [];
 	const total = fixedPointToMajor(totalRaw);
 	const left = fixedPointToMajor(leftRaw);
 	if (total === undefined || left === undefined) return [];
 
-	return [
+	const metrics: UsageMetric[] = [
 		{ id: "booster-balance", label: "Balance", value: left, unit: "currency", currency },
 		{ id: "booster-total", label: "Total balance", value: total, unit: "currency", currency },
-		{
+	];
+	if (monthlyUsed) {
+		metrics.push({
 			id: "booster-monthly-used",
 			label: "Used this month",
-			value: (monthlyUsed?.cents ?? 0) / 100,
+			value: monthlyUsed.cents / 100,
 			unit: "currency",
 			currency,
-		},
-		{
+		});
+	}
+	if (wallet.monthlyChargeLimitEnabled === false) {
+		metrics.push({
 			id: "booster-monthly-limit",
 			label: "Monthly limit",
-			value:
-				wallet.monthlyChargeLimitEnabled === true && (monthlyLimit?.cents ?? 0) > 0
-					? (monthlyLimit?.cents ?? 0) / 100
-					: "unlimited",
+			value: "unlimited",
 			unit: "currency",
 			currency,
-		},
-	];
+		});
+	} else if (wallet.monthlyChargeLimitEnabled === true && monthlyLimit) {
+		metrics.push({
+			id: "booster-monthly-limit",
+			label: "Monthly limit",
+			value: monthlyLimit.cents / 100,
+			unit: "currency",
+			currency,
+		});
+	}
+	return metrics;
 }
 
 function parseMoney(value: unknown): { cents: number; currency: string } | undefined {

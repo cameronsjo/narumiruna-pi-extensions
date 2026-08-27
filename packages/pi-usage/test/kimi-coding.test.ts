@@ -177,6 +177,63 @@ test("Kimi adapter keeps booster-wallet currency separate from plan counts", () 
 	assert.equal(formatUsageStatusline(report), undefined);
 });
 
+test("Kimi booster wallet omits unverifiable currency and absent monthly fields", () => {
+	const missingCurrency = {
+		...combinedPlanFixture(),
+		...fixture("booster-wallet"),
+	} as KimiCodingUsagePayload & {
+		boosterWallet?: {
+			monthlyChargeLimit?: Record<string, unknown>;
+			monthlyUsed?: Record<string, unknown>;
+		};
+	};
+	assert.ok(missingCurrency.boosterWallet);
+	delete missingCurrency.boosterWallet.monthlyChargeLimit;
+	delete missingCurrency.boosterWallet.monthlyUsed;
+	assert.deepEqual(normalizeKimiCodingUsagePayload(missingCurrency, 925).metrics, []);
+
+	const conflicting = {
+		...combinedPlanFixture(),
+		...fixture("booster-wallet"),
+	} as KimiCodingUsagePayload & {
+		boosterWallet?: { monthlyUsed?: Record<string, unknown> };
+	};
+	assert.ok(conflicting.boosterWallet?.monthlyUsed);
+	conflicting.boosterWallet.monthlyUsed.currency = "CNY";
+	assert.deepEqual(normalizeKimiCodingUsagePayload(conflicting, 930).metrics, []);
+
+	const partial = fixture("booster-wallet") as KimiCodingUsagePayload & {
+		boosterWallet?: { monthlyUsed?: Record<string, unknown> };
+	};
+	assert.ok(partial.boosterWallet);
+	delete partial.boosterWallet.monthlyUsed;
+	const partialReport = normalizeKimiCodingUsagePayload(partial, 935);
+	assert.deepEqual(
+		partialReport.metrics.map((metric) => metric.id),
+		["booster-balance", "booster-total", "booster-monthly-limit"],
+	);
+	assert.doesNotMatch(formatUsageReport(partialReport, "current"), /Used this month:/u);
+
+	const withoutCurrency = normalizeKimiCodingUsagePayload(fixture("booster-wallet"), 940);
+	withoutCurrency.metrics = withoutCurrency.metrics.map(
+		({ currency: _currency, ...metric }) => metric,
+	);
+	const rendered = formatUsageReport(withoutCurrency, "current");
+	assert.match(rendered, /Balance:\s+unavailable of unavailable/u);
+	assert.doesNotMatch(rendered, /\$\d/u);
+});
+
+test("Kimi booster wallet honors an enabled zero-dollar monthly cap", () => {
+	const payload = fixture("booster-wallet") as KimiCodingUsagePayload & {
+		boosterWallet?: { monthlyChargeLimit?: Record<string, unknown> };
+	};
+	assert.ok(payload.boosterWallet?.monthlyChargeLimit);
+	payload.boosterWallet.monthlyChargeLimit.priceInCents = "0";
+	const report = normalizeKimiCodingUsagePayload(payload, 945);
+	assert.equal(report.metrics.find((metric) => metric.id === "booster-monthly-limit")?.value, 0);
+	assert.match(formatUsageReport(report, "current"), /Monthly limit:\s+\$0\.00/u);
+});
+
 test("Kimi booster wallet preserves first-party minimum cents and unlimited monthly limits", () => {
 	const payload = fixture("booster-wallet") as {
 		boosterWallet?: {
