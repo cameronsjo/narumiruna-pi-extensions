@@ -1,5 +1,11 @@
 # @narumitw/pi-starship
 
+## 0.53.0
+
+### Minor Changes
+
+- ca3491a: Add per-level `thinking` styles that preserve the existing `style` fallback, and add exact terminal-safe `provider_aliases` for provider display names.
+
 ## 0.52.3
 
 ### Patch Changes
