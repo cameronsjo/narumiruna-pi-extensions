@@ -61,11 +61,11 @@ The extension registers these tools:
 
 Each tool sends JSON arguments to `codebase-memory-mcp cli <tool>` over standard input and returns the last JSON response written to standard output.
 
-Tool output is capped at Pi's 50 KB or 2,000-line limit, whichever is reached first.
+Validated JSON output over 2,000 lines is truncated with an explicit omission notice.
 
-The result states when additional CLI output was omitted.
+Standard output over 50 KB fails safely because the complete JSON response cannot be validated within the bounded capture.
 
-Spawn failures, nonzero exits, and missing JSON responses are reported as failed tool calls.
+Spawn failures, nonzero exits, oversized output, and missing JSON responses are reported as failed tool calls.
 
 ## 🔒 Security and privacy
 

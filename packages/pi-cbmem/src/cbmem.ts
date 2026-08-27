@@ -138,9 +138,17 @@ export async function callCodebaseMemory(
 				fail(cliFailure(tool, code, stderr));
 				return;
 			}
+			if (stdout.truncated) {
+				fail(
+					new Error(
+						`codebase-memory-mcp ${tool} exceeded ${formatSize(DEFAULT_MAX_BYTES)} before a complete JSON response could be validated`,
+					),
+				);
+				return;
+			}
 
 			try {
-				const response = stdout.truncated ? stdout.text : extractLastJson(stdout.text);
+				const response = extractLastJson(stdout.text);
 				const bounded = boundOutput(response, stdout);
 				succeed({
 					content: [{ type: "text", text: bounded.text }],

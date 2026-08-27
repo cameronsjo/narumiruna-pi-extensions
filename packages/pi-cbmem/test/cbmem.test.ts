@@ -40,6 +40,9 @@ process.stdin.on("end", () => {
     case "large":
       process.stdout.write(JSON.stringify({ payload: "界".repeat(30000), tail: "must-not-appear" }));
       return;
+    case "largeMalformed":
+      process.stdout.write("not-json".repeat(10000));
+      return;
     case "manyLines":
       process.stdout.write(JSON.stringify({ rows: Array.from({ length: 2500 }, (_, i) => i) }, null, 2));
       return;
@@ -85,7 +88,7 @@ test("cbmem registers complete Pi tool definitions", () => {
 	);
 	for (const tool of registered) {
 		assert.ok(tool.label);
-		assert.match(tool.description, /truncated/i);
+		assert.match(tool.description, /output is limited/i);
 		assert.equal((tool.parameters as { type?: unknown }).type, "object");
 		assert.equal(typeof tool.execute, "function");
 	}
@@ -105,20 +108,27 @@ test("CLI calls use the session cwd and preserve split UTF-8 output", async () =
 	assert.equal(result.details.truncated, false);
 });
 
-test("CLI output is bounded by Pi's byte and line limits", async () => {
-	for (const testMode of ["large", "manyLines"]) {
-		const result = await callCodebaseMemory(
-			"query_graph",
-			{ testMode },
-			undefined,
-			fixtureDirectory,
-			fixtureBinary,
+test("validated CLI output is bounded by Pi's line limit", async () => {
+	const result = await callCodebaseMemory(
+		"query_graph",
+		{ testMode: "manyLines" },
+		undefined,
+		fixtureDirectory,
+		fixtureBinary,
+	);
+	const text = resultText(result);
+	assert.equal(result.details.truncated, true);
+	assert.match(text, /additional output was omitted/);
+	assert.ok(Buffer.byteLength(text, "utf8") <= DEFAULT_MAX_BYTES);
+	assert.ok(countLines(text) <= DEFAULT_MAX_LINES);
+});
+
+test("byte-oversized stdout rejects before returning partial JSON", async () => {
+	for (const testMode of ["large", "largeMalformed"]) {
+		await assert.rejects(
+			callCodebaseMemory("query_graph", { testMode }, undefined, fixtureDirectory, fixtureBinary),
+			/exceeded 50(?:\.0)?KB before a complete JSON response could be validated/,
 		);
-		const text = resultText(result);
-		assert.equal(result.details.truncated, true);
-		assert.match(text, /additional output was omitted/);
-		assert.ok(Buffer.byteLength(text, "utf8") <= DEFAULT_MAX_BYTES);
-		assert.ok(countLines(text) <= DEFAULT_MAX_LINES);
 	}
 });
 
@@ -203,7 +213,7 @@ test("aborting a running call terminates its child", async () => {
 	assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
 });
 
-test("bundled skill enforces graph-first evidence and extension-neutral handoff", async () => {
+test("bundled skill enforces graph-first evidence and valid project-scoped calls", async () => {
 	const skill = await readFile(
 		path.join(packageDirectory, "skills", "codebase-memory", "SKILL.md"),
 		"utf8",
@@ -222,6 +232,24 @@ test("bundled skill enforces graph-first evidence and extension-neutral handoff"
 		assert.match(skill, evidence);
 	}
 	assert.doesNotMatch(skill, /delegate_task|Hermes/i);
+
+	for (const tool of [
+		"search_graph",
+		"trace_path",
+		"get_code_snippet",
+		"get_graph_schema",
+		"query_graph",
+		"search_code",
+		"check_index_coverage",
+		"detect_changes",
+	]) {
+		const calls = [...skill.matchAll(new RegExp(`\\b${tool}\\(([^)]*)\\)`, "g"))];
+		assert.ok(calls.length > 0, `expected at least one documented ${tool} call`);
+		assert.ok(
+			calls.every((call) => call[1]?.includes('project="<name>"')),
+			`expected every documented ${tool} call to include project`,
+		);
+	}
 });
 
 function resultText(result: Awaited<ReturnType<typeof callCodebaseMemory>>): string {

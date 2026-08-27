@@ -10,7 +10,7 @@ export type BridgeToolDefinition = Pick<
 >;
 
 const Project = Type.String({ description: "Indexed project name from list_projects." });
-const outputLimit = `Output is truncated to ${DEFAULT_MAX_LINES} lines or ${formatSize(DEFAULT_MAX_BYTES)}, whichever is reached first.`;
+const outputLimit = `Output is limited to ${DEFAULT_MAX_LINES} lines or ${formatSize(DEFAULT_MAX_BYTES)}; byte-oversized responses fail validation instead of returning partial JSON.`;
 
 export const TOOL_DEFINITIONS = [
 	{

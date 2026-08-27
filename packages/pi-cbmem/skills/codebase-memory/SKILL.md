@@ -20,33 +20,35 @@ Always prefer MCP graph tools over grep, glob, or file search for code discovery
 
 ## Quick Decision Matrix
 
+Use the exact `project="<name>"` returned by `list_projects` in every project-scoped call.
+
 | Question | Tool call |
 |----------|----------|
-| Who calls X? | `trace_path(direction="inbound")` |
-| What does X call? | `trace_path(direction="outbound")` |
-| Full call context | `trace_path(direction="both")` |
-| Find by name pattern | `search_graph(name_pattern="...")` |
-| Dead code | `search_graph(max_degree=0, exclude_entry_points=true)` |
-| Cross-service edges | `query_graph` with Cypher |
-| Impact of local changes | `detect_changes()` |
-| Risk-classified trace | `trace_path(risk_labels=true)` |
-| Text search | `search_code` or Grep |
+| Who calls X? | `trace_path(project="<name>", direction="inbound")` |
+| What does X call? | `trace_path(project="<name>", direction="outbound")` |
+| Full call context | `trace_path(project="<name>", direction="both")` |
+| Find by name pattern | `search_graph(project="<name>", name_pattern="...")` |
+| Dead code | `search_graph(project="<name>", max_degree=0, exclude_entry_points=true)` |
+| Cross-service edges | `query_graph(project="<name>", query="<cypher>")` |
+| Impact of local changes | `detect_changes(project="<name>")` |
+| Risk-classified trace | `trace_path(project="<name>", risk_labels=true)` |
+| Text search | `search_code(project="<name>", pattern="...")` or Grep |
 
 ## Exploration Workflow
 
-1. `list_projects` — check whether the project is indexed.
-2. `get_graph_schema` — understand node and edge types.
-3. `search_graph(label="Function", name_pattern=".*Pattern.*")` — find code.
-4. `get_code_snippet(qualified_name="project.path.FuncName")` — read source.
-5. `check_index_coverage(paths=["path/to/file"])` — validate every evidence path.
+1. `list_projects` — check whether the project is indexed and copy its exact name.
+2. `get_graph_schema(project="<name>")` — understand node and edge types.
+3. `search_graph(project="<name>", label="Function", name_pattern=".*Pattern.*")` — find code.
+4. `get_code_snippet(project="<name>", qualified_name="project.path.FuncName")` — read source.
+5. `check_index_coverage(project="<name>", paths=["path/to/file"])` — validate every evidence path.
 
 ## Tracing Workflow
 
-1. `search_graph(name_pattern=".*FuncName.*")` — discover the exact name.
-2. `trace_path(function_name="FuncName", direction="both", depth=3)` — trace relationships.
-3. `get_code_snippet(qualified_name="project.path.FuncName")` — verify material source claims.
-4. `check_index_coverage(paths=["path/to/file"])` — validate every evidence path.
-5. `detect_changes()` — map the Git diff to affected symbols.
+1. `search_graph(project="<name>", name_pattern=".*FuncName.*")` — discover the exact name.
+2. `trace_path(project="<name>", function_name="FuncName", direction="both", depth=3)` — trace relationships.
+3. `get_code_snippet(project="<name>", qualified_name="project.path.FuncName")` — verify material source claims.
+4. `check_index_coverage(project="<name>", paths=["path/to/file"])` — validate every evidence path.
+5. `detect_changes(project="<name>")` — map the Git diff to affected symbols.
 
 ## When to Fall Back to Grep/Glob
 
@@ -56,9 +58,9 @@ Always prefer MCP graph tools over grep, glob, or file search for code discovery
 
 ## Examples
 
-- Find a handler: `search_graph(name_pattern=".*OrderHandler.*")`.
-- Find who calls it: `trace_path(function_name="OrderHandler", direction="inbound")`.
-- Read its source: `get_code_snippet(qualified_name="pkg/orders.OrderHandler")`.
+- Find a handler: `search_graph(project="<name>", name_pattern=".*OrderHandler.*")`.
+- Find who calls it: `trace_path(project="<name>", function_name="OrderHandler", direction="inbound")`.
+- Read its source: `get_code_snippet(project="<name>", qualified_name="pkg/orders.OrderHandler")`.
 
 ## Evidence Tiers
 
@@ -81,9 +83,9 @@ Always prefer MCP graph tools over grep, glob, or file search for code discovery
   It should use the supplied evidence and read or grep exact source, especially every reported missed-coverage range.
 
 ## Quality Analysis
-- Dead code: `search_graph(max_degree=0, exclude_entry_points=true)`
-- High fan-out: `search_graph(min_degree=10, relationship="CALLS", direction="outbound")`
-- High fan-in: `search_graph(min_degree=10, relationship="CALLS", direction="inbound")`
+- Dead code: `search_graph(project="<name>", max_degree=0, exclude_entry_points=true)`
+- High fan-out: `search_graph(project="<name>", min_degree=10, relationship="CALLS", direction="outbound")`
+- High fan-in: `search_graph(project="<name>", min_degree=10, relationship="CALLS", direction="inbound")`
 
 ## 15 MCP Tools
 `index_repository`, `index_status`, `list_projects`, `delete_project`,
@@ -105,8 +107,8 @@ MATCH (a)-[r:CALLS]->(b) WHERE a.name = 'main' RETURN b.name
 ```
 
 ## Gotchas
-1. `search_graph(relationship="HTTP_CALLS")` filters nodes by degree — use `query_graph` with Cypher to see actual edges.
+1. `search_graph(project="<name>", relationship="HTTP_CALLS")` filters nodes by degree — use `query_graph` with Cypher to see actual edges.
 2. `query_graph` has a 100k row ceiling — add a Cypher `LIMIT` for broad queries or use `search_graph` pagination.
-3. `trace_path` needs exact names — use `search_graph(name_pattern=...)` first.
+3. `trace_path` needs exact names — use `search_graph(project="<name>", name_pattern=...)` first.
 4. `direction="outbound"` misses cross-service callers — use `direction="both"`.
 5. `search_graph` results default to 50 per page — check `has_more` and use `offset`.
