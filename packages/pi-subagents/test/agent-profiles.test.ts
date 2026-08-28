@@ -37,7 +37,7 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
-test("missing settings are side-effect free and empty agent names do not read them", () => {
+test("missing settings are side-effect free and empty role names do not read them", () => {
 	assert.deepEqual(readAgentProfiles(), { kind: "missing", profiles: {}, document: {} });
 	assert.equal(loadAgentProfile(undefined), undefined);
 	assert.equal(loadAgentProfile(""), undefined);
@@ -152,7 +152,7 @@ test("publication failure preserves the previous file and cleans temporary files
 	assert.deepEqual(readdirSync(directory), ["pi-subagents.json"]);
 });
 
-test("rejects missing, malformed, unknown, and invalid selected agents", () => {
+test("rejects missing, malformed, unknown, and invalid selected roles", () => {
 	assert.throws(() => loadAgentProfile(null), /must be a string/i);
 	assert.throws(() => loadAgentProfile("Reviewer"), /lowercase kebab-case/i);
 	assert.throws(() => loadAgentProfile("missing"), /does not exist/i);
@@ -161,7 +161,7 @@ test("rejects missing, malformed, unknown, and invalid selected agents", () => {
 	assert.throws(() => loadAgentProfile("reviewer"), /invalid JSON/i);
 
 	writeAgents([]);
-	assert.throws(() => loadAgentProfile("reviewer"), /invalid agent profile document/i);
+	assert.throws(() => loadAgentProfile("reviewer"), /invalid role profile document/i);
 
 	writeAgents({});
 	assert.throws(() => loadAgentProfile("reviewer"), /is not defined/i);
@@ -179,7 +179,7 @@ test("rejects missing, malformed, unknown, and invalid selected agents", () => {
 		{ task: "Review", tools: [], timeout: 30, thinkingLevel: "turbo" },
 	]) {
 		writeAgents({ reviewer: candidate });
-		assert.throws(() => loadAgentProfile("reviewer"), /invalid agent profile document/i);
+		assert.throws(() => loadAgentProfile("reviewer"), /invalid role profile document/i);
 	}
 });
 

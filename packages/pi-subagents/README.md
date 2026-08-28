@@ -10,7 +10,7 @@ A bundled `using-pi-subagents` skill owns delegation strategy, least-privilege t
 
 - Starts one isolated Pi child process per job.
 - Lets each task define the child's assignment and each effective tool list define its capabilities.
-- Loads optional user-defined agent prompts and execution defaults from Pi's user directory.
+- Loads optional user-defined role prompts and execution defaults from Pi's user directory.
 - Provides a `/subagents` TUI manager to create, edit, rename, and delete profiles.
 - Defaults child work tools to `read`, `grep`, `find`, and `ls`.
 - Inherits the main agent's effective model and defaults to its thinking level.
@@ -101,7 +101,7 @@ The main Pi session exposes five fixed tools:
 
 | Tool | Parameters | Purpose |
 | --- | --- | --- |
-| `subagent_spawn` | `task`, optional `agent`, `tools`, `thinkingLevel`, `timeout` | Start one subagent job and return its `jobId`. |
+| `subagent_spawn` | `task`, optional `role`, `tools`, `thinkingLevel`, `timeout` | Start one subagent job and return its `jobId`. |
 | `subagent_inspect` | none | List privacy-filtered retained-job metadata. |
 | `subagent_cancel` | `jobId` | Idempotently cancel one queued or running job. |
 | `subagent_wait` | `jobId`, optional `timeout` | Wait for a job or return early for a pending child question. |
@@ -138,9 +138,9 @@ See [`docs/tools.md`](./docs/tools.md) for the concise schema reference.
 
 ## ⚙️ Settings
 
-Agent profiles are optional named child prompts and execution defaults stored in `<getAgentDir()>/pi-subagents.json`, normally `~/.pi/agent/pi-subagents.json`.
+Role profiles are optional named child prompts and execution defaults stored in `<getAgentDir()>/pi-subagents.json`, normally `~/.pi/agent/pi-subagents.json`.
 
-The file is a top-level JSON object keyed by lowercase kebab-case agent names of at most 64 characters.
+The file is a top-level JSON object keyed by lowercase kebab-case role names of at most 64 characters.
 
 Each selected profile requires `task`, `tools`, `timeout`, and `thinkingLevel`.
 
@@ -163,11 +163,11 @@ Example:
 }
 ```
 
-Pass the profile name through `agent`:
+Pass the profile name through `role`:
 
 ```json
 {
-  "agent": "reviewer",
+  "role": "reviewer",
   "task": "Review packages/pi-subagents."
 }
 ```
@@ -180,7 +180,7 @@ Explicit spawn arguments override those defaults.
 
 Create starts with a generic task prompt, `read`, `grep`, `find`, and `ls`, a 300-second timeout, and the current effective thinking level.
 
-An omitted, empty, or whitespace-only `agent` does not read the file and preserves the ordinary spawn behavior.
+An omitted, empty, or whitespace-only `role` does not read the file and preserves the ordinary spawn behavior.
 
 A selected spawn reads the file again, so saved changes apply to the next profiled job without `/reload`.
 
@@ -196,7 +196,7 @@ Separate Pi processes have no merge lock, so simultaneous valid writes may repla
 
 The extension does not load project overrides.
 
-A missing file, invalid JSON, unknown agent, or invalid profile fails before a selected job is queued.
+A missing file, invalid JSON, unknown role, or invalid profile fails before a selected job is queued.
 
 The spawn task defines the child's objective, scope, constraints, and expected result.
 
@@ -292,11 +292,11 @@ Selecting `bash`, `powershell`, `edit`, or `write` permits workspace mutation wi
 
 Every child disables session persistence, unrelated extensions, skills, and prompt templates.
 
-A selected agent adds only its validated local `task` string to that child's system prompt.
+A selected role adds only its validated local `task` string to that child's system prompt.
 
 The runtime passes that string through a private temporary prompt file so path-like text remains literal, then removes the file after the child settles.
 
-Agent profiles are trusted user configuration rather than a security boundary, and selecting a profile can enable its configured work tools.
+Role profiles are trusted user configuration rather than a security boundary, and selecting a profile can enable its configured work tools.
 
 The profile manager validates every profile before writing and never repairs malformed settings by replacing them with defaults.
 

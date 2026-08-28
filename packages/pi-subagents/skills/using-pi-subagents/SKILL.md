@@ -26,7 +26,7 @@ Use `subagent_spawn` for one subagent job.
 
 The task defines the child's assignment, objective, constraints, and expected result.
 
-Use `agent` only when the user requests or has established a named profile in Pi's user `pi-subagents.json`.
+Use `role` only when the user requests or has established a named profile in Pi's user `pi-subagents.json`.
 
 When the user asks to manage profiles, direct them to the argument-free `/subagents` TUI manager.
 
@@ -34,7 +34,7 @@ A selected profile supplies a child prompt plus `tools`, `timeout`, and `thinkin
 
 Explicit spawn values override profile defaults.
 
-Omit `agent` for ordinary delegation, and do not treat a profile as authorization or a reason to bypass the delegation gate.
+Omit `role` for ordinary delegation, and do not treat a profile as authorization or a reason to bypass the delegation gate.
 
 The effective tools define what the child can do.
 

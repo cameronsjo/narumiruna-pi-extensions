@@ -201,7 +201,8 @@ test("Pi's Jiti loader loads the generated extension and child bridge", async ()
 		const spawnParameters = main?.tools.get("subagent_spawn")?.definition.parameters as
 			| { properties?: Record<string, unknown> }
 			| undefined;
-		assert.ok(spawnParameters?.properties?.agent);
+		assert.ok(spawnParameters?.properties?.role);
+		assert.equal(spawnParameters?.properties?.agent, undefined);
 		assert.ok(main?.commands.has("subagents"));
 
 		const tui = createTuiHarness({ width: 48, rows: 14 });

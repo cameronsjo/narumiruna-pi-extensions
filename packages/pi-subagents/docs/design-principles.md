@@ -12,9 +12,9 @@ That isolation is not a limitation—it is the point.
 
 Fresh does not mean empty.
 
-The subagent still receives Pi's standard system prompt, the main agent's effective model, applicable project context, its effective tools, one explicit assignment, and an optional user-defined agent prompt.
+The subagent still receives Pi's standard system prompt, the main agent's effective model, applicable project context, its effective tools, one explicit assignment, and an optional user-defined role prompt.
 
-The assignment and optional agent prompt define the child's specialization, while the effective tools define its authority.
+The assignment and optional role prompt define the child's specialization, while the effective tools define its authority.
 
 Give each subagent a self-contained task containing only the context needed to complete that task.
 

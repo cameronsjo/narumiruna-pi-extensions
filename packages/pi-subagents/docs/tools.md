@@ -5,14 +5,14 @@
 | Parameter | Type | Required | Constraint / default |
 | --- | --- | --- | --- |
 | `task` | `string` | Yes | Self-contained assignment, up to 50 KiB of UTF-8 text. |
-| `agent` | `string` | No | Lowercase kebab-case name from `<getAgentDir()>/pi-subagents.json`; empty, whitespace-only, or omitted selects no profile. |
+| `role` | `string` | No | Lowercase kebab-case name from `<getAgentDir()>/pi-subagents.json`; empty, whitespace-only, or omitted selects no profile. |
 | `tools` | `string[]` | No | Up to 64 names from `read`, `bash`, `powershell`, `edit`, `write`, `grep`, `find`, and `ls`; defaults to the selected profile, then `read`, `grep`, `find`, and `ls`. |
 | `thinkingLevel` | `string` | No | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`; defaults to the selected profile, then the main agent's effective level. |
 | `timeout` | `number` | No | Seconds; `> 0` through `2,147,483.647`; defaults to the selected profile, otherwise no timeout. |
 
 Starts one task-specialized subagent job with the effective tool capabilities and returns its job ID immediately.
 
-A selected agent requires `task`, `tools`, `timeout`, and `thinkingLevel` in the user JSON object.
+A selected role requires `task`, `tools`, `timeout`, and `thinkingLevel` in the user JSON object.
 
 The `/subagents` TUI manager owns profile creation, field updates, rename, deletion, validation, and atomic user-file publication.
 

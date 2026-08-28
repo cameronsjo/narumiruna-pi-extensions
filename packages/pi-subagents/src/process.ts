@@ -54,7 +54,7 @@ export async function runChild(request: ChildRequest): Promise<ChildResult> {
 	if (request.signal.aborted) return cancelledResult();
 	let promptDirectory: string | undefined;
 	try {
-		const promptFile = request.agentPrompt ? writeAgentPromptFile(request.agentPrompt) : undefined;
+		const promptFile = request.rolePrompt ? writeRolePromptFile(request.rolePrompt) : undefined;
 		promptDirectory = promptFile?.directory;
 		const invocation = resolvePiInvocation(buildPiArgs(request, promptFile?.filePath));
 		return await executeProcess(invocation, request);
@@ -72,7 +72,7 @@ export async function runChild(request: ChildRequest): Promise<ChildResult> {
 	}
 }
 
-export function buildPiArgs(request: ChildRequest, agentPromptPath?: string): string[] {
+export function buildPiArgs(request: ChildRequest, rolePromptPath?: string): string[] {
 	const args = [
 		"--mode",
 		"json",
@@ -89,10 +89,10 @@ export function buildPiArgs(request: ChildRequest, agentPromptPath?: string): st
 		request.thinkingLevel,
 		request.projectTrusted ? "--approve" : "--no-approve",
 	];
-	if (request.agentPrompt && !agentPromptPath) {
-		throw new Error("A temporary agent prompt file is required for profiled child execution.");
+	if (request.rolePrompt && !rolePromptPath) {
+		throw new Error("A temporary role prompt file is required for profiled child execution.");
 	}
-	if (agentPromptPath) args.push("--append-system-prompt", agentPromptPath);
+	if (rolePromptPath) args.push("--append-system-prompt", rolePromptPath);
 	const tools = [...new Set([...request.tools, ...CHILD_COMMUNICATION_TOOL_NAMES])];
 	args.push("--tools", tools.join(","));
 	args.push(`Task: ${request.task}`);
@@ -103,7 +103,7 @@ export function childCommunicationBridgePath(): string {
 	return fileURLToPath(new URL("./child-communication-bridge.ts", import.meta.url));
 }
 
-function writeAgentPromptFile(prompt: string): { directory: string; filePath: string } {
+function writeRolePromptFile(prompt: string): { directory: string; filePath: string } {
 	const directory = fs.mkdtempSync(
 		path.join(os.tmpdir(), `pi-subagents-prompt-${globalThis.process.pid}-`),
 	);

@@ -68,14 +68,14 @@ test("buildPiArgs isolates the child and preserves selected communication tools"
 	assert.equal(noWorkTools[noWorkTools.indexOf("--tools") + 1], "subagent_ask,subagent_wait");
 
 	const profiled = buildPiArgs(
-		childRequest({ agentPrompt: "Review independently." }),
+		childRequest({ rolePrompt: "Review independently." }),
 		"/tmp/profile-prompt.md",
 	);
 	assert.equal(profiled[profiled.indexOf("--append-system-prompt") + 1], "/tmp/profile-prompt.md");
 	assert.equal(profiled.at(-1), "Task: task");
 	assert.throws(
-		() => buildPiArgs(childRequest({ agentPrompt: "Review independently." })),
-		/temporary agent prompt file/i,
+		() => buildPiArgs(childRequest({ rolePrompt: "Review independently." })),
+		/temporary role prompt file/i,
 	);
 });
 
@@ -94,7 +94,7 @@ console.log(JSON.stringify({
   message: { role: "assistant", content: [{ type: "text", text }], stopReason: "stop" }
 }));
 `);
-	const result = await runChild(childRequest({ agentPrompt: "README.md" }));
+	const result = await runChild(childRequest({ rolePrompt: "README.md" }));
 	assert.equal(result.state, "completed");
 	const evidence = JSON.parse(result.result ?? "{}") as {
 		promptPath: string;
@@ -114,14 +114,14 @@ test("runChild cleans profile prompt files after launch failure, timeout, and ca
 	const removedCwd = path.join(directory, "removed-profiled-cwd");
 	mkdirSync(removedCwd);
 	rmSync(removedCwd, { recursive: true });
-	const failed = await runChild(childRequest({ agentPrompt: "Review.", cwd: removedCwd }));
+	const failed = await runChild(childRequest({ rolePrompt: "Review.", cwd: removedCwd }));
 	assert.equal(failed.state, "failed");
 
-	const timedOut = await runChild(childRequest({ agentPrompt: "Review.", timeout: 0.025 }));
+	const timedOut = await runChild(childRequest({ rolePrompt: "Review.", timeout: 0.025 }));
 	assert.equal(timedOut.state, "timed_out");
 
 	const controller = new AbortController();
-	const work = runChild(childRequest({ agentPrompt: "Review.", signal: controller.signal }));
+	const work = runChild(childRequest({ rolePrompt: "Review.", signal: controller.signal }));
 	setTimeout(() => controller.abort(), 25);
 	assert.equal((await work).state, "cancelled");
 	assert.deepEqual(promptDirectories(), before);

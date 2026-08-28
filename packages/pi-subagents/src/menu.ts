@@ -79,7 +79,7 @@ type Action =
 
 export function registerSubagentsCommand(pi: ExtensionAPI, options: SubagentsCommandOptions): void {
 	pi.registerCommand("subagents", {
-		description: "Manage user-defined subagent profiles",
+		description: "Manage user-defined subagent role profiles",
 		handler: async (args, ctx) => {
 			if (args.trim()) {
 				const message = "/subagents does not accept arguments.";
@@ -149,7 +149,7 @@ export async function showSubagentsMenu(
 						{
 							id: "settings",
 							label: "Settings",
-							description: "Create and manage agent profiles",
+							description: "Create and manage role profiles",
 							to: state.loaded.kind === "invalid" ? "invalid" : "profiles",
 						},
 						{ id: "status", label: "Status", to: "status" },
@@ -162,7 +162,7 @@ export async function showSubagentsMenu(
 				const names = Object.keys(state.profiles).sort();
 				return {
 					kind: "actions",
-					title: "Subagent profiles",
+					title: "Subagent roles",
 					lines: [
 						names.length === 0
 							? `No profiles · ${settingsPath}`
@@ -263,7 +263,7 @@ export async function showSubagentsMenu(
 			},
 			create: () => ({
 				kind: "input",
-				title: "Create subagent profile",
+				title: "Create subagent role",
 				lines: ["Enter a unique lowercase kebab-case name."],
 				placeholder: "reviewer",
 				action: "create",
@@ -356,7 +356,7 @@ export async function showSubagentsMenu(
 			}),
 			invalid: ({ state }) => ({
 				kind: "detail",
-				title: "Subagent profiles · Read only",
+				title: "Subagent roles · Read only",
 				lines: [
 					`Fix the settings file before using the manager: ${settingsPath}`,
 					safeLine(state.loaded.kind === "invalid" ? state.loaded.reason : "Settings are valid."),
@@ -476,7 +476,7 @@ export async function showSubagentsMenu(
 		onError: (_menuCtx: MenuContext, error: unknown) => {
 			if (isCurrent(options.owner)) {
 				ctx.ui.notify(
-					`Subagent profiles were not changed: ${safeLine(formatError(error))}`,
+					`Subagent role profiles were not changed: ${safeLine(formatError(error))}`,
 					"error",
 				);
 			}
@@ -759,7 +759,7 @@ function formatHintKey(value: string): string {
 }
 
 function requireSelectedName(name: string | undefined): string {
-	if (!name) throw new Error("No subagent profile is selected.");
+	if (!name) throw new Error("No subagent role profile is selected.");
 	return name;
 }
 
@@ -768,7 +768,7 @@ function requireSelectedProfile(store: AgentProfileStore, name: string | undefin
 	const loaded = store.read();
 	if (loaded.kind === "invalid") throw new Error(loaded.reason);
 	if (!Object.hasOwn(loaded.profiles, selectedName)) {
-		throw new Error(`Subagent agent "${selectedName}" does not exist.`);
+		throw new Error(`Subagent role "${selectedName}" does not exist.`);
 	}
 	return loaded.profiles[selectedName] as AgentProfile;
 }
@@ -818,8 +818,8 @@ function toolDescription(name: (typeof CHILD_CORE_TOOL_NAMES)[number]): string {
 function missingProfileScreen() {
 	return {
 		kind: "detail" as const,
-		title: "Subagent profile unavailable",
-		lines: ["The selected profile no longer exists."],
+		title: "Subagent role unavailable",
+		lines: ["The selected role profile no longer exists."],
 		hint: "back" as const,
 	};
 }

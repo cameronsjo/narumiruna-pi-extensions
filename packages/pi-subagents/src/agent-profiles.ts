@@ -94,7 +94,7 @@ export function readAgentProfiles(settingsPath = agentProfilesPath()): AgentProf
 		? { kind: "loaded", profiles: normalized, document: document as Record<string, unknown> }
 		: {
 				kind: "invalid",
-				reason: `${displayPath(settingsPath)}: invalid agent profile document`,
+				reason: `${displayPath(settingsPath)}: invalid role profile document`,
 			};
 }
 
@@ -106,11 +106,11 @@ export function loadAgentProfile(value: unknown): AgentProfile | undefined {
 	if (loaded.kind === "invalid") throw new Error(loaded.reason);
 	if (loaded.kind === "missing") {
 		throw new Error(
-			`Subagent agent "${name}" is unavailable because ${displayPath(settingsPath)} does not exist.`,
+			`Subagent role "${name}" is unavailable because ${displayPath(settingsPath)} does not exist.`,
 		);
 	}
 	if (!Object.hasOwn(loaded.profiles, name)) {
-		throw new Error(`Subagent agent "${name}" is not defined in ${displayPath(settingsPath)}.`);
+		throw new Error(`Subagent role "${name}" is not defined in ${displayPath(settingsPath)}.`);
 	}
 	return cloneProfile(loaded.profiles[name] as AgentProfile);
 }
@@ -123,7 +123,7 @@ export function createAgentProfile(
 	const name = requireAgentName(nameValue);
 	return mutateAgentProfiles((document) => {
 		if (Object.hasOwn(document, name)) {
-			throw new Error(`Subagent agent "${name}" already exists.`);
+			throw new Error(`Subagent role "${name}" already exists.`);
 		}
 		document[name] = cloneProfile(profile);
 	}, options);
@@ -137,7 +137,7 @@ export function updateAgentProfile(
 	const name = requireAgentName(nameValue);
 	return mutateAgentProfiles((document) => {
 		const current = ownRecord(document[name]);
-		if (!current) throw new Error(`Subagent agent "${name}" does not exist.`);
+		if (!current) throw new Error(`Subagent role "${name}" does not exist.`);
 		document[name] = {
 			...current,
 			...patch,
@@ -156,16 +156,16 @@ export function renameAgentProfile(
 	if (name === nextName) {
 		const loaded = requireMutableDocument(options);
 		if (!Object.hasOwn(loaded.profiles, name)) {
-			throw new Error(`Subagent agent "${name}" does not exist.`);
+			throw new Error(`Subagent role "${name}" does not exist.`);
 		}
 		return loaded;
 	}
 	return mutateAgentProfiles((document) => {
 		if (!Object.hasOwn(document, name)) {
-			throw new Error(`Subagent agent "${name}" does not exist.`);
+			throw new Error(`Subagent role "${name}" does not exist.`);
 		}
 		if (Object.hasOwn(document, nextName)) {
-			throw new Error(`Subagent agent "${nextName}" already exists.`);
+			throw new Error(`Subagent role "${nextName}" already exists.`);
 		}
 		document[nextName] = document[name];
 		delete document[name];
@@ -179,13 +179,13 @@ export function deleteAgentProfile(
 	const name = requireAgentName(nameValue);
 	return mutateAgentProfiles((document) => {
 		if (!Object.hasOwn(document, name)) {
-			throw new Error(`Subagent agent "${name}" does not exist.`);
+			throw new Error(`Subagent role "${name}" does not exist.`);
 		}
 		if (
 			options.expectedProfileDocument !== undefined &&
 			JSON.stringify(document[name]) !== JSON.stringify(options.expectedProfileDocument)
 		) {
-			throw new Error(`Subagent agent "${name}" changed after the delete review.`);
+			throw new Error(`Subagent role "${name}" changed after the delete review.`);
 		}
 		delete document[name];
 	}, options);
@@ -203,17 +203,17 @@ export function normalizeAgentProfile(value: unknown): AgentProfile | undefined 
 }
 
 export function requireAgentName(value: unknown): string {
-	if (typeof value !== "string") throw new Error("Subagent agent name must be a string.");
+	if (typeof value !== "string") throw new Error("Subagent role name must be a string.");
 	const name = value.trim();
 	if (name.length > MAX_AGENT_NAME_LENGTH || !AGENT_NAME_PATTERN.test(name)) {
-		throw new Error("Subagent agent name must be lowercase kebab-case with at most 64 characters.");
+		throw new Error("Subagent role name must be lowercase kebab-case with at most 64 characters.");
 	}
 	return name;
 }
 
 function normalizeOptionalAgentName(value: unknown): string | undefined {
 	if (value === undefined || value === "") return undefined;
-	if (typeof value !== "string") throw new Error("Subagent agent must be a string.");
+	if (typeof value !== "string") throw new Error("Subagent role must be a string.");
 	if (!value.trim()) return undefined;
 	return requireAgentName(value);
 }
@@ -242,12 +242,12 @@ function mutateAgentProfiles(
 	const settingsPath = options.settingsPath ?? agentProfilesPath();
 	const loaded = readAgentProfiles(settingsPath);
 	if (loaded.kind === "invalid") {
-		throw new Error(`Cannot save invalid subagent agent profiles: ${loaded.reason}`);
+		throw new Error(`Cannot save invalid subagent role profiles: ${loaded.reason}`);
 	}
 	const document = structuredClone(loaded.document);
 	mutate(document);
 	if (!normalizeAgentProfilesDocument(document)) {
-		throw new Error("Refusing to save invalid subagent agent profiles.");
+		throw new Error("Refusing to save invalid subagent role profiles.");
 	}
 	publishAgentProfiles(settingsPath, document, options.fileSystem);
 	return readAgentProfiles(settingsPath);
@@ -259,7 +259,7 @@ function requireMutableDocument(
 	const settingsPath = options.settingsPath ?? agentProfilesPath();
 	const loaded = readAgentProfiles(settingsPath);
 	if (loaded.kind === "invalid") {
-		throw new Error(`Cannot save invalid subagent agent profiles: ${loaded.reason}`);
+		throw new Error(`Cannot save invalid subagent role profiles: ${loaded.reason}`);
 	}
 	return loaded;
 }

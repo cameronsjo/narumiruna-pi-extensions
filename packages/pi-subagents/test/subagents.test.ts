@@ -69,20 +69,20 @@ test("registers five fixed main-agent tools with stable schemas and explicit lim
 		["subagent_spawn", "subagent_inspect", "subagent_cancel", "subagent_wait", "subagent_reply"],
 	);
 	assert.equal(tools[0]?.parameters.properties?.task?.maxLength, 50 * 1024);
-	assert.equal(tools[0]?.parameters.properties?.agent?.maxLength, 64);
-	assert.match(tools[0]?.parameters.properties?.agent?.description ?? "", /empty.*omitted/i);
+	assert.equal(tools[0]?.parameters.properties?.role?.maxLength, 64);
+	assert.match(tools[0]?.parameters.properties?.role?.description ?? "", /empty.*omitted/i);
+	assert.equal(tools[0]?.parameters.properties?.agent, undefined);
+	assert.equal(Check(tools[0]?.parameters, { task: "Review", role: "reviewer" }), true);
+	assert.equal(Check(tools[0]?.parameters, { task: "Review", agent: "reviewer" }), false);
 	assert.equal(tools[0]?.parameters.properties?.tools?.maxItems, 64);
-	assert.match(
-		tools[0]?.parameters.properties?.tools?.description ?? "",
-		/selected agent profile/i,
-	);
+	assert.match(tools[0]?.parameters.properties?.tools?.description ?? "", /selected role profile/i);
 	assert.match(
 		tools[0]?.parameters.properties?.thinkingLevel?.description ?? "",
-		/selected agent profile/i,
+		/selected role profile/i,
 	);
 	assert.match(
 		tools[0]?.parameters.properties?.timeout?.description ?? "",
-		/selected agent profile/i,
+		/selected role profile/i,
 	);
 	assert.deepEqual(
 		(tools[0]?.parameters.properties?.tools as { items?: { enum?: string[] } })?.items?.enum,
@@ -251,7 +251,7 @@ test("spawns jobs with default and explicit tools and thinking levels", async ()
 	]);
 });
 
-test("applies selected agent defaults and explicit spawn overrides without caching", async () => {
+test("applies selected role defaults and explicit spawn overrides without caching", async () => {
 	const agentDirectory = mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-agents-"));
 	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = agentDirectory;
@@ -278,7 +278,7 @@ test("applies selected agent defaults and explicit spawn overrides without cachi
 		);
 		const profileSpawn = await tool(mock, "subagent_spawn").execute(
 			"profile",
-			{ agent: "reviewer", task: "Review one thing" },
+			{ role: "reviewer", task: "Review one thing" },
 			undefined,
 			undefined,
 			context.ctx,
@@ -300,7 +300,7 @@ test("applies selected agent defaults and explicit spawn overrides without cachi
 		const overrideSpawn = await tool(mock, "subagent_spawn").execute(
 			"override",
 			{
-				agent: "reviewer",
+				role: "reviewer",
 				task: "Review another thing",
 				tools: ["read", "edit"],
 				timeout: 5,
@@ -315,7 +315,7 @@ test("applies selected agent defaults and explicit spawn overrides without cachi
 		writeFileSync(agentsPath, "{", "utf8");
 		const unprofiledSpawn = await tool(mock, "subagent_spawn").execute(
 			"unprofiled",
-			{ agent: "", task: "Work directly" },
+			{ role: "", task: "Work directly" },
 			undefined,
 			undefined,
 			context.ctx,
@@ -323,9 +323,9 @@ test("applies selected agent defaults and explicit spawn overrides without cachi
 		await waitFor(mock, context, String(unprofiledSpawn.details.jobId));
 
 		assert.deepEqual(
-			requests.map(({ task, agentPrompt, tools, timeout, thinkingLevel }) => ({
+			requests.map(({ task, rolePrompt, tools, timeout, thinkingLevel }) => ({
 				task,
-				agentPrompt,
+				rolePrompt,
 				tools,
 				timeout,
 				thinkingLevel,
@@ -333,21 +333,21 @@ test("applies selected agent defaults and explicit spawn overrides without cachi
 			[
 				{
 					task: "Review one thing",
-					agentPrompt: "Review independently.",
+					rolePrompt: "Review independently.",
 					tools: ["read", "grep"],
 					timeout: 120,
 					thinkingLevel: "high",
 				},
 				{
 					task: "Review another thing",
-					agentPrompt: "Use the updated reviewer prompt.",
+					rolePrompt: "Use the updated reviewer prompt.",
 					tools: ["read", "edit"],
 					timeout: 5,
 					thinkingLevel: "low",
 				},
 				{
 					task: "Work directly",
-					agentPrompt: undefined,
+					rolePrompt: undefined,
 					tools: ["read", "grep", "find", "ls"],
 					timeout: undefined,
 					thinkingLevel: "off",
@@ -361,7 +361,7 @@ test("applies selected agent defaults and explicit spawn overrides without cachi
 	}
 });
 
-test("rejects unavailable selected agents before a child is queued", async () => {
+test("rejects unavailable selected roles before a child is queued", async () => {
 	const agentDirectory = mkdtempSync(path.join(os.tmpdir(), "pi-subagents-missing-agent-"));
 	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = agentDirectory;
@@ -376,8 +376,8 @@ test("rejects unavailable selected agents before a child is queued", async () =>
 		await assert.rejects(
 			() =>
 				tool(mock, "subagent_spawn").execute(
-					"missing-agent",
-					{ agent: "reviewer", task: "Review" },
+					"missing-role",
+					{ role: "reviewer", task: "Review" },
 					undefined,
 					undefined,
 					context.ctx,

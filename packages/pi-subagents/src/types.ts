@@ -61,7 +61,7 @@ export interface BrokerCredentials {
 
 export interface ChildRequest {
 	task: string;
-	agentPrompt?: string;
+	rolePrompt?: string;
 	tools: string[];
 	model: string;
 	thinkingLevel: SubagentThinkingLevel;

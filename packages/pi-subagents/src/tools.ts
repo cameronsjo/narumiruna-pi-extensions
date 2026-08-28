@@ -32,10 +32,10 @@ const SpawnParameters = Type.Object(
 			description: "Self-contained assignment, constraints, and expected result. Maximum 50 KiB.",
 			maxLength: MAX_SUBAGENT_TASK_BYTES,
 		}),
-		agent: Type.Optional(
+		role: Type.Optional(
 			Type.String({
 				description:
-					"User-defined agent name from Pi's pi-subagents.json. Empty, whitespace-only, or omitted uses no agent profile.",
+					"User-defined role name from Pi's pi-subagents.json. Empty, whitespace-only, or omitted uses no role profile.",
 				maxLength: MAX_AGENT_NAME_LENGTH,
 			}),
 		),
@@ -46,7 +46,7 @@ const SpawnParameters = Type.Object(
 				}),
 				{
 					description:
-						"Child work tools. Defaults to the selected agent profile, then read, grep, find, and ls. Communication tools are always added.",
+						"Child work tools. Defaults to the selected role profile, then read, grep, find, and ls. Communication tools are always added.",
 					maxItems: MAX_SUBAGENT_TOOLS,
 				},
 			),
@@ -54,13 +54,13 @@ const SpawnParameters = Type.Object(
 		thinkingLevel: Type.Optional(
 			StringEnum(SUBAGENT_THINKING_LEVELS, {
 				description:
-					"Child thinking level. Defaults to the selected agent profile, then the main agent's effective level.",
+					"Child thinking level. Defaults to the selected role profile, then the main agent's effective level.",
 			}),
 		),
 		timeout: Type.Optional(
 			Type.Number({
 				description:
-					"Execution timeout in seconds. Defaults to the selected agent profile, otherwise no timeout.",
+					"Execution timeout in seconds. Defaults to the selected role profile, otherwise no timeout.",
 			}),
 		),
 	},
@@ -130,7 +130,7 @@ export function registerSubagentTools(
 		name: "subagent_spawn",
 		label: "Subagent · Spawn",
 		description:
-			"Use subagent_spawn to start one Pi subagent job and return its jobId immediately. An optional user-defined agent supplies a child prompt and execution defaults, the task defines the assignment, and the effective tools define the child's capabilities. The job may ask the main agent questions and publishes one asynchronous completion when terminal.",
+			"Use subagent_spawn to start one Pi subagent job and return its jobId immediately. An optional user-defined role supplies a child prompt and execution defaults, the task defines the assignment, and the effective tools define the child's capabilities. The job may ask the main agent questions and publishes one asynchronous completion when terminal.",
 		promptSnippet: "Use subagent_spawn to start one Pi subagent job",
 		parameters: SpawnParameters,
 		prepareArguments: prepareSpawnArguments,
@@ -138,18 +138,18 @@ export function registerSubagentTools(
 			throwIfAborted(signal, "Subagent spawn was cancelled");
 			assertNotNested();
 			const task = validateTask(params.task, "subagent_spawn");
-			const agent = loadAgentProfile(params.agent);
-			const tools = resolveTools(params.tools ?? agent?.tools);
+			const role = loadAgentProfile(params.role);
+			const tools = resolveTools(params.tools ?? role?.tools);
 			const model = resolveChildModel(ctx);
 			const thinkingLevel = resolveThinkingLevel(
-				params.thinkingLevel ?? agent?.thinkingLevel ?? ctx.thinkingLevel ?? pi.getThinkingLevel(),
+				params.thinkingLevel ?? role?.thinkingLevel ?? ctx.thinkingLevel ?? pi.getThinkingLevel(),
 			);
-			const timeout = params.timeout ?? agent?.timeout;
+			const timeout = params.timeout ?? role?.timeout;
 			resolveTimeoutMs(timeout);
 			return toolResult(
 				runtime.start({
 					task,
-					...(agent ? { agentPrompt: agent.task } : {}),
+					...(role ? { rolePrompt: role.task } : {}),
 					tools,
 					model,
 					thinkingLevel,
