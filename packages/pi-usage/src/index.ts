@@ -33,6 +33,7 @@ export {
 } from "./core.js";
 export { formatProviderStates, formatUsageReport, formatUsageStatusline } from "./format.js";
 export { normalizeCodexBackendPayload } from "./providers/codex.js";
+export { normalizeDeepSeekBalancePayload } from "./providers/deepseek.js";
 export { normalizeGitHubCopilotUsagePayload } from "./providers/github-copilot.js";
 export { normalizeKimiCodingUsagePayload } from "./providers/kimi-coding.js";
 export { normalizeOpenCodeZenPayload } from "./providers/opencode-zen.js";
@@ -62,6 +63,7 @@ export {
 	usageSettingsPath,
 } from "./settings.js";
 export type {
+	DeepSeekBalancePayload,
 	KimiCodingUsagePayload,
 	ProviderUsageState,
 	ResolvedUsageAuth,

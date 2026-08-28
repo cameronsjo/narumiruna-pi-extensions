@@ -1,8 +1,8 @@
-# 📊 pi-usage — Check Provider Usage and Codex Fast Mode
+# 📊 pi-usage — Check Provider Usage, API Balance, and Codex Fast Mode
 
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-usage)](https://www.npmjs.com/package/@narumitw/pi-usage) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-Inspect usage for Pi's active provider account, query other configured providers, and toggle Fast mode for supported OpenAI Codex models.
+Inspect usage and DeepSeek API balance for Pi's active provider account, query other configured providers, and toggle Fast mode for supported OpenAI Codex models.
 
 The extension keeps each provider's native quota, allowance, and spending semantics instead of treating unlike values as equivalent.
 xAI OAuth subscription reporting defaults to On and follows the reviewed Grok Build contract.
@@ -13,6 +13,7 @@ xAI OAuth subscription reporting defaults to On and follows the reviewed Grok Bu
 - Reports OpenAI Codex subscription windows, credits, resets, and model-specific buckets.
 - Reports Kimi For Coding plan windows, resets, and separately labeled booster-wallet currency.
 - Reports GitHub Copilot allowances and OpenRouter per-key limits and spending windows.
+- Reports exact DeepSeek API balances with separate CNY and USD values.
 - Reports OpenCode Go plan windows and Z.AI Coding Plan quotas.
 - Reports xAI OAuth subscription allowances and credits when enabled.
 - Toggles persistent Codex Fast routing through `/fast` or the usage menu.
@@ -204,6 +205,24 @@ It reports overage without treating a negative included balance as malformed.
 The extension does not call OpenRouter's account-level `/credits` endpoint because that operation requires a separate management key.
 OpenRouter documents the distinction between credit and rate limits in its [API limits guide](https://openrouter.ai/docs/api_reference/limits).
 
+### DeepSeek API balance
+
+- Provider ID: `deepseek`
+- Semantics: current API account balance, not historical usage or quota
+- Source: documented `GET https://api.deepseek.com/user/balance` using Pi's freshly resolved runtime API key
+- Displayed data: whether API calls are available plus separate total, granted, and topped-up balances for each returned CNY or USD currency
+- Statusline examples: `deepseek CNY 110.00` or `deepseek CNY 110.00 · USD 20.00`
+
+The extension queries the fixed balance endpoint only when the selected model origin is `https://api.deepseek.com` and any resolved-auth origin override, when present, has the same official origin.
+Pi's built-in DeepSeek API-key resolver does not attach a redundant auth origin, so the validated model origin remains authoritative when no override exists.
+Custom and proxy origins fail before network access, redirects are rejected, and only the resolved Bearer credential is forwarded from Pi's runtime auth.
+Monetary decimal strings remain exact from the response through display.
+CNY and USD stay separate and are never converted or added together.
+The balance endpoint does not provide historical spend, request windows, reset times, or aggregate token usage, so `pi-usage` does not claim those DeepSeek capabilities.
+
+The contract was verified on 2026-08-28 against [DeepSeek's Get User Balance documentation](https://api-docs.deepseek.com/api/get-user-balance) and Pi's [`deepseek.ts`](https://github.com/earendil-works/pi/blob/c49906ec77788625aacbdc53ebca6fbe65bd20f5/packages/ai/src/providers/deepseek.ts) at `c49906ec77788625aacbdc53ebca6fbe65bd20f5`.
+DeepSeek Harness `cd5ef8148158c3a752a658978873241fdf8e2bbc` reports only per-request model token usage and does not provide account balance data.
+
 ### OpenCode Go (Zen)
 
 - Provider ID: `opencode-go`
@@ -287,6 +306,7 @@ After the active runtime credential changes, the next command, turn, or schedule
 
 The `usage` status item is active only for selected providers that publish statusline usage.
 It refreshes every five minutes while the session remains on such a provider and is cleared when the model changes to an unsupported or menu-only provider.
+DeepSeek publishes each returned currency as a separate exact balance segment and reports when the API is unavailable.
 xAI is always menu-only and never starts a scheduled status refresh.
 Z.AI statusline usage refreshes every five minutes while the selected model remains on Z.AI.
 
@@ -317,6 +337,7 @@ Behavior changes:
 Credential candidates are collected synchronously in memory and are not cached, persisted, logged, formatted, or appended to the Pi session.
 The protocol carries no account name or extension identity.
 Only the selected provider's exact runtime match is used, and secrets are sent only to its validated official origin.
+DeepSeek balance requests require Bearer authentication, send only that resolved credential from Pi's runtime auth to `https://api.deepseek.com/user/balance`, and refuse redirects.
 Pi extensions run with the user's process privileges, so the shared event bus is not a security boundary between installed extensions.
 Install only trusted extensions because they can read user files and process memory.
 Protocol v1 interoperability is characterized for the repository's supported Pi runtime.
@@ -330,6 +351,7 @@ An absent or incompatible peer preserves standalone fallback and fail-closed mis
 - xAI usage supports only a uniquely matched Pi OAuth subscription credential; xAI API keys and Management API credentials are unsupported.
 - Credentials resolved for custom provider base URLs are never forwarded to the providers' official usage endpoints; effective auth origin validation requires Pi 0.81.0 or newer.
 - Provider reports are snapshots and may themselves be delayed by the provider.
+- DeepSeek reports current API balance only; it does not expose historical usage, quota windows, reset times, or account-wide token totals through the balance endpoint.
 - OpenRouter successful inference responses do not expose proactive request-rate counters; `/usage` reports the documented per-key credit/spend fields instead.
 - A provider may not return a safe human-readable account identity.
   In that case the provider and runtime credential state remain visible without exposing secrets.
@@ -372,7 +394,7 @@ The generated runtime is built from the authoritative `src/index.ts` graph and d
 
 ## 🔎 Keywords
 
-Pi extension, Pi coding agent, usage, quota, OpenAI Codex usage, ChatGPT subscription limits, Kimi For Coding, Kimi Coding Plan usage, GitHub Copilot AI credits, GitHub Copilot premium requests, OpenRouter credits, xAI OAuth usage, Grok subscription allowance, API-key spend limits, TypeScript Pi package, npm Pi extension.
+Pi extension, Pi coding agent, usage, quota, DeepSeek API balance, DeepSeek balance, OpenAI Codex usage, ChatGPT subscription limits, Kimi For Coding, Kimi Coding Plan usage, GitHub Copilot AI credits, GitHub Copilot premium requests, OpenRouter credits, xAI OAuth usage, Grok subscription allowance, API-key spend limits, TypeScript Pi package, npm Pi extension.
 
 ## 📄 License
 

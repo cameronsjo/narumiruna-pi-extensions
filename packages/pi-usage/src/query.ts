@@ -6,6 +6,7 @@ import {
 	type OAuthCredentialCandidateReader,
 } from "./oauth-credential-source.js";
 import { normalizeCodexBackendPayload } from "./providers/codex.js";
+import { normalizeDeepSeekBalancePayload } from "./providers/deepseek.js";
 import { normalizeGitHubCopilotUsagePayload } from "./providers/github-copilot.js";
 import { normalizeKimiCodingUsagePayload } from "./providers/kimi-coding.js";
 import { normalizeOpenCodeZenPayload } from "./providers/opencode-zen.js";
@@ -14,6 +15,7 @@ import { normalizeXaiBillingPayload } from "./providers/xai.js";
 import { normalizeZaiQuotaPayload } from "./providers/zai.js";
 import type {
 	CodexBackendPayload,
+	DeepSeekBalancePayload,
 	GitHubCopilotUsagePayload,
 	KimiCodingUsagePayload,
 	OpenCodeZenPayload,
@@ -28,6 +30,7 @@ import type {
 } from "./types.js";
 
 const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
+const DEEPSEEK_BALANCE_URL = "https://api.deepseek.com/user/balance";
 const GITHUB_COPILOT_USAGE_URL = "https://api.github.com/copilot_internal/user";
 const OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key";
 const OPENCODE_GO_USAGE_URL = "https://opencode.ai/zen/go/v1/usage";
@@ -63,6 +66,22 @@ export const SUPPORTED_ADAPTERS: readonly UsageProviderAdapter[] = [
 				"Codex usage endpoint",
 			);
 			return normalizeCodexBackendPayload(payload as CodexBackendPayload, Date.now());
+		},
+	},
+	{
+		id: "deepseek",
+		displayName: "DeepSeek",
+		semantics: { kind: "api-key", label: "DeepSeek API balance" },
+		async query(auth, signal, timeoutMs) {
+			const payload = await fetchProviderJson(
+				DEEPSEEK_BALANCE_URL,
+				auth,
+				signal,
+				timeoutMs,
+				"DeepSeek API balance endpoint",
+				{ redirect: "error" },
+			);
+			return normalizeDeepSeekBalancePayload(payload as DeepSeekBalancePayload, Date.now());
 		},
 	},
 	{
@@ -299,6 +318,26 @@ export async function resolveUsageAuth(
 			: fallbackOAuthCredentialCandidates(adapter.id, credentialReader);
 		if (!offered.ok) throw new Error("xAI OAuth credential discovery failed closed.");
 		return resolveXaiUsageAuth(auth, model, salt, offered.candidates);
+	}
+	if (adapter.id === "deepseek") {
+		const resolvedAuthorization = authorizationFrom(auth);
+		const access = bearerToken(resolvedAuthorization);
+		if (!access) throw new Error("DeepSeek API balance requires Bearer authentication.");
+		const authorization = `Bearer ${access}`;
+		const headers = { Authorization: authorization };
+		return {
+			apiKey: access,
+			headers,
+			fingerprint: fingerprintResolvedAuth({ headers }, salt),
+			secrets: [
+				access,
+				auth.apiKey,
+				headerValue(auth.headers, "Authorization"),
+				resolvedAuthorization,
+				authorization,
+			].filter((value): value is string => Boolean(value)),
+			model,
+		};
 	}
 	const authorization = authorizationFrom(auth);
 	if (!authorization) return undefined;
@@ -683,6 +722,7 @@ function hasOfficialUrlOrigin(value: string, providerId: string): boolean {
 	try {
 		const url = new URL(value);
 		if (providerId === "openai-codex") return url.origin === "https://chatgpt.com";
+		if (providerId === "deepseek") return url.origin === "https://api.deepseek.com";
 		if (providerId === "openrouter") return url.origin === "https://openrouter.ai";
 		if (providerId === "opencode-go") return url.origin === "https://opencode.ai";
 		if (providerId === "kimi-coding") return url.origin === "https://api.kimi.com";

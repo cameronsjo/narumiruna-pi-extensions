@@ -11,11 +11,14 @@ const VALUE_COLUMN = 29;
 
 export function formatUsageReport(report: UsageReport, displayState: UsageDisplayState): string {
 	const stateLabel = displayState === "current" ? "Current" : "Configured";
-	const lines = [`${report.providerName} Usage · ${stateLabel}`];
+	const title =
+		report.providerId === "deepseek" ? "DeepSeek API Balance" : `${report.providerName} Usage`;
+	const lines = [`${title} · ${stateLabel}`];
 	if (report.accountLabel) lines.push(`Account: ${report.accountLabel}`);
 	lines.push(`Semantics: ${report.semantics.label}`, "");
 
 	if (report.providerId === "openai-codex") formatCodexReport(lines, report);
+	else if (report.providerId === "deepseek") formatDeepSeekReport(lines, report);
 	else if (report.providerId === "github-copilot") formatGitHubCopilotReport(lines, report);
 	else if (report.providerId === "openrouter") formatOpenRouterReport(lines, report);
 	else if (report.providerId === "opencode-go") formatOpenCodeZenReport(lines, report);
@@ -33,6 +36,7 @@ export function formatUsageReport(report: UsageReport, displayState: UsageDispla
 
 export function formatUsageStatusline(report: UsageReport, model?: UsageModel): string | undefined {
 	if (report.providerId === "openai-codex") return formatCodexStatusline(report, model);
+	if (report.providerId === "deepseek") return formatDeepSeekStatusline(report);
 	if (report.providerId === "github-copilot") return formatGitHubCopilotStatusline(report);
 	if (report.providerId === "openrouter") {
 		const limit = report.buckets.find((bucket) => bucket.id === "key-limit");
@@ -85,6 +89,33 @@ function formatCodexReport(lines: string[], report: UsageReport): void {
 			);
 		}
 	}
+}
+
+function formatDeepSeekReport(lines: string[], report: UsageReport): void {
+	const availability = report.metrics.find((metric) => metric.id === "api-availability");
+	lines.push(
+		`${"API calls:".padEnd(VALUE_COLUMN)}${availability?.value === "available" ? "Available" : "Unavailable"}`,
+	);
+	for (const currency of ["CNY", "USD"]) {
+		const metrics = report.metrics.filter((metric) => metric.currency === currency);
+		if (metrics.length === 0) continue;
+		lines.push("", `${currency} balance:`);
+		for (const metric of metrics) {
+			lines.push(`${`${metric.label}:`.padEnd(VALUE_COLUMN)}${currency} ${metric.value}`);
+		}
+	}
+}
+
+function formatDeepSeekStatusline(report: UsageReport): string {
+	const availability = report.metrics.find((metric) => metric.id === "api-availability");
+	if (availability?.value !== "available") return "deepseek API unavailable";
+	const totals = ["CNY", "USD"].flatMap((currency) => {
+		const metric = report.metrics.find(
+			(candidate) => candidate.id === `${currency.toLowerCase()}-total`,
+		);
+		return metric ? [`${currency} ${metric.value}`] : [];
+	});
+	return totals.length > 0 ? `deepseek ${totals.join(" · ")}` : "deepseek balance unavailable";
 }
 
 function formatGitHubCopilotReport(lines: string[], report: UsageReport): void {

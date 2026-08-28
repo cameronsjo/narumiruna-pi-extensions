@@ -51,6 +51,13 @@ const kimiModel = {
 	baseUrl: "https://api.kimi.com/coding",
 };
 
+const deepSeekModel = {
+	id: "deepseek-v4-pro",
+	name: "DeepSeek V4 Pro",
+	provider: "deepseek",
+	baseUrl: "https://api.deepseek.com",
+};
+
 function codexAccessToken(accountId: string): string {
 	const payload = Buffer.from(
 		JSON.stringify({
@@ -126,6 +133,24 @@ function usageFetch(input: string | URL | Request): Promise<Response> {
 						{
 							window: { duration: "300", timeUnit: "TIME_UNIT_MINUTE" },
 							detail: { used: "1", limit: "100" },
+						},
+					],
+				}),
+				{ status: 200 },
+			),
+		);
+	}
+	if (url.endsWith("/user/balance")) {
+		return Promise.resolve(
+			new Response(
+				JSON.stringify({
+					is_available: true,
+					balance_infos: [
+						{
+							currency: "USD",
+							total_balance: "12.50",
+							granted_balance: "2.50",
+							topped_up_balance: "10.00",
 						},
 					],
 				}),
@@ -406,13 +431,17 @@ test("command arguments are rejected instead of becoming a hidden interface", as
 	assert.match(notifications[0]?.message ?? "", /does not accept arguments/);
 });
 
-test("explicit all-provider query labels current/configured and retains Kimi plus failures", async (t) => {
+test("explicit all-provider query retains DeepSeek balance, Kimi, and partial failures", async (t) => {
 	const originalFetch = globalThis.fetch;
 	t.onTestFinished(() => {
 		globalThis.fetch = originalFetch;
 	});
 	globalThis.fetch = async (input) => {
-		if (String(input).endsWith("/api/v1/key") || String(input).endsWith("/coding/v1/usages")) {
+		if (
+			String(input).endsWith("/api/v1/key") ||
+			String(input).endsWith("/coding/v1/usages") ||
+			String(input).endsWith("/user/balance")
+		) {
 			return usageFetch(input);
 		}
 		return new Response("backend unavailable", { status: 503, statusText: "Unavailable" });
@@ -420,7 +449,7 @@ test("explicit all-provider query labels current/configured and retains Kimi plu
 
 	const titles: string[] = [];
 	const choices = ["View all configured providers…", "Close"];
-	const configured = new Set(["openrouter", "openai-codex", "kimi-coding"]);
+	const configured = new Set(["openrouter", "openai-codex", "kimi-coding", "deepseek"]);
 	const mock = createMockPi();
 	usageExtension(mock.pi);
 	const command = mock.commands.get("usage");
@@ -440,8 +469,8 @@ test("explicit all-provider query labels current/configured and retains Kimi plu
 					...(provider === "kimi-coding" ? { baseUrl: kimiModel.baseUrl } : {}),
 				},
 			}),
-			getAvailable: () => [openRouterModel, codexModel, kimiModel],
-			getAll: () => [openRouterModel, codexModel, kimiModel],
+			getAvailable: () => [openRouterModel, codexModel, kimiModel, deepSeekModel],
+			getAll: () => [openRouterModel, codexModel, kimiModel, deepSeekModel],
 			getProviderAuthStatus: (provider: string) => ({
 				configured: configured.has(provider),
 				source: "stored",
@@ -457,6 +486,8 @@ test("explicit all-provider query labels current/configured and retains Kimi plu
 	assert.match(titles[1] ?? "", /OpenAI Codex · Configured/);
 	assert.match(titles[1] ?? "", /Kimi For Coding Usage · Configured/);
 	assert.match(titles[1] ?? "", /1 of 100 used · 99% left/);
+	assert.match(titles[1] ?? "", /DeepSeek API Balance · Configured/);
+	assert.match(titles[1] ?? "", /Total balance:\s+USD 12\.50/u);
 	assert.match(titles[1] ?? "", /query failed/i);
 	assert.equal(statuses.get("usage"), "openrouter $75.00 left");
 });
@@ -824,6 +855,144 @@ test("current Kimi usage follows account changes and clears status on model repl
 		ctx,
 	);
 	assert.equal(statuses.get("usage"), undefined);
+	mock.events.get("session_shutdown")?.[0]?.({}, ctx);
+	assert.equal(statuses.get("usage"), undefined);
+});
+
+test("current DeepSeek API balance follows account changes and clears status", async (t) => {
+	const originalFetch = globalThis.fetch;
+	t.onTestFinished(() => {
+		globalThis.fetch = originalFetch;
+	});
+	let activeKey = "deepseek-account-a";
+	const fetchedKeys: string[] = [];
+	globalThis.fetch = async (_input, init) => {
+		const authorization = new Headers(init?.headers).get("authorization") ?? "";
+		fetchedKeys.push(authorization);
+		const total = activeKey === "deepseek-account-a" ? "12.50" : "7.25";
+		return new Response(
+			JSON.stringify({
+				is_available: true,
+				balance_infos: [
+					{
+						currency: "USD",
+						total_balance: total,
+						granted_balance: "2.50",
+						topped_up_balance: activeKey === "deepseek-account-a" ? "10.00" : "4.75",
+					},
+				],
+			}),
+			{ status: 200 },
+		);
+	};
+	const mock = createMockPi();
+	usageExtension(mock.pi);
+	const command = mock.commands.get("usage");
+	assert.ok(command);
+	const titles: string[] = [];
+	const { ctx, statuses } = createMockContext({
+		hasUI: true,
+		mode: "rpc",
+		model: deepSeekModel,
+		select: async (title: string) => {
+			titles.push(title);
+			return "Close";
+		},
+		modelRegistry: {
+			getProviderAuth: async () => ({
+				auth: { apiKey: activeKey, baseUrl: deepSeekModel.baseUrl },
+			}),
+			getAvailable: () => [deepSeekModel],
+			getAll: () => [deepSeekModel],
+		},
+	});
+
+	mock.events.get("session_start")?.[0]?.({}, ctx);
+	await settle();
+	assert.equal(statuses.get("usage"), "deepseek USD 12.50");
+	await command.handler("", ctx);
+	assert.match(titles[0] ?? "", /DeepSeek API Balance · Current/u);
+	assert.match(titles[0] ?? "", /Total balance:\s+USD 12\.50/u);
+
+	activeKey = "deepseek-account-b";
+	mock.events.get("turn_start")?.[0]?.({}, ctx);
+	await settle();
+	assert.equal(statuses.get("usage"), "deepseek USD 7.25");
+	assert.ok(fetchedKeys.includes("Bearer deepseek-account-a"));
+	assert.ok(fetchedKeys.includes("Bearer deepseek-account-b"));
+
+	mock.events.get("model_select")?.[0]?.(
+		{
+			model: {
+				id: "other",
+				name: "Other",
+				provider: "unsupported",
+				baseUrl: "https://example.test",
+			},
+		},
+		ctx,
+	);
+	assert.equal(statuses.get("usage"), undefined);
+	mock.events.get("session_shutdown")?.[0]?.({}, ctx);
+	assert.equal(statuses.get("usage"), undefined);
+});
+
+test("DeepSeek session replacement aborts a stale balance request before publication", async (t) => {
+	const originalFetch = globalThis.fetch;
+	t.onTestFinished(() => {
+		globalThis.fetch = originalFetch;
+	});
+	let activeKey = "deepseek-account-a";
+	let requests = 0;
+	let firstRequestSignal: AbortSignal | undefined;
+	let firstRequestStarted: () => void = () => undefined;
+	const firstRequestReady = new Promise<void>((resolve) => {
+		firstRequestStarted = resolve;
+	});
+	globalThis.fetch = async (_input, init) => {
+		requests += 1;
+		if (requests === 1) {
+			firstRequestSignal = init?.signal ?? undefined;
+			firstRequestStarted();
+			return new Response(new ReadableStream({ start() {} }), { status: 200 });
+		}
+		return new Response(
+			JSON.stringify({
+				is_available: true,
+				balance_infos: [
+					{
+						currency: "USD",
+						total_balance: "7.25",
+						granted_balance: "2.50",
+						topped_up_balance: "4.75",
+					},
+				],
+			}),
+			{ status: 200 },
+		);
+	};
+	const mock = createMockPi();
+	usageExtension(mock.pi);
+	const { ctx, statuses } = createMockContext({
+		model: deepSeekModel,
+		modelRegistry: {
+			getProviderAuth: async () => ({
+				auth: { apiKey: activeKey, baseUrl: deepSeekModel.baseUrl },
+			}),
+			getAvailable: () => [deepSeekModel],
+			getAll: () => [deepSeekModel],
+		},
+	});
+
+	mock.events.get("session_start")?.[0]?.({}, ctx);
+	await firstRequestReady;
+	activeKey = "deepseek-account-b";
+	mock.events.get("session_start")?.[0]?.({}, ctx);
+	await settle();
+
+	assert.equal(requests, 2);
+	assert.equal(firstRequestSignal?.aborted, true);
+	assert.equal(statuses.get("usage"), "deepseek USD 7.25");
 	mock.events.get("session_shutdown")?.[0]?.({}, ctx);
 	assert.equal(statuses.get("usage"), undefined);
 });
