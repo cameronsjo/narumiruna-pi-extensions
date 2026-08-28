@@ -154,6 +154,19 @@ test("completion renderer follows Pi's tool-output expansion state", async () =>
 	assert.equal(expandedText.includes(String.fromCharCode(7)), false);
 	assert.doesNotMatch(expandedText, /to expand|raw details must not render/i);
 	assert.ok(expandedLines.every((line) => visibleWidth(line) <= 80));
+
+	for (const [width, outputPad] of [
+		[1, 1],
+		[2, 4],
+		[3, 4],
+	] as const) {
+		for (const expandedState of [false, true]) {
+			const narrow = renderer(message, { expanded: expandedState, outputPad }, theme) as Component;
+			const narrowLines = narrow.render(width);
+			assert.ok(narrowLines.length > 0);
+			assert.ok(narrowLines.every((line) => visibleWidth(line) <= width));
+		}
+	}
 });
 
 test("spawns jobs with default and explicit tools and thinking levels", async () => {
