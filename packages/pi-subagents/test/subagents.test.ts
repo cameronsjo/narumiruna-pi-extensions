@@ -15,6 +15,7 @@ import { SUBAGENT_WIDGET_KEY } from "../src/widget.js";
 interface RegisteredTool {
 	name: string;
 	description: string;
+	promptSnippet?: string;
 	parameters: {
 		properties?: Record<
 			string,
@@ -56,7 +57,7 @@ afterEach(async () => {
 	vi.restoreAllMocks();
 });
 
-test("registers five fixed main-agent tools with bounded stable schemas", async () => {
+test("registers five fixed main-agent tools with stable schemas and explicit limits", async () => {
 	const { mock, context } = await setup();
 	const tools = mock.tools as unknown as RegisteredTool[];
 	assert.deepEqual(
@@ -97,6 +98,16 @@ test("registers five fixed main-agent tools with bounded stable schemas", async 
 		assert.equal(Check(candidate?.parameters, preparedMalformed), false);
 	}
 	assert.match(tools[0]?.description ?? "", /task defines.*selected tools define/is);
+	for (const candidate of tools) {
+		assert.doesNotMatch(
+			JSON.stringify({
+				description: candidate.description,
+				promptSnippet: candidate.promptSnippet,
+				parameters: candidate.parameters,
+			}),
+			/\bbounded\b/i,
+		);
+	}
 	assert.deepEqual([...mock.commands.keys()], []);
 	const definitions = JSON.stringify(
 		tools.map(({ name, description, parameters }) => ({ name, description, parameters })),
@@ -543,7 +554,7 @@ test("wait timeout leaves a job active and cancellation rejects stale output", a
 				});
 			}),
 	});
-	const spawned = await spawnJob(mock, context, "bounded task");
+	const spawned = await spawnJob(mock, context, "review task");
 	const jobId = String(spawned.details.jobId);
 	await Promise.resolve();
 	assert.deepEqual(

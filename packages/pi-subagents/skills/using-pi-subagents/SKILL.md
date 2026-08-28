@@ -1,6 +1,6 @@
 ---
 name: using-pi-subagents
-description: Operate bounded pi-subagents jobs safely, including direct-work decisions, least-privilege tool selection, thinking-level selection, background delegation, question replies, parallel starts, timeout selection, waiting, cancellation, result handling, verification, and writer isolation.
+description: Operate pi-subagents background jobs safely, including direct-work decisions, least-privilege tool selection, thinking-level selection, delegation, question replies, parallel starts, timeout selection, waiting, cancellation, result handling, verification, and writer isolation.
 license: MIT
 ---
 
@@ -20,7 +20,7 @@ Nested subagents are unsupported.
 
 ## Spawn one least-privilege job
 
-Use `subagent-spawn` for one bounded background job.
+Use `subagent-spawn` for one background job.
 
 The task defines the child's specialization, objective, constraints, and expected result.
 
@@ -48,7 +48,7 @@ Use a child-visible provider with Pi's stored credentials or inherited environme
 
 Omit `thinkingLevel` to follow the main agent's effective thinking level.
 
-Set `thinkingLevel` explicitly only when the bounded task justifies a different level.
+Set `thinkingLevel` explicitly only when the task justifies a different level.
 
 The job returns a job ID immediately and publishes one terminal completion.
 
@@ -84,7 +84,7 @@ Grant the implementation task only the work tools it needs.
 
 ## Choose timeouts
 
-Set `timeout` in seconds to the shortest realistic execution deadline for the bounded task.
+Set `timeout` in seconds to the shortest realistic execution deadline for the task.
 
 Execution timeouts accept positive finite numbers and have no default.
 
@@ -138,7 +138,7 @@ A parent wait returns early with `reason: "subagent_message"` when any unanswere
 
 Answer the visible request, then wait for the relevant job again only when its result is required.
 
-Set `subagent-wait.timeout` in seconds only when the caller needs a bounded wait.
+Set `subagent-wait.timeout` in seconds only when the caller needs a wait deadline.
 
 Wait timeouts accept positive finite numbers and have no default.
 
@@ -152,7 +152,7 @@ Do not poll repeatedly because asynchronous completion and question delivery rem
 
 ## Inspect and cancel
 
-Use `subagent-inspect` for one bounded snapshot of retained job metadata.
+Use `subagent-inspect` for one privacy-filtered snapshot of retained job metadata.
 
 Inspection omits task text, complete child output, prompts, selected tools, context, credentials, environment variables, questions, replies, and secrets.
 
@@ -168,9 +168,9 @@ Treat `completed` as a child report that still requires main-agent review and ap
 
 Treat `partial` as incomplete evidence, identify what remains unverified, and continue directly or start a newly scoped job only when justified.
 
-Treat `failed` as no reliable completion and inspect the bounded error before choosing a direct fallback.
+Treat `failed` as no reliable completion and inspect the available error before choosing a direct fallback.
 
-Treat `timed_out` as terminal for that job, preserve any bounded partial evidence, and do not assume work continued after the deadline.
+Treat `timed_out` as terminal for that job, preserve any available partial evidence, and do not assume work continued after the deadline.
 
 Treat `cancelled` as terminal and never wait for a later result from that attempt.
 
@@ -190,4 +190,4 @@ The main agent owns the final conclusion and user-facing handoff.
 
 The runtime does not provide retained conversations, user-directed follow-up turns, peer mailboxes, Agent Teams, chains, fan-in aggregators, panels, workflow DAGs, dynamic scheduling, verification orchestration, nested subagents, or extension-owned semantic memory.
 
-Implement any necessary coordination beyond bounded child questions explicitly in the main agent or with separate purpose-built infrastructure.
+Implement any necessary coordination beyond child questions explicitly in the main agent or with separate purpose-built infrastructure.

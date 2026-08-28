@@ -9,7 +9,7 @@ import {
 	sanitizeTerminalText,
 	validateMessage,
 } from "./message-broker.js";
-import { boundedModelText, modelVisibleJson } from "./model-output.js";
+import { modelVisibleJson, truncateModelText } from "./model-output.js";
 import { resolveTimeoutMs } from "./process.js";
 import { type RuntimeDependencies, SubagentRuntime } from "./runtime.js";
 import {
@@ -118,8 +118,8 @@ export function registerSubagentTools(
 		name: "subagent-spawn",
 		label: "Subagent · Spawn",
 		description:
-			"Use subagent-spawn to start one bounded background job and return its jobId immediately. The task defines the child's specialization, and the selected tools define its capabilities. The job may ask the main agent questions and publishes one asynchronous completion when terminal.",
-		promptSnippet: "Use subagent-spawn to start one bounded background job",
+			"Use subagent-spawn to start one background Pi job and return its jobId immediately. The task defines the child's specialization, and the selected tools define its capabilities. The job may ask the main agent questions and publishes one asynchronous completion when terminal.",
+		promptSnippet: "Use subagent-spawn to start one background Pi job",
 		parameters: SpawnParameters,
 		prepareArguments: prepareSpawnArguments,
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
@@ -150,7 +150,7 @@ export function registerSubagentTools(
 		name: "subagent-inspect",
 		label: "Subagent · Inspect",
 		description:
-			"Use subagent-inspect to return one bounded snapshot of retained jobs without exposing task text, complete child output, prompts, selected tools, context, credentials, or broker messages.",
+			"Use subagent-inspect to return one privacy-filtered snapshot of retained jobs without exposing task text, complete child output, prompts, selected tools, context, credentials, or broker messages.",
 		promptSnippet: "Use subagent-inspect to inspect retained subagent jobs",
 		parameters: InspectParameters,
 		async execute(_toolCallId, _params, signal) {
@@ -193,7 +193,7 @@ export function registerSubagentTools(
 		name: "subagent-reply",
 		label: "Subagent · Reply",
 		description:
-			"Use subagent-reply with a pending request ID to send one bounded plain-text response to the requesting background subagent. The first accepted reply is preserved.",
+			"Use subagent-reply with a pending request ID to send one plain-text response to the requesting background subagent. The first accepted reply is preserved.",
 		promptSnippet: "Use subagent-reply to answer one pending background-subagent question",
 		parameters: ReplyParameters,
 		async execute(_toolCallId, params, signal) {
@@ -229,7 +229,7 @@ export function registerSubagentTools(
 
 function deliverQuestion(pi: ExtensionAPI, question: BrokerQuestion): void {
 	const safeMessage = sanitizeTerminalText(question.message);
-	const content = boundedModelText(
+	const content = truncateModelText(
 		[
 			"Message Type: SUBAGENT_QUESTION",
 			"Protocol: pi-subagents:main-message:v1",

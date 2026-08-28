@@ -56,7 +56,7 @@ test("wait timeout and cancellation stop only that long poll", async () => {
 	assert.equal(await retry, "Still active");
 });
 
-test("enforces four outstanding requests and bounded consumed replay", async () => {
+test("enforces four outstanding requests and limits consumed replay", async () => {
 	const { broker, credentials } = await setup(() => undefined);
 	const client = createBrokerClient(credentials);
 	const requestIds: string[] = [];
@@ -163,7 +163,7 @@ test("bounds question bytes and reply lines", async () => {
 		() => client.ask("x".repeat(MAX_MESSAGE_BYTES + 1), undefined),
 		/50 KiB|51200/i,
 	);
-	const requestId = await client.ask("bounded", undefined);
+	const requestId = await client.ask("Question", undefined);
 	assert.throws(() => broker.reply(requestId, "x\n".repeat(2_000)), /at most 2000 lines/i);
 });
 
