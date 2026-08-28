@@ -95,8 +95,12 @@ function fakeProvider(
 	};
 }
 
-function runtimeHarness(mock: ReturnType<typeof createMockPi>) {
+function runtimeHarness(
+	mock: ReturnType<typeof createMockPi>,
+	options: { isolateProviders?: boolean } = {},
+) {
 	const keys = new Map<string, string>();
+	const providerConfigs = options.isolateProviders ? new Map(mock.providers) : mock.providers;
 	const models = [
 		{ provider: "openai-codex", id: "codex", baseUrl: "https://codex.example" },
 		{ provider: "anthropic", id: "claude", baseUrl: "https://anthropic.example" },
@@ -118,7 +122,27 @@ function runtimeHarness(mock: ReturnType<typeof createMockPi>) {
 	};
 	const registry = {
 		runtime,
-		getRegisteredProviderConfig: (provider: string) => mock.providers.get(provider),
+		getRegisteredProviderConfig: (provider: string) => providerConfigs.get(provider),
+		registerProvider(provider: string, config: unknown) {
+			if (!options.isolateProviders) {
+				mock.rawPi.registerProvider(provider, config);
+				return;
+			}
+			const previous = providerConfigs.get(provider);
+			providerConfigs.set(
+				provider,
+				previous && typeof previous === "object" && config && typeof config === "object"
+					? { ...previous, ...config }
+					: config,
+			);
+		},
+		unregisterProvider(provider: string) {
+			if (!options.isolateProviders) {
+				mock.rawPi.unregisterProvider(provider);
+				return;
+			}
+			providerConfigs.delete(provider);
+		},
 		getApiKeyForProvider: async (provider: string) => keys.get(provider),
 		getAll: () =>
 			models.map((model) => ({
@@ -134,14 +158,14 @@ function runtimeHarness(mock: ReturnType<typeof createMockPi>) {
 		find(provider: string, id: string) {
 			const model = models.find((item) => item.provider === provider && item.id === id);
 			if (!model) return undefined;
-			const config = mock.providers.get(provider) as
+			const config = providerConfigs.get(provider) as
 				| { baseUrl?: string; models?: Array<{ id: string }> }
 				| undefined;
 			if (config?.models && !config.models.some((item) => item.id === id)) return undefined;
 			return { ...model, baseUrl: config?.baseUrl ?? model.baseUrl };
 		},
 		async getApiKeyAndHeaders(model: { provider: string }) {
-			const config = mock.providers.get(model.provider) as
+			const config = providerConfigs.get(model.provider) as
 				| { headers?: Record<string, string> }
 				| undefined;
 			return { ok: true as const, apiKey: keys.get(model.provider), headers: config?.headers };
@@ -155,7 +179,7 @@ function runtimeHarness(mock: ReturnType<typeof createMockPi>) {
 			return { aborted: options.signal?.aborted ?? false, errors: new Map<string, Error>() };
 		},
 	};
-	return { keys, models, refreshCalls, registry, runtime };
+	return { keys, models, providerConfigs, refreshCalls, registry, runtime };
 }
 
 function ensureStoredSelection(
@@ -920,6 +944,61 @@ test("one extension instance isolates concurrent headless session owners", async
 	assert.equal(secondRuntime.keys.has("anthropic"), false);
 	assert.equal(firstRuntime.keys.get("anthropic"), "access-alpha");
 	assert.equal(collectCredentialOffers(mock, firstSession, "anthropic")[0]?.access, "access-alpha");
+});
+
+test("one extension instance keeps provider overlays scoped to each headless session", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: {
+			"kimi-coding": {
+				active: "work",
+				accounts: { work: credential("work") },
+			},
+		},
+	});
+	const mock = createMockPi();
+	accountsExtension(mock.pi, { store, providers: [fakeProvider("kimi-coding")] });
+	const namedRuntime = runtimeHarness(mock, { isolateProviders: true });
+	const defaultRuntime = runtimeHarness(mock, { isolateProviders: true });
+	const namedSession = SessionManager.inMemory(process.cwd(), { id: randomUUID() });
+	const defaultSession = SessionManager.inMemory(process.cwd(), { id: randomUUID() });
+	namedSession.appendCustomEntry(ACCOUNT_SELECTION_ENTRY_TYPE, {
+		version: 1,
+		sessionId: namedSession.getSessionId(),
+		providers: { "kimi-coding": "work" },
+	});
+	defaultSession.appendCustomEntry(ACCOUNT_SELECTION_ENTRY_TYPE, {
+		version: 1,
+		sessionId: defaultSession.getSessionId(),
+		providers: { "kimi-coding": null },
+	});
+	const namedContext = createMockContext({
+		model: { provider: "kimi-coding", id: "k3" },
+		modelRegistry: namedRuntime.registry,
+		sessionManager: namedSession,
+	}).ctx;
+	const defaultContext = createMockContext({
+		model: { provider: "kimi-coding", id: "k3" },
+		modelRegistry: defaultRuntime.registry,
+		sessionManager: defaultSession,
+	}).ctx;
+
+	await mock.events.get("session_start")?.[0]?.({}, namedContext);
+	await mock.events.get("session_start")?.[0]?.({}, defaultContext);
+	await mock.events.get("before_agent_start")?.[0]?.({}, namedContext);
+
+	assert.equal(namedRuntime.keys.get("kimi-coding"), "pi-accounts-header-auth");
+	assert.equal(defaultRuntime.keys.has("kimi-coding"), false);
+	assert.deepEqual(namedRuntime.providerConfigs.get("kimi-coding"), {
+		headers: { Authorization: "Bearer access-work" },
+	});
+	assert.equal(defaultRuntime.providerConfigs.has("kimi-coding"), false);
+
+	await mock.events.get("session_shutdown")?.[0]?.({}, defaultContext);
+	assert.deepEqual(namedRuntime.providerConfigs.get("kimi-coding"), {
+		headers: { Authorization: "Bearer access-work" },
+	});
 });
 
 test("session-local account selection restores on resume and ignores tree position", async () => {
@@ -3064,14 +3143,11 @@ test("fail-closed runtime keys are attempted even when a provider overlay is rej
 		},
 	});
 	const mock = createMockPi();
-	const pi = {
-		...mock.rawPi,
-		registerProvider() {
-			throw new Error("overlay rejected");
-		},
-	} as never;
-	const coordinator = new RuntimeAuthCoordinator(pi, fakeProvider("openai-codex"));
+	const coordinator = new RuntimeAuthCoordinator(mock.pi, fakeProvider("openai-codex"));
 	const { registry, keys } = runtimeHarness(mock);
+	registry.registerProvider = () => {
+		throw new Error("overlay rejected");
+	};
 	const { ctx } = createMockContext({ modelRegistry: registry });
 
 	const result = await ensureStoredSelection(coordinator, ctx, store);

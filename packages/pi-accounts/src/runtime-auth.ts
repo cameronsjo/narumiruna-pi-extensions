@@ -79,7 +79,7 @@ export class RuntimeAuthCoordinator {
 		private readonly failClosedApiKey = RUNTIME_FAIL_CLOSED_API_KEY,
 	) {
 		this.controller = new RuntimeApiKeyController(provider.id);
-		this.overlay = new RuntimeProviderOverlay(pi, provider, failClosedApiKey);
+		this.overlay = new RuntimeProviderOverlay(provider, failClosedApiKey);
 	}
 
 	async ensureActive(
@@ -552,7 +552,6 @@ class RuntimeProviderOverlay {
 	private baseModels: NonNullable<RuntimeProviderConfig["models"]> | undefined;
 
 	constructor(
-		private readonly pi: ExtensionAPI,
 		private readonly provider: AccountProviderAdapter,
 		private readonly fallbackApiKey: string,
 	) {}
@@ -596,7 +595,7 @@ class RuntimeProviderOverlay {
 
 		const next = this.buildConfig(auth, availableModelIds);
 		if (Object.keys(next).length === 0 && !this.owned) return true;
-		this.replaceConfig(this.owned ? this.applied : current, next);
+		this.replaceConfig(ctx, this.owned ? this.applied : current, next);
 		this.owned = true;
 		this.applied = next;
 		return true;
@@ -609,9 +608,9 @@ class RuntimeProviderOverlay {
 			this.reset();
 			return;
 		}
-		this.pi.unregisterProvider(this.provider.id);
+		ctx.modelRegistry.unregisterProvider(this.provider.id);
 		if (this.previous && Object.keys(this.previous).length > 0) {
-			this.pi.registerProvider(this.provider.id, this.previous);
+			ctx.modelRegistry.registerProvider(this.provider.id, this.previous);
 		}
 		this.reset();
 	}
@@ -634,15 +633,18 @@ class RuntimeProviderOverlay {
 	}
 
 	private replaceConfig(
+		ctx: ExtensionContext,
 		fallback: RuntimeProviderConfig | undefined,
 		next: RuntimeProviderConfig,
 	): void {
-		this.pi.unregisterProvider(this.provider.id);
+		ctx.modelRegistry.unregisterProvider(this.provider.id);
 		try {
-			if (Object.keys(next).length > 0) this.pi.registerProvider(this.provider.id, next);
+			if (Object.keys(next).length > 0) {
+				ctx.modelRegistry.registerProvider(this.provider.id, next);
+			}
 		} catch (error) {
 			if (fallback && Object.keys(fallback).length > 0) {
-				this.pi.registerProvider(this.provider.id, fallback);
+				ctx.modelRegistry.registerProvider(this.provider.id, fallback);
 			}
 			throw error;
 		}
