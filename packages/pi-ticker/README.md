@@ -28,11 +28,16 @@ Try without installing permanently:
 pi -e npm:@narumitw/pi-ticker
 ```
 
-Load this package from a local checkout:
+Build and load this package from a local checkout:
 
 ```bash
+npm --workspace @narumitw/pi-ticker run build
 pi --no-extensions -e ./packages/pi-ticker
 ```
+
+The package declares `dist/index.ts`, so an unbuilt local checkout must run the build before Pi loads the package directory.
+
+Pi loads the generated TypeScript entrypoint through Jiti while menu code remains in lazy JavaScript chunks.
 
 Extensions run with Pi's permissions, so install only trusted packages.
 
@@ -157,14 +162,17 @@ The polling queue is owned by one Pi session and is not shared across Pi process
 ```text
 packages/pi-ticker/
 ├── src/
-│   ├── index.ts       # Thin Pi package entrypoint
+│   ├── index.ts       # Thin source entrypoint for repository loading and runtime builds
 │   ├── ticker.ts      # Registration, commands, polling, and lifecycle ownership
 │   ├── menu.ts        # Mode dispatch and RPC management flow
 │   ├── tui-menu.ts    # Searchable TUI manager and reorder shortcuts
 │   ├── settings.ts    # Validation and atomic user-settings persistence
 │   ├── quotes.ts      # Yahoo Finance requests and response parsing
 │   └── render.ts      # Width-bounded plain and themed widget rendering
-├── test/              # Deterministic package behavior tests
+├── scripts/
+│   └── build-runtime.mjs  # Deterministic runtime builder and boundary validator
+├── dist/              # Generated Jiti entrypoint, lazy chunks, and source maps
+├── test/              # Deterministic package behavior and generated-runtime tests
 ├── README.md
 ├── LICENSE
 ├── package.json
