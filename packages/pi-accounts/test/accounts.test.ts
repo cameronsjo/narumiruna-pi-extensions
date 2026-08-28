@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { InMemoryCredentialStore, type ModelAuth } from "@earendil-works/pi-ai";
 import {
+	type CustomEntry,
 	initTheme,
 	ModelRegistry,
 	ModelRuntime,
@@ -11,8 +12,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { beforeAll, test } from "vitest";
 import {
+	createMockContext as createBaseMockContext,
 	createCustomSelectorHarness,
-	createMockContext,
 	createMockPi,
 } from "../../../test/support.js";
 import accountsExtension, {
@@ -193,35 +194,26 @@ function ensureStoredSelection(
 	return coordinator.ensureActive(ctx, store, selectedAccount, now, ownerSignal);
 }
 
-let testSessionId = 0;
-
-function createTestSessionManager(sessionId?: string) {
-	testSessionId += 1;
-	const resolvedSessionId = sessionId ?? `accounts-session-${testSessionId}`;
-	return {
-		getSessionId: () => resolvedSessionId,
-		getSessionName: () => undefined,
-		getBranch: () => [],
-		getEntries: () => [],
-	};
+function createMockContext(overrides: Record<string, unknown> = {}) {
+	return createBaseMockContext({
+		sessionManager: SessionManager.inMemory(process.cwd(), { id: "test-session" }),
+		...overrides,
+	});
 }
 
-function bindSessionEntries(
-	mock: ReturnType<typeof createMockPi>,
-	sessionManager: SessionManager,
-): void {
-	const appendEntry = mock.rawPi.appendEntry.bind(mock.rawPi);
-	mock.rawPi.appendEntry = (customType: string, data: unknown) => {
-		appendEntry(customType, data);
-		sessionManager.appendCustomEntry(customType, structuredClone(data));
-	};
+function createTestSessionManager(sessionId?: string): SessionManager {
+	return SessionManager.inMemory(process.cwd(), { id: sessionId ?? randomUUID() });
 }
 
 function latestSessionSelections(
-	mock: ReturnType<typeof createMockPi>,
+	sessionManager: Pick<SessionManager, "getEntries">,
 ): Record<string, string | null> {
-	const entry = mock.entries
-		.filter((candidate) => candidate.customType === ACCOUNT_SELECTION_ENTRY_TYPE)
+	const entry = sessionManager
+		.getEntries()
+		.filter(
+			(candidate): candidate is CustomEntry =>
+				candidate.type === "custom" && candidate.customType === ACCOUNT_SELECTION_ENTRY_TYPE,
+		)
 		.at(-1);
 	const data = entry?.data as { providers?: Record<string, string | null> } | undefined;
 	return data?.providers ?? {};
@@ -749,10 +741,12 @@ test("switch another provider account selects provider before account", async ()
 		],
 	});
 	const { registry, keys } = runtimeHarness(mock);
+	const sessionManager = createTestSessionManager();
 	const { ctx, selectCalls } = createInteractiveAccountContext(
 		{
 			model: { provider: "anthropic", id: "claude" },
 			modelRegistry: registry,
+			sessionManager,
 		},
 		{ selections: ["Switch another provider’s account", "OpenAI Codex", "work"] },
 	);
@@ -760,7 +754,7 @@ test("switch another provider account selects provider before account", async ()
 	await mock.commands.get("accounts")?.handler("ignored", ctx);
 
 	assert.equal((await store.readProviderAsync("openai-codex")).active, undefined);
-	assert.equal(latestSessionSelections(mock)["openai-codex"], "work");
+	assert.equal(latestSessionSelections(sessionManager)["openai-codex"], "work");
 	assert.equal(keys.get("openai-codex"), "access-codex");
 	assert.deepEqual(selectCalls[1]?.options, ["OpenAI Codex"]);
 });
@@ -782,10 +776,12 @@ test("provider accounts activate independently and default clears only one provi
 	];
 	accountsExtension(mock.pi, { store, providers });
 	const { registry, keys } = runtimeHarness(mock);
+	const sessionManager = createTestSessionManager();
 	const { ctx, notifications } = createInteractiveAccountContext(
 		{
 			model: { provider: "anthropic", id: "claude" },
 			modelRegistry: registry,
+			sessionManager,
 		},
 		{ selections: ["Switch Anthropic account", "default"] },
 	);
@@ -798,8 +794,8 @@ test("provider accounts activate independently and default clears only one provi
 	const data = await store.readAsync();
 	assert.equal(data.providers.anthropic?.active, "work");
 	assert.equal(data.providers["openai-codex"]?.active, "personal");
-	assert.equal(latestSessionSelections(mock).anthropic, null);
-	assert.equal(latestSessionSelections(mock)["openai-codex"], "personal");
+	assert.equal(latestSessionSelections(sessionManager).anthropic, null);
+	assert.equal(latestSessionSelections(sessionManager)["openai-codex"], "personal");
 	assert.equal(keys.has("anthropic"), false);
 	assert.equal(keys.get("openai-codex"), "access-codex");
 	assert.match(notifications.at(-1)?.message ?? "", /default Pi Anthropic login/);
@@ -832,8 +828,6 @@ test("concurrent sessions keep independent provider account selections", async (
 	const secondRuntime = runtimeHarness(second);
 	const firstSession = SessionManager.inMemory(process.cwd(), { id: randomUUID() });
 	const secondSession = SessionManager.inMemory(process.cwd(), { id: randomUUID() });
-	bindSessionEntries(first, firstSession);
-	bindSessionEntries(second, secondSession);
 	const firstContext = createMockContext({
 		model: { provider: "anthropic", id: "claude" },
 		modelRegistry: firstRuntime.registry,
@@ -906,20 +900,6 @@ test("one extension instance isolates concurrent headless session owners", async
 	const secondRuntime = runtimeHarness(mock);
 	const firstSession = SessionManager.inMemory(process.cwd(), { id: randomUUID() });
 	const secondSession = SessionManager.inMemory(process.cwd(), { id: randomUUID() });
-	for (const [session, accountName] of [
-		[firstSession, "alpha"],
-		[secondSession, "beta"],
-	] as const) {
-		session.appendCustomEntry(ACCOUNT_SELECTION_ENTRY_TYPE, {
-			version: 1,
-			sessionId: session.getSessionId(),
-			providers: {
-				anthropic: accountName,
-				"github-copilot": null,
-				"openai-codex": null,
-			},
-		});
-	}
 	const firstContext = createMockContext({
 		model: { provider: "anthropic", id: "claude" },
 		modelRegistry: firstRuntime.registry,
@@ -933,10 +913,27 @@ test("one extension instance isolates concurrent headless session owners", async
 
 	await mock.events.get("session_start")?.[0]?.({}, firstContext);
 	await mock.events.get("session_start")?.[0]?.({}, secondContext);
+	assert.equal(firstRuntime.keys.get("anthropic"), "access-alpha");
+	assert.equal(secondRuntime.keys.get("anthropic"), "access-alpha");
+	assert.equal(latestSessionSelections(firstSession).anthropic, "alpha");
+	assert.equal(latestSessionSelections(secondSession).anthropic, "alpha");
+
+	const secondMenuContext = createInteractiveAccountContext(
+		{
+			model: { provider: "anthropic", id: "claude" },
+			modelRegistry: secondRuntime.registry,
+			sessionManager: secondSession,
+		},
+		{ selections: ["Switch Anthropic account", "beta"] },
+	).ctx;
+	await mock.commands.get("accounts")?.handler("ignored", secondMenuContext);
 	await mock.events.get("before_agent_start")?.[0]?.({}, firstContext);
 
 	assert.equal(firstRuntime.keys.get("anthropic"), "access-alpha");
 	assert.equal(secondRuntime.keys.get("anthropic"), "access-beta");
+	assert.equal(latestSessionSelections(firstSession).anthropic, "alpha");
+	assert.equal(latestSessionSelections(secondSession).anthropic, "beta");
+	assert.equal(mock.entries.length, 0);
 	assert.equal(collectCredentialOffers(mock, firstSession, "anthropic")[0]?.access, "access-alpha");
 	assert.equal(collectCredentialOffers(mock, secondSession, "anthropic")[0]?.access, "access-beta");
 
@@ -1020,7 +1017,6 @@ test("session-local account selection restores on resume and ignores tree positi
 	const sessionManager = SessionManager.inMemory(process.cwd(), { id: randomUUID() });
 	const first = createMockPi();
 	accountsExtension(first.pi, { store, providers });
-	bindSessionEntries(first, sessionManager);
 	const firstRuntime = runtimeHarness(first);
 	const firstContext = createMockContext({
 		model: { provider: "anthropic", id: "claude" },
@@ -1043,7 +1039,6 @@ test("session-local account selection restores on resume and ignores tree positi
 	sessionManager.appendCustomEntry("unrelated-state", { branch: true });
 	const resumed = createMockPi();
 	accountsExtension(resumed.pi, { store, providers });
-	bindSessionEntries(resumed, sessionManager);
 	const resumedRuntime = runtimeHarness(resumed);
 	const resumedContext = createMockContext({
 		model: { provider: "anthropic", id: "claude" },
@@ -1080,7 +1075,6 @@ test("restored sessions seed newly supported providers from the compatibility de
 		sessionId: sessionManager.getSessionId(),
 		providers: { anthropic: null },
 	});
-	bindSessionEntries(mock, sessionManager);
 	const { keys, registry } = runtimeHarness(mock);
 	const { ctx } = createMockContext({
 		model: { provider: "openai-codex", id: "codex" },
@@ -1091,9 +1085,9 @@ test("restored sessions seed newly supported providers from the compatibility de
 
 	assert.equal(keys.has("anthropic"), false);
 	assert.equal(keys.get("openai-codex"), "access-codex");
-	assert.equal(latestSessionSelections(mock).anthropic, null);
-	assert.equal(latestSessionSelections(mock)["openai-codex"], "codex");
-	assert.equal(latestSessionSelections(mock)["github-copilot"], null);
+	assert.equal(latestSessionSelections(sessionManager).anthropic, null);
+	assert.equal(latestSessionSelections(sessionManager)["openai-codex"], "codex");
+	assert.equal(latestSessionSelections(sessionManager)["github-copilot"], null);
 });
 
 test("malformed session selection fails closed and /accounts can recover to default", async () => {
@@ -1119,7 +1113,6 @@ test("malformed session selection fails closed and /accounts can recover to defa
 		sessionId: sessionManager.getSessionId(),
 		providers: { anthropic: "work" },
 	});
-	bindSessionEntries(mock, sessionManager);
 	const { keys, registry } = runtimeHarness(mock);
 	const { ctx, notifications } = createMockContext({
 		model: { provider: "anthropic", id: "claude" },
@@ -1140,7 +1133,7 @@ test("malformed session selection fails closed and /accounts can recover to defa
 	).ctx;
 	await mock.commands.get("accounts")?.handler("ignored", recoveryContext);
 	assert.equal(keys.has("anthropic"), false);
-	assert.equal(latestSessionSelections(mock).anthropic, null);
+	assert.equal(latestSessionSelections(sessionManager).anthropic, null);
 });
 
 test("session selection append failure retains the previous account", async () => {
@@ -1164,7 +1157,6 @@ test("session selection append failure retains the previous account", async () =
 		],
 	});
 	const sessionManager = SessionManager.inMemory(process.cwd(), { id: randomUUID() });
-	bindSessionEntries(mock, sessionManager);
 	const { keys, registry } = runtimeHarness(mock);
 	const context = createMockContext({
 		model: { provider: "anthropic", id: "claude" },
@@ -1174,7 +1166,7 @@ test("session selection append failure retains the previous account", async () =
 	await mock.events.get("session_start")?.[0]?.({}, context.ctx);
 	assert.equal(keys.get("anthropic"), "access-alpha");
 
-	mock.rawPi.appendEntry = () => {
+	sessionManager.appendCustomEntry = () => {
 		throw new Error("session disk unavailable");
 	};
 	const switchContext = createInteractiveAccountContext(
@@ -1210,8 +1202,8 @@ test("initial session selection append failure fails closed and remains recovera
 		],
 	});
 	const sessionManager = SessionManager.inMemory(process.cwd(), { id: randomUUID() });
-	const appendEntry = mock.rawPi.appendEntry.bind(mock.rawPi);
-	mock.rawPi.appendEntry = () => {
+	const appendCustomEntry = sessionManager.appendCustomEntry.bind(sessionManager);
+	sessionManager.appendCustomEntry = () => {
 		throw new Error("session disk unavailable");
 	};
 	const { keys, registry } = runtimeHarness(mock);
@@ -1224,10 +1216,7 @@ test("initial session selection append failure fails closed and remains recovera
 	assert.equal(keys.get("anthropic"), FAIL_CLOSED_API_KEY);
 	assert.match(context.notifications[0]?.message ?? "", /could not persist/iu);
 
-	mock.rawPi.appendEntry = (customType: string, data: unknown) => {
-		appendEntry(customType, data);
-		sessionManager.appendCustomEntry(customType, structuredClone(data));
-	};
+	sessionManager.appendCustomEntry = appendCustomEntry;
 	const recoveryContext = createInteractiveAccountContext(
 		{
 			model: { provider: "anthropic", id: "claude" },
@@ -1258,7 +1247,6 @@ test("removal persistence failure leaves the missing selection fail closed", asy
 		],
 	});
 	const sessionManager = SessionManager.inMemory(process.cwd(), { id: randomUUID() });
-	bindSessionEntries(mock, sessionManager);
 	const { keys, registry } = runtimeHarness(mock);
 	const context = createMockContext({
 		model: { provider: "anthropic", id: "claude" },
@@ -1266,7 +1254,7 @@ test("removal persistence failure leaves the missing selection fail closed", asy
 		sessionManager,
 	});
 	await mock.events.get("session_start")?.[0]?.({}, context.ctx);
-	mock.rawPi.appendEntry = () => {
+	sessionManager.appendCustomEntry = () => {
 		throw new Error("session disk unavailable");
 	};
 	const removeContext = createInteractiveAccountContext(
@@ -1302,7 +1290,6 @@ test("credential mutation failure leaves the session selection and runtime uncha
 		],
 	});
 	const sessionManager = SessionManager.inMemory(process.cwd(), { id: randomUUID() });
-	bindSessionEntries(mock, sessionManager);
 	const { keys, registry } = runtimeHarness(mock);
 	const context = createMockContext({
 		model: { provider: "anthropic", id: "claude" },
@@ -1323,7 +1310,7 @@ test("credential mutation failure leaves the session selection and runtime uncha
 	).ctx;
 	await mock.commands.get("accounts")?.handler("ignored", removeContext);
 	assert.equal(keys.get("anthropic"), "access-work");
-	assert.equal(latestSessionSelections(mock).anthropic, "work");
+	assert.equal(latestSessionSelections(sessionManager).anthropic, "work");
 });
 
 test("a removed session-selected credential fails closed until explicit recovery", async () => {
@@ -1344,7 +1331,6 @@ test("a removed session-selected credential fails closed until explicit recovery
 		],
 	});
 	const sessionManager = SessionManager.inMemory(process.cwd(), { id: randomUUID() });
-	bindSessionEntries(mock, sessionManager);
 	const { keys, registry } = runtimeHarness(mock);
 	const { ctx } = createMockContext({
 		model: { provider: "anthropic", id: "claude" },
@@ -1750,10 +1736,12 @@ test("generic login stores the full provider-owned credential and activates it",
 		],
 	});
 	const { registry, keys } = runtimeHarness(mock);
+	const sessionManager = createTestSessionManager();
 	const { ctx } = createInteractiveAccountContext(
 		{
 			model: { provider: "github-copilot", id: "allowed" },
 			modelRegistry: registry,
+			sessionManager,
 		},
 		{ selections: ["Login new account", "GitHub Copilot"], inputs: ["personal"] },
 	);
@@ -1761,7 +1749,7 @@ test("generic login stores the full provider-owned credential and activates it",
 	await mock.commands.get("accounts")?.handler("ignored", ctx);
 	const stored = (await store.readAsync()).providers["github-copilot"];
 	assert.equal(stored?.active, undefined);
-	assert.equal(latestSessionSelections(mock)["github-copilot"], "personal");
+	assert.equal(latestSessionSelections(sessionManager)["github-copilot"], "personal");
 	assert.deepEqual(stored?.accounts.personal?.availableModelIds, ["allowed"]);
 	assert.equal(keys.get("github-copilot"), "access-login-github-copilot");
 });
@@ -1773,6 +1761,7 @@ test("xAI, Kimi, OpenRouter, and Radius login routes activate named OAuth accoun
 		const mock = createMockPi();
 		accountsExtension(mock.pi, { store, providers: [provider] });
 		const { registry, keys, refreshCalls } = runtimeHarness(mock);
+		const sessionManager = createTestSessionManager();
 		const modelIds = {
 			"kimi-coding": "k3",
 			openrouter: "openrouter-model",
@@ -1783,6 +1772,7 @@ test("xAI, Kimi, OpenRouter, and Radius login routes activate named OAuth accoun
 			{
 				model: { provider: providerId, id: modelIds[providerId] },
 				modelRegistry: registry,
+				sessionManager,
 			},
 			{ selections: ["Login new account", provider.displayName], inputs: ["work"] },
 		);
@@ -1790,7 +1780,7 @@ test("xAI, Kimi, OpenRouter, and Radius login routes activate named OAuth accoun
 		await mock.commands.get("accounts")?.handler("ignored", ctx);
 		const state = await store.readProviderAsync(providerId);
 		assert.equal(state.active, undefined);
-		assert.equal(latestSessionSelections(mock)[providerId], "work");
+		assert.equal(latestSessionSelections(sessionManager)[providerId], "work");
 		assert.equal(state.accounts.work?.access, `access-login-${providerId}`);
 		assert.equal(
 			keys.get(providerId),
@@ -3249,7 +3239,7 @@ test("account reset during OAuth conversion cannot restore a stale runtime overr
 	releaseConversion?.();
 	await Promise.all([startup, reset]);
 	assert.equal((await store.readProviderAsync("anthropic")).active, "work");
-	assert.equal(latestSessionSelections(mock).anthropic, null);
+	assert.equal(latestSessionSelections(sessionManager).anthropic, null);
 	assert.equal(keys.has("anthropic"), false);
 });
 
@@ -3310,7 +3300,7 @@ test("an overlapping account switch reports when its requested account was super
 	await older;
 
 	assert.equal((await store.readProviderAsync("openai-codex")).active, undefined);
-	assert.equal(latestSessionSelections(mock)["openai-codex"], "beta");
+	assert.equal(latestSessionSelections(sessionManager)["openai-codex"], "beta");
 	assert.match(olderContext.notifications.at(-1)?.message ?? "", /alpha.*superseded/);
 });
 

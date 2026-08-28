@@ -62,8 +62,12 @@ export type AccountsDependencies = {
 	closeCodexWebSockets?: (sessionId?: string) => unknown | Promise<unknown>;
 };
 
+type SessionEntryWriter = {
+	appendCustomEntry(customType: string, data?: unknown): string;
+};
+
 type SessionSelectionOwner = {
-	sessionManager: ExtensionContext["sessionManager"];
+	sessionManager: ExtensionContext["sessionManager"] & SessionEntryWriter;
 	sessionId: string;
 	selections: ProviderAccountSelections;
 	error?: string;
@@ -152,7 +156,7 @@ export default function accountsExtension(
 					data.providers[provider.id]?.active ?? null,
 				);
 			}
-			pi.appendEntry(
+			owner.sessionManager.appendCustomEntry(
 				ACCOUNT_SELECTION_ENTRY_TYPE,
 				createAccountSelectionEntryData(owner.sessionId, selections),
 			);
@@ -178,7 +182,9 @@ export default function accountsExtension(
 		}
 		const controller = new AbortController();
 		const owner: SessionSelectionOwner = {
-			sessionManager: ctx.sessionManager,
+			// Pi exposes this as read-only to extensions, but the runtime context contains the concrete
+			// session manager. Factory-bound pi.appendEntry() cannot target concurrent session owners.
+			sessionManager: ctx.sessionManager as ExtensionContext["sessionManager"] & SessionEntryWriter,
 			sessionId: ctx.sessionManager.getSessionId(),
 			selections: cloneAccountSelections(Object.create(null) as ProviderAccountSelections),
 			controller,
@@ -215,7 +221,7 @@ export default function accountsExtension(
 				)
 			: owner.selections;
 		selections = setAccountSelection(selections, providerId, accountName);
-		pi.appendEntry(
+		owner.sessionManager.appendCustomEntry(
 			ACCOUNT_SELECTION_ENTRY_TYPE,
 			createAccountSelectionEntryData(owner.sessionId, selections),
 		);

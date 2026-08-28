@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { initTheme } from "@earendil-works/pi-coding-agent";
+import { initTheme, SessionManager } from "@earendil-works/pi-coding-agent";
 import { afterEach, test } from "vitest";
 import accountsExtension, {
 	AccountStore,
@@ -186,6 +186,7 @@ test.each(["accounts-first", "usage-first"] as const)(
 			mode: "rpc",
 			model: copilotModel,
 			modelRegistry: registry,
+			sessionManager: SessionManager.inMemory(),
 			select: async (title: string, options: string[]) => {
 				titles.push(title);
 				const accountSelection = accountSelections[0];
@@ -251,6 +252,7 @@ test("built generated entries complete a representative named-account usage boun
 			mode: "rpc",
 			model: copilotModel,
 			modelRegistry: registry,
+			sessionManager: SessionManager.inMemory(),
 			select: async () => "Close",
 		});
 
@@ -301,6 +303,7 @@ test.each(["conflict-first", "conflict-last"] as const)(
 			mode: "rpc",
 			model: copilotModel,
 			modelRegistry: registry,
+			sessionManager: SessionManager.inMemory(),
 			select: async () => "Close",
 		});
 
