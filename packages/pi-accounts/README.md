@@ -3,7 +3,7 @@
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-accounts)](https://www.npmjs.com/package/@narumitw/pi-accounts) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 Save and switch named OAuth accounts for Pi's built-in providers.
-Each provider keeps its own selection, and choosing `default` restores Pi's normal authentication without deleting saved accounts.
+Each Pi session keeps its own selection for every provider, and choosing `default` restores Pi's normal authentication only for that session without deleting saved accounts.
 
 > [!WARNING]
 > Anthropic currently treats Claude Pro/Max use through third-party harnesses as **extra usage billed per token**, rather than consumption of the normal plan allowance.
@@ -12,7 +12,8 @@ Each provider keeps its own selection, and choosing `default` restores Pi's norm
 ## ✨ Features
 
 - Manages named OpenAI Codex, Anthropic Claude Pro/Max, GitHub Copilot, Kimi For Coding, OpenRouter, Radius, and xAI OAuth accounts through `/accounts`.
-- Selects an account—or Pi's default login—independently for each provider.
+- Selects an account—or Pi's default login—independently for each provider and Pi session.
+- Restores session selections after resume or reload while allowing concurrent sessions to use different accounts.
 - Applies provider-specific credentials, endpoints, headers, and model availability through Pi's built-in providers.
 - Refreshes rotating credentials and verifies the effective authentication before reporting success.
 - Offers only the verified active OAuth credential to compatible in-process consumers.
@@ -93,7 +94,7 @@ What do you want to do?
 › Login new account
 ```
 
-After accounts exist, `/accounts` shows the current model and every supported provider's active account before offering actions:
+After accounts exist, `/accounts` shows the current model and the current Pi session's selected account for every supported provider before offering actions:
 
 ```text
 Accounts
@@ -129,12 +130,13 @@ Reusing a provider and account name requires confirmation before replacement.
 
 The primary switch action targets the current model's provider.
 To switch another provider, choose **Switch another provider’s account**, then choose the provider and account.
-Choosing `default` restores Pi's built-in login for that provider.
+Choosing `default` restores Pi's built-in login for that provider in the current Pi session only.
+Switching or logging in does not change selections owned by other running or resumable sessions.
 `/accounts` changes account identity, not the model.
-As onboarding help, a successful login selects the provider's default model only when the current model is `unknown`.
 
 Removal lists accounts as `Provider · account` and requires confirmation.
-Removing the active account restores that provider to Pi's built-in login.
+Removing the current session's selected account records `default` for that provider.
+Because named credentials are shared, another session that selected the removed name fails closed on its next turn until the user chooses another account or `default`.
 
 ## 🔒 Security and privacy
 
@@ -148,8 +150,14 @@ Other providers remain independent and usable.
 Selecting `default` removes the package-owned runtime override and restores the exact provider registration that existed before activation.
 Pi's built-in credentials are never deleted.
 
-The extension implements `oauth:credential-source:v1` for compatible in-process consumers such as usage reporters.
-It offers a fresh clone only after the named credential has produced and verified authentication for the current Pi session.
+Session selections are stored as versioned, non-model custom entries in Pi's session JSONL.
+The entries contain only provider IDs and account names, not OAuth credentials.
+The owning Pi session ID prevents a fork or clone from treating copied parent entries as its own selection.
+Resume and reload restore entries owned by the same session, while `/tree` navigation keeps one session-wide selection instead of changing authentication by branch.
+A malformed matching selection entry fails managed providers closed until `/accounts` writes a valid snapshot; recovery defaults any other managed provider whose selection could not be trusted.
+
+The extension implements the versioned `oauth:credential-source:v1` protocol for compatible current-account consumers such as usage reporters.
+It offers a fresh in-memory clone only after the named OAuth credential has produced and verified active runtime authentication for the exact Pi session.
 Pending, default, stale, failed, replaced, reloaded, and shut-down states offer nothing.
 The protocol does not persist or log the offer, which contains neither the account name nor extension identity.
 Consumers must match its access token and provider metadata against freshly resolved runtime authentication.
@@ -185,7 +193,11 @@ The canonical file is:
 ```
 
 When `PI_CODING_AGENT_DIR` is set, the file is stored at `$PI_CODING_AGENT_DIR/pi-accounts.json` instead.
-Its versioned structure keeps account maps and active names under separate provider IDs.
+Its versioned structure keeps shared credential maps and a compatibility default under separate provider IDs.
+The legacy provider-level `active` value seeds a session that has no owned selection entry, but login, switch, and `default` actions no longer change it.
+A resumed session created before session-local selection support snapshots the current compatibility default once because its historical account choice cannot be inferred.
+Every new session snapshots that compatibility default; forked and cloned sessions do not inherit copied parent selections because their new IDs do not own those entries.
+Removing the credential named by the compatibility default clears that default so new sessions are not seeded with a missing account.
 Credential values are private and must not be committed.
 When neither canonical nor legacy storage exists, reads return an empty store without creating a directory or file.
 The first account change creates the private canonical file.
@@ -210,6 +222,9 @@ Before downgrading, stop Pi, back up the file, and remove the `kimi-coding`, `op
 3. Reinstall the deprecated `@narumitw/pi-codex-accounts` package only if necessary.
 4. Reauthenticate Codex if the retained legacy refresh token was rotated.
 
+Older `pi-accounts` releases ignore session selection entries and return to the retained provider-level compatibility default.
+Select the desired account again after rollback because switches made by this version did not update that global default.
+
 The repository preserves the predecessor implementation under `deprecated/pi-codex-accounts` for reference.
 It is excluded from active workspace checks, version bumps, and publishing.
 
@@ -221,6 +236,7 @@ It is excluded from active workspace checks, version bumps, and publishing.
 - It does not rotate accounts automatically, evade quotas, or report usage.
 - It does not support arbitrary custom providers.
 - Live OAuth login and model requests depend on provider service availability and account entitlement.
+- Sessions created before this behavior cannot recover a historical per-session choice and therefore use the shared compatibility default for their first snapshot.
 
 ## 🗂️ Package layout
 
@@ -228,11 +244,13 @@ It is excluded from active workspace checks, version bumps, and publishing.
 packages/pi-accounts/
 ├── src/
 │   ├── index.ts
+│   ├── account-menu.ts
 │   ├── account-store.ts
 │   ├── accounts.ts
 │   ├── oauth.ts
 │   ├── oauth-credential-source.ts
 │   ├── runtime-auth.ts
+│   ├── session-selection.ts
 │   └── storage.ts
 ├── dist/               # Generated source-mapped Jiti runtime
 ├── scripts/
@@ -241,7 +259,8 @@ packages/pi-accounts/
 │   ├── accounts-storage.test.ts
 │   ├── accounts.test.ts
 │   ├── build-runtime.test.ts
-│   └── radius.test.ts
+│   ├── radius.test.ts
+│   └── session-selection.test.ts
 ├── README.md
 ├── LICENSE
 ├── tsconfig.json

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { initTheme } from "@earendil-works/pi-coding-agent";
+import { initTheme, SessionManager } from "@earendil-works/pi-coding-agent";
 import { afterEach, test } from "vitest";
 import accountsExtension, {
 	AccountStore,
@@ -129,14 +129,12 @@ async function createStore() {
 
 function registerAccounts(mock: ReturnType<typeof createMockPi>, store: AccountStore) {
 	const sessionStartIndex = mock.events.get("session_start")?.length ?? 0;
-	const modelSelectIndex = mock.events.get("model_select")?.length ?? 0;
 	accountsExtension(mock.pi, {
 		store,
 		providers: [provider("openai-codex"), provider("anthropic"), provider("github-copilot")],
 	});
 	return {
 		sessionStart: mock.events.get("session_start")?.[sessionStartIndex],
-		modelSelect: mock.events.get("model_select")?.[modelSelectIndex],
 	};
 }
 
@@ -182,13 +180,20 @@ test.each(["accounts-first", "usage-first"] as const)(
 		}
 		const { keys, registry } = runtimeRegistry(mock);
 		const titles: string[] = [];
+		const accountSelections = ["Switch GitHub Copilot account", "second"];
 		const { ctx } = createMockContext({
 			hasUI: true,
 			mode: "rpc",
 			model: copilotModel,
 			modelRegistry: registry,
-			select: async (title: string) => {
+			sessionManager: SessionManager.inMemory(),
+			select: async (title: string, options: string[]) => {
 				titles.push(title);
+				const accountSelection = accountSelections[0];
+				if (accountSelection && options.includes(accountSelection)) {
+					accountSelections.shift();
+					return accountSelection;
+				}
 				return "Close";
 			},
 		});
@@ -202,8 +207,8 @@ test.each(["accounts-first", "usage-first"] as const)(
 		});
 		assert.match(titles.at(-1) ?? "", /named-account/iu);
 
-		await store.updateProvider("github-copilot", (state) => ({ ...state, active: "second" }));
-		await accountHooks.modelSelect?.({ model: copilotModel }, ctx);
+		await mock.commands.get("accounts")?.handler("", ctx);
+		assert.deepEqual(accountSelections, []);
 		await mock.commands.get("usage")?.handler("", ctx);
 		assert.equal(requests.length, 2);
 		assert.equal(requests[1]?.authorization, "Bearer github-second");
@@ -247,6 +252,7 @@ test("built generated entries complete a representative named-account usage boun
 			mode: "rpc",
 			model: copilotModel,
 			modelRegistry: registry,
+			sessionManager: SessionManager.inMemory(),
 			select: async () => "Close",
 		});
 
@@ -297,6 +303,7 @@ test.each(["conflict-first", "conflict-last"] as const)(
 			mode: "rpc",
 			model: copilotModel,
 			modelRegistry: registry,
+			sessionManager: SessionManager.inMemory(),
 			select: async () => "Close",
 		});
 

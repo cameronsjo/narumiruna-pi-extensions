@@ -113,7 +113,7 @@ test("Radius publishes the selected account catalog through Pi's real model runt
 			},
 		});
 		const firstContext = createMockContext({ modelRegistry: registry }).ctx;
-		assert.equal((await coordinator.ensureActive(firstContext, store)).status, "active");
+		assert.equal((await coordinator.ensureActive(firstContext, store, "work")).status, "active");
 		const firstModel = registry.find("radius", "radius-model");
 		assert.equal(firstModel?.baseUrl, "http://inference.one.radius.test/v1");
 		assert.deepEqual(requests, ["Bearer access-refreshed"]);
@@ -124,7 +124,7 @@ test("Radius publishes the selected account catalog through Pi's real model runt
 			"access-refreshed",
 		);
 
-		assert.equal((await coordinator.ensureActive(firstContext, store)).status, "active");
+		assert.equal((await coordinator.ensureActive(firstContext, store, "work")).status, "active");
 		assert.deepEqual(requests, ["Bearer access-refreshed"]);
 		assert.equal(refreshRequests.length, 1);
 
@@ -140,12 +140,10 @@ test("Radius publishes the selected account catalog through Pi's real model runt
 			},
 		}));
 		const secondContext = createMockContext({ model: firstModel, modelRegistry: registry }).ctx;
-		assert.equal((await coordinator.ensureActive(secondContext, store)).status, "active");
+		assert.equal((await coordinator.ensureActive(secondContext, store, "work")).status, "active");
 		assert.deepEqual(requests, ["Bearer access-refreshed", "Bearer access-two"]);
-		assert.equal(
-			(selectedModels[0] as { baseUrl?: string }).baseUrl,
-			"http://inference.two.radius.test/v1",
-		);
+		assert.equal(selectedModels.length, 0);
+		assert.equal(firstModel?.baseUrl, "http://inference.two.radius.test/v1");
 	} finally {
 		await rm(root, { recursive: true, force: true });
 		await new Promise<void>((resolve, reject) => {
