@@ -1,8 +1,14 @@
 // Cohesion justification: this account-manager integration matrix shares credential/provider
 // fixtures and cross-covers menus, OAuth, replacement, switching, persistence, and lifecycle safety.
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { InMemoryCredentialStore, type ModelAuth } from "@earendil-works/pi-ai";
-import { initTheme, ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import {
+	initTheme,
+	ModelRegistry,
+	ModelRuntime,
+	SessionManager,
+} from "@earendil-works/pi-coding-agent";
 import { beforeAll, test } from "vitest";
 import {
 	createCustomSelectorHarness,
@@ -25,6 +31,7 @@ import {
 } from "../src/oauth.js";
 import { OAUTH_CREDENTIAL_SOURCE_CHANNEL } from "../src/oauth-credential-source.js";
 import { RuntimeAuthCoordinator } from "../src/runtime-auth.js";
+import { ACCOUNT_SELECTION_ENTRY_TYPE } from "../src/session-selection.js";
 import { InMemoryAccountStorageBackend } from "../src/storage.js";
 
 beforeAll(() => initTheme("dark", false));
@@ -149,6 +156,51 @@ function runtimeHarness(mock: ReturnType<typeof createMockPi>) {
 		},
 	};
 	return { keys, models, refreshCalls, registry, runtime };
+}
+
+function ensureStoredSelection(
+	coordinator: RuntimeAuthCoordinator,
+	ctx: Parameters<RuntimeAuthCoordinator["ensureActive"]>[0],
+	store: AccountStore,
+	now = Date.now(),
+	ownerSignal?: AbortSignal,
+) {
+	const selectedAccount = store.read().providers[coordinator.provider.id]?.active ?? null;
+	return coordinator.ensureActive(ctx, store, selectedAccount, now, ownerSignal);
+}
+
+let testSessionId = 0;
+
+function createTestSessionManager(sessionId?: string) {
+	testSessionId += 1;
+	const resolvedSessionId = sessionId ?? `accounts-session-${testSessionId}`;
+	return {
+		getSessionId: () => resolvedSessionId,
+		getSessionName: () => undefined,
+		getBranch: () => [],
+		getEntries: () => [],
+	};
+}
+
+function bindSessionEntries(
+	mock: ReturnType<typeof createMockPi>,
+	sessionManager: SessionManager,
+): void {
+	const appendEntry = mock.rawPi.appendEntry.bind(mock.rawPi);
+	mock.rawPi.appendEntry = (customType: string, data: unknown) => {
+		appendEntry(customType, data);
+		sessionManager.appendCustomEntry(customType, structuredClone(data));
+	};
+}
+
+function latestSessionSelections(
+	mock: ReturnType<typeof createMockPi>,
+): Record<string, string | null> {
+	const entry = mock.entries
+		.filter((candidate) => candidate.customType === ACCOUNT_SELECTION_ENTRY_TYPE)
+		.at(-1);
+	const data = entry?.data as { providers?: Record<string, string | null> } | undefined;
+	return data?.providers ?? {};
 }
 
 function collectCredentialOffers(
@@ -604,12 +656,15 @@ test("accounts menu uses generic provider switch for unsupported current models"
 	});
 	const { registry } = runtimeHarness(mock);
 	const { ctx, selectCalls } = createInteractiveAccountContext({
-		model: { provider: "google", id: "gemini" },
+		model: { provider: "google\u202e", id: "gemini\u001b[31m" },
 		modelRegistry: registry,
 	});
 
 	await mock.commands.get("accounts")?.handler("ignored", ctx);
 
+	assert.match(selectCalls[0]?.title ?? "", /google \/ gemini/u);
+	assert.equal((selectCalls[0]?.title ?? "").includes("\u001b"), false);
+	assert.equal((selectCalls[0]?.title ?? "").includes("\u202e"), false);
 	assert.deepEqual(selectCalls[0]?.options, [
 		"Login new account",
 		"Switch provider account",
@@ -643,7 +698,8 @@ test("switch another provider account selects provider before account", async ()
 
 	await mock.commands.get("accounts")?.handler("ignored", ctx);
 
-	assert.equal((await store.readProviderAsync("openai-codex")).active, "work");
+	assert.equal((await store.readProviderAsync("openai-codex")).active, undefined);
+	assert.equal(latestSessionSelections(mock)["openai-codex"], "work");
 	assert.equal(keys.get("openai-codex"), "access-codex");
 	assert.deepEqual(selectCalls[1]?.options, ["OpenAI Codex"]);
 });
@@ -679,11 +735,461 @@ test("provider accounts activate independently and default clears only one provi
 
 	await mock.commands.get("accounts")?.handler("ignored", ctx);
 	const data = await store.readAsync();
-	assert.equal(data.providers.anthropic?.active, undefined);
+	assert.equal(data.providers.anthropic?.active, "work");
 	assert.equal(data.providers["openai-codex"]?.active, "personal");
+	assert.equal(latestSessionSelections(mock).anthropic, null);
+	assert.equal(latestSessionSelections(mock)["openai-codex"], "personal");
 	assert.equal(keys.has("anthropic"), false);
 	assert.equal(keys.get("openai-codex"), "access-codex");
 	assert.match(notifications.at(-1)?.message ?? "", /default Pi Anthropic login/);
+});
+
+test("concurrent sessions keep independent provider account selections", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: {
+			anthropic: {
+				active: "alpha",
+				accounts: {
+					alpha: credential("alpha"),
+					beta: { ...credential("beta"), expires: 1 },
+				},
+			},
+		},
+	});
+	const providers = [
+		fakeProvider("openai-codex"),
+		fakeProvider("anthropic"),
+		fakeProvider("github-copilot"),
+	];
+	const first = createMockPi();
+	const second = createMockPi();
+	accountsExtension(first.pi, { store, providers });
+	accountsExtension(second.pi, { store, providers });
+	const firstRuntime = runtimeHarness(first);
+	const secondRuntime = runtimeHarness(second);
+	const firstSession = SessionManager.inMemory(process.cwd(), { id: randomUUID() });
+	const secondSession = SessionManager.inMemory(process.cwd(), { id: randomUUID() });
+	bindSessionEntries(first, firstSession);
+	bindSessionEntries(second, secondSession);
+	const firstContext = createMockContext({
+		model: { provider: "anthropic", id: "claude" },
+		modelRegistry: firstRuntime.registry,
+		sessionManager: firstSession,
+	}).ctx;
+	const secondContext = createMockContext({
+		model: { provider: "anthropic", id: "claude" },
+		modelRegistry: secondRuntime.registry,
+		sessionManager: secondSession,
+	}).ctx;
+
+	await first.events.get("session_start")?.[0]?.({}, firstContext);
+	await second.events.get("session_start")?.[0]?.({}, secondContext);
+	assert.equal(firstRuntime.keys.get("anthropic"), "access-alpha");
+	assert.equal(secondRuntime.keys.get("anthropic"), "access-alpha");
+
+	const secondMenuContext = createInteractiveAccountContext(
+		{
+			model: { provider: "anthropic", id: "claude" },
+			modelRegistry: secondRuntime.registry,
+			sessionManager: secondSession,
+		},
+		{ selections: ["Switch Anthropic account", "beta"] },
+	).ctx;
+	await second.commands.get("accounts")?.handler("ignored", secondMenuContext);
+	assert.equal(secondRuntime.keys.get("anthropic"), "access-beta-refreshed");
+	const sharedState = await store.readProviderAsync("anthropic");
+	assert.equal(sharedState.active, "alpha");
+	assert.equal(sharedState.accounts.beta?.access, "access-beta-refreshed");
+
+	await first.events.get("before_agent_start")?.[0]?.({}, firstContext);
+	assert.equal(firstRuntime.keys.get("anthropic"), "access-alpha");
+
+	const secondDefaultContext = createInteractiveAccountContext(
+		{
+			model: { provider: "anthropic", id: "claude" },
+			modelRegistry: secondRuntime.registry,
+			sessionManager: secondSession,
+		},
+		{ selections: ["Switch Anthropic account", "default"] },
+	).ctx;
+	await second.commands.get("accounts")?.handler("ignored", secondDefaultContext);
+	assert.equal(secondRuntime.keys.has("anthropic"), false);
+	assert.equal((await store.readProviderAsync("anthropic")).active, "alpha");
+	await first.events.get("before_agent_start")?.[0]?.({}, firstContext);
+	assert.equal(firstRuntime.keys.get("anthropic"), "access-alpha");
+});
+
+test("session-local account selection restores on resume and ignores tree position", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: {
+			anthropic: {
+				active: "alpha",
+				accounts: { alpha: credential("alpha"), beta: credential("beta") },
+			},
+		},
+	});
+	const providers = [
+		fakeProvider("openai-codex"),
+		fakeProvider("anthropic"),
+		fakeProvider("github-copilot"),
+	];
+	const sessionManager = SessionManager.inMemory(process.cwd(), { id: randomUUID() });
+	const first = createMockPi();
+	accountsExtension(first.pi, { store, providers });
+	bindSessionEntries(first, sessionManager);
+	const firstRuntime = runtimeHarness(first);
+	const firstContext = createMockContext({
+		model: { provider: "anthropic", id: "claude" },
+		modelRegistry: firstRuntime.registry,
+		sessionManager,
+	}).ctx;
+	await first.events.get("session_start")?.[0]?.({}, firstContext);
+	const switchContext = createInteractiveAccountContext(
+		{
+			model: { provider: "anthropic", id: "claude" },
+			modelRegistry: firstRuntime.registry,
+			sessionManager,
+		},
+		{ selections: ["Switch Anthropic account", "beta"] },
+	).ctx;
+	await first.commands.get("accounts")?.handler("ignored", switchContext);
+	assert.equal(firstRuntime.keys.get("anthropic"), "access-beta");
+
+	sessionManager.resetLeaf();
+	sessionManager.appendCustomEntry("unrelated-state", { branch: true });
+	const resumed = createMockPi();
+	accountsExtension(resumed.pi, { store, providers });
+	bindSessionEntries(resumed, sessionManager);
+	const resumedRuntime = runtimeHarness(resumed);
+	const resumedContext = createMockContext({
+		model: { provider: "anthropic", id: "claude" },
+		modelRegistry: resumedRuntime.registry,
+		sessionManager,
+	}).ctx;
+	await resumed.events.get("session_start")?.[0]?.({ reason: "resume" }, resumedContext);
+
+	assert.equal(resumedRuntime.keys.get("anthropic"), "access-beta");
+	assert.equal((await store.readProviderAsync("anthropic")).active, "alpha");
+});
+
+test("restored sessions seed newly supported providers from the compatibility default", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: {
+			anthropic: { active: "work", accounts: { work: credential("work") } },
+			"openai-codex": { active: "codex", accounts: { codex: credential("codex") } },
+		},
+	});
+	const mock = createMockPi();
+	accountsExtension(mock.pi, {
+		store,
+		providers: [
+			fakeProvider("openai-codex"),
+			fakeProvider("anthropic"),
+			fakeProvider("github-copilot"),
+		],
+	});
+	const sessionManager = SessionManager.inMemory(process.cwd(), { id: randomUUID() });
+	sessionManager.appendCustomEntry(ACCOUNT_SELECTION_ENTRY_TYPE, {
+		version: 1,
+		sessionId: sessionManager.getSessionId(),
+		providers: { anthropic: null },
+	});
+	bindSessionEntries(mock, sessionManager);
+	const { keys, registry } = runtimeHarness(mock);
+	const { ctx } = createMockContext({
+		model: { provider: "openai-codex", id: "codex" },
+		modelRegistry: registry,
+		sessionManager,
+	});
+	await mock.events.get("session_start")?.[0]?.({}, ctx);
+
+	assert.equal(keys.has("anthropic"), false);
+	assert.equal(keys.get("openai-codex"), "access-codex");
+	assert.equal(latestSessionSelections(mock).anthropic, null);
+	assert.equal(latestSessionSelections(mock)["openai-codex"], "codex");
+	assert.equal(latestSessionSelections(mock)["github-copilot"], null);
+});
+
+test("malformed session selection fails closed and /accounts can recover to default", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: {
+			anthropic: { active: "work", accounts: { work: credential("work") } },
+		},
+	});
+	const mock = createMockPi();
+	accountsExtension(mock.pi, {
+		store,
+		providers: [
+			fakeProvider("openai-codex"),
+			fakeProvider("anthropic"),
+			fakeProvider("github-copilot"),
+		],
+	});
+	const sessionManager = SessionManager.inMemory(process.cwd(), { id: randomUUID() });
+	sessionManager.appendCustomEntry(ACCOUNT_SELECTION_ENTRY_TYPE, {
+		version: 2,
+		sessionId: sessionManager.getSessionId(),
+		providers: { anthropic: "work" },
+	});
+	bindSessionEntries(mock, sessionManager);
+	const { keys, registry } = runtimeHarness(mock);
+	const { ctx, notifications } = createMockContext({
+		model: { provider: "anthropic", id: "claude" },
+		modelRegistry: registry,
+		sessionManager,
+	});
+	await mock.events.get("session_start")?.[0]?.({}, ctx);
+	assert.equal(keys.get("anthropic"), FAIL_CLOSED_API_KEY);
+	assert.match(notifications[0]?.message ?? "", /invalid.*\/accounts/iu);
+
+	const recoveryContext = createInteractiveAccountContext(
+		{
+			model: { provider: "anthropic", id: "claude" },
+			modelRegistry: registry,
+			sessionManager,
+		},
+		{ selections: ["Switch Anthropic account", "default"] },
+	).ctx;
+	await mock.commands.get("accounts")?.handler("ignored", recoveryContext);
+	assert.equal(keys.has("anthropic"), false);
+	assert.equal(latestSessionSelections(mock).anthropic, null);
+});
+
+test("session selection append failure retains the previous account", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: {
+			anthropic: {
+				active: "alpha",
+				accounts: { alpha: credential("alpha"), beta: credential("beta") },
+			},
+		},
+	});
+	const mock = createMockPi();
+	accountsExtension(mock.pi, {
+		store,
+		providers: [
+			fakeProvider("openai-codex"),
+			fakeProvider("anthropic"),
+			fakeProvider("github-copilot"),
+		],
+	});
+	const sessionManager = SessionManager.inMemory(process.cwd(), { id: randomUUID() });
+	bindSessionEntries(mock, sessionManager);
+	const { keys, registry } = runtimeHarness(mock);
+	const context = createMockContext({
+		model: { provider: "anthropic", id: "claude" },
+		modelRegistry: registry,
+		sessionManager,
+	});
+	await mock.events.get("session_start")?.[0]?.({}, context.ctx);
+	assert.equal(keys.get("anthropic"), "access-alpha");
+
+	mock.rawPi.appendEntry = () => {
+		throw new Error("session disk unavailable");
+	};
+	const switchContext = createInteractiveAccountContext(
+		{
+			model: { provider: "anthropic", id: "claude" },
+			modelRegistry: registry,
+			sessionManager,
+		},
+		{ selections: ["Switch Anthropic account", "beta"] },
+	);
+	await mock.commands.get("accounts")?.handler("ignored", switchContext.ctx);
+	assert.match(switchContext.notifications.at(-1)?.message ?? "", /could not save/iu);
+	await mock.events.get("before_agent_start")?.[0]?.({}, context.ctx);
+	assert.equal(keys.get("anthropic"), "access-alpha");
+	assert.equal((await store.readProviderAsync("anthropic")).active, "alpha");
+});
+
+test("initial session selection append failure fails closed and remains recoverable", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: {
+			anthropic: { active: "work", accounts: { work: credential("work") } },
+		},
+	});
+	const mock = createMockPi();
+	accountsExtension(mock.pi, {
+		store,
+		providers: [
+			fakeProvider("openai-codex"),
+			fakeProvider("anthropic"),
+			fakeProvider("github-copilot"),
+		],
+	});
+	const sessionManager = SessionManager.inMemory(process.cwd(), { id: randomUUID() });
+	const appendEntry = mock.rawPi.appendEntry.bind(mock.rawPi);
+	mock.rawPi.appendEntry = () => {
+		throw new Error("session disk unavailable");
+	};
+	const { keys, registry } = runtimeHarness(mock);
+	const context = createMockContext({
+		model: { provider: "anthropic", id: "claude" },
+		modelRegistry: registry,
+		sessionManager,
+	});
+	await mock.events.get("session_start")?.[0]?.({}, context.ctx);
+	assert.equal(keys.get("anthropic"), FAIL_CLOSED_API_KEY);
+	assert.match(context.notifications[0]?.message ?? "", /could not persist/iu);
+
+	mock.rawPi.appendEntry = (customType: string, data: unknown) => {
+		appendEntry(customType, data);
+		sessionManager.appendCustomEntry(customType, structuredClone(data));
+	};
+	const recoveryContext = createInteractiveAccountContext(
+		{
+			model: { provider: "anthropic", id: "claude" },
+			modelRegistry: registry,
+			sessionManager,
+		},
+		{ selections: ["Switch Anthropic account", "default"] },
+	).ctx;
+	await mock.commands.get("accounts")?.handler("ignored", recoveryContext);
+	assert.equal(keys.has("anthropic"), false);
+});
+
+test("removal persistence failure leaves the missing selection fail closed", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: {
+			anthropic: { active: "work", accounts: { work: credential("work") } },
+		},
+	});
+	const mock = createMockPi();
+	accountsExtension(mock.pi, {
+		store,
+		providers: [
+			fakeProvider("openai-codex"),
+			fakeProvider("anthropic"),
+			fakeProvider("github-copilot"),
+		],
+	});
+	const sessionManager = SessionManager.inMemory(process.cwd(), { id: randomUUID() });
+	bindSessionEntries(mock, sessionManager);
+	const { keys, registry } = runtimeHarness(mock);
+	const context = createMockContext({
+		model: { provider: "anthropic", id: "claude" },
+		modelRegistry: registry,
+		sessionManager,
+	});
+	await mock.events.get("session_start")?.[0]?.({}, context.ctx);
+	mock.rawPi.appendEntry = () => {
+		throw new Error("session disk unavailable");
+	};
+	const removeContext = createInteractiveAccountContext(
+		{
+			model: { provider: "anthropic", id: "claude" },
+			modelRegistry: registry,
+			sessionManager,
+		},
+		{ selections: ["Remove account", "Anthropic · work"], confirms: [true] },
+	);
+	await mock.commands.get("accounts")?.handler("ignored", removeContext.ctx);
+	assert.equal(keys.get("anthropic"), FAIL_CLOSED_API_KEY);
+	assert.equal((await store.readProviderAsync("anthropic")).active, undefined);
+	assert.equal((await store.readProviderAsync("anthropic")).accounts.work, undefined);
+	assert.match(removeContext.notifications.at(-1)?.message ?? "", /fail closed/iu);
+});
+
+test("credential mutation failure leaves the session selection and runtime unchanged", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: {
+			anthropic: { active: "work", accounts: { work: credential("work") } },
+		},
+	});
+	const mock = createMockPi();
+	accountsExtension(mock.pi, {
+		store,
+		providers: [
+			fakeProvider("openai-codex"),
+			fakeProvider("anthropic"),
+			fakeProvider("github-copilot"),
+		],
+	});
+	const sessionManager = SessionManager.inMemory(process.cwd(), { id: randomUUID() });
+	bindSessionEntries(mock, sessionManager);
+	const { keys, registry } = runtimeHarness(mock);
+	const context = createMockContext({
+		model: { provider: "anthropic", id: "claude" },
+		modelRegistry: registry,
+		sessionManager,
+	});
+	await mock.events.get("session_start")?.[0]?.({}, context.ctx);
+	store.updateProvider = async () => {
+		throw new Error("credential disk unavailable");
+	};
+	const removeContext = createInteractiveAccountContext(
+		{
+			model: { provider: "anthropic", id: "claude" },
+			modelRegistry: registry,
+			sessionManager,
+		},
+		{ selections: ["Remove account", "Anthropic · work"], confirms: [true] },
+	).ctx;
+	await mock.commands.get("accounts")?.handler("ignored", removeContext);
+	assert.equal(keys.get("anthropic"), "access-work");
+	assert.equal(latestSessionSelections(mock).anthropic, "work");
+});
+
+test("a removed session-selected credential fails closed until explicit recovery", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: {
+			anthropic: { active: "work", accounts: { work: credential("work") } },
+		},
+	});
+	const mock = createMockPi();
+	accountsExtension(mock.pi, {
+		store,
+		providers: [
+			fakeProvider("openai-codex"),
+			fakeProvider("anthropic"),
+			fakeProvider("github-copilot"),
+		],
+	});
+	const sessionManager = SessionManager.inMemory(process.cwd(), { id: randomUUID() });
+	bindSessionEntries(mock, sessionManager);
+	const { keys, registry } = runtimeHarness(mock);
+	const { ctx } = createMockContext({
+		model: { provider: "anthropic", id: "claude" },
+		modelRegistry: registry,
+		sessionManager,
+	});
+	await mock.events.get("session_start")?.[0]?.({}, ctx);
+	await store.updateProvider("anthropic", (state) => ({
+		...state,
+		accounts: {},
+	}));
+	await mock.events.get("before_agent_start")?.[0]?.({}, ctx);
+	assert.equal(keys.get("anthropic"), FAIL_CLOSED_API_KEY);
+	assert.equal((await store.readProviderAsync("anthropic")).active, "work");
+
+	const recoveryContext = createInteractiveAccountContext(
+		{
+			model: { provider: "anthropic", id: "claude" },
+			modelRegistry: registry,
+			sessionManager,
+		},
+		{ selections: ["Switch Anthropic account", "default"] },
+	).ctx;
+	await mock.commands.get("accounts")?.handler("ignored", recoveryContext);
+	assert.equal(keys.has("anthropic"), false);
 });
 
 test("session replacement prevents a stale switch menu from mutating accounts", async () => {
@@ -697,19 +1203,23 @@ test("session replacement prevents a stale switch menu from mutating accounts", 
 			},
 		},
 	});
-	const originalUpdate = store.updateProvider.bind(store);
-	let markUpdateStarted!: () => void;
-	const updateStarted = new Promise<void>((resolve) => {
-		markUpdateStarted = resolve;
+	const originalReadProvider = store.readProviderAsync.bind(store);
+	let markReadStarted!: () => void;
+	const readStarted = new Promise<void>((resolve) => {
+		markReadStarted = resolve;
 	});
-	let releaseUpdate!: () => void;
-	const updateReleased = new Promise<void>((resolve) => {
-		releaseUpdate = resolve;
+	let releaseRead!: () => void;
+	const readReleased = new Promise<void>((resolve) => {
+		releaseRead = resolve;
 	});
-	store.updateProvider = async (providerId, mutator) => {
-		markUpdateStarted();
-		await updateReleased;
-		return originalUpdate(providerId, mutator);
+	let reads = 0;
+	store.readProviderAsync = async (providerId) => {
+		reads += 1;
+		if (reads === 1) {
+			markReadStarted();
+			await readReleased;
+		}
+		return originalReadProvider(providerId);
 	};
 	const mock = createMockPi();
 	accountsExtension(mock.pi, {
@@ -731,9 +1241,9 @@ test("session replacement prevents a stale switch menu from mutating accounts", 
 	}).ctx;
 
 	const stale = mock.commands.get("accounts")?.handler("ignored", oldContext);
-	await updateStarted;
+	await readStarted;
 	await mock.events.get("session_start")?.[0]?.({}, newContext);
-	releaseUpdate();
+	releaseRead();
 	await stale;
 	assert.equal((await store.readProviderAsync("anthropic")).active, "work");
 	assert.equal(keys.get("anthropic"), "access-work");
@@ -791,6 +1301,64 @@ test("session replacement prevents a stale remove menu from deleting accounts", 
 	assert.equal(keys.get("anthropic"), "access-work");
 });
 
+test("stale multi-provider startup stops before syncing later providers", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: {
+			"openai-codex": { active: "work", accounts: { work: credential("codex") } },
+			anthropic: { active: "work", accounts: { work: credential("anthropic") } },
+		},
+	});
+	let releaseOld!: () => void;
+	const oldBlocked = new Promise<void>((resolve) => {
+		releaseOld = resolve;
+	});
+	let markOldStarted!: () => void;
+	const oldStarted = new Promise<void>((resolve) => {
+		markOldStarted = resolve;
+	});
+	let codexConversions = 0;
+	let anthropicConversions = 0;
+	const codex = fakeProvider("openai-codex");
+	codex.oauth.toAuth = async (current) => {
+		codexConversions += 1;
+		if (codexConversions === 1) {
+			markOldStarted();
+			await oldBlocked;
+		}
+		return { apiKey: current.access };
+	};
+	const anthropic = fakeProvider("anthropic");
+	anthropic.oauth.toAuth = async (current) => {
+		anthropicConversions += 1;
+		return { apiKey: current.access };
+	};
+	const mock = createMockPi();
+	accountsExtension(mock.pi, {
+		store,
+		providers: [codex, anthropic, fakeProvider("github-copilot")],
+	});
+	const { registry } = runtimeHarness(mock);
+	const oldContext = createMockContext({
+		modelRegistry: registry,
+		sessionManager: createTestSessionManager(),
+	}).ctx;
+	const newContext = createMockContext({
+		modelRegistry: registry,
+		sessionManager: createTestSessionManager(),
+	}).ctx;
+
+	const stale = mock.events.get("session_start")?.[0]?.({}, oldContext);
+	await oldStarted;
+	await mock.events.get("session_start")?.[0]?.({}, newContext);
+	releaseOld();
+	await stale;
+
+	assert.equal(codexConversions, 2);
+	assert.equal(anthropicConversions, 1);
+});
+
 test("default Codex auth does not invalidate connections on first observation", async () => {
 	const invalidations: Array<string | undefined> = [];
 	const codex = fakeProvider("openai-codex");
@@ -831,9 +1399,11 @@ test("Codex connections invalidate only when the applied account identity change
 		providers: [codex, fakeProvider("anthropic"), fakeProvider("github-copilot")],
 	});
 	const { registry } = runtimeHarness(mock);
+	const sessionManager = createTestSessionManager("test-session");
 	const { ctx } = createMockContext({
 		model: { provider: "openai-codex", id: "codex" },
 		modelRegistry: registry,
+		sessionManager,
 	});
 
 	await mock.events.get("session_start")?.[0]?.({}, ctx);
@@ -843,6 +1413,7 @@ test("Codex connections invalidate only when the applied account identity change
 		{
 			model: { provider: "openai-codex", id: "codex" },
 			modelRegistry: registry,
+			sessionManager,
 		},
 		{ selections: ["Switch OpenAI Codex account", "default"] },
 	).ctx;
@@ -1006,7 +1577,8 @@ test("generic login stores the full provider-owned credential and activates it",
 
 	await mock.commands.get("accounts")?.handler("ignored", ctx);
 	const stored = (await store.readAsync()).providers["github-copilot"];
-	assert.equal(stored?.active, "personal");
+	assert.equal(stored?.active, undefined);
+	assert.equal(latestSessionSelections(mock)["github-copilot"], "personal");
 	assert.deepEqual(stored?.accounts.personal?.availableModelIds, ["allowed"]);
 	assert.equal(keys.get("github-copilot"), "access-login-github-copilot");
 });
@@ -1034,7 +1606,8 @@ test("xAI, Kimi, OpenRouter, and Radius login routes activate named OAuth accoun
 
 		await mock.commands.get("accounts")?.handler("ignored", ctx);
 		const state = await store.readProviderAsync(providerId);
-		assert.equal(state.active, "work");
+		assert.equal(state.active, undefined);
+		assert.equal(latestSessionSelections(mock)[providerId], "work");
 		assert.equal(state.accounts.work?.access, `access-login-${providerId}`);
 		assert.equal(
 			keys.get(providerId),
@@ -1199,7 +1772,7 @@ test("credential source offers a refreshed active credential as defensive sessio
 		providers: [fakeProvider("openai-codex"), fakeProvider("anthropic"), copilot],
 	});
 	const { registry } = runtimeHarness(mock);
-	const sessionManager = {};
+	const sessionManager = createTestSessionManager();
 	const { ctx } = createMockContext({
 		model: { provider: "github-copilot", id: "allowed" },
 		modelRegistry: registry,
@@ -1239,11 +1812,15 @@ test("credential source offers a refreshed active credential as defensive sessio
 	});
 	assert.doesNotThrow(() => mock.eventBus.emit(OAUTH_CREDENTIAL_SOURCE_CHANNEL, malformed));
 
-	await store.updateProvider("github-copilot", (state) => ({ ...state, active: undefined }));
-	await mock.events.get("model_select")?.[0]?.(
-		{ model: { provider: "github-copilot", id: "allowed" } },
-		ctx,
-	);
+	const defaultContext = createInteractiveAccountContext(
+		{
+			model: { provider: "github-copilot", id: "allowed" },
+			modelRegistry: registry,
+			sessionManager,
+		},
+		{ selections: ["Switch GitHub Copilot account", "default"] },
+	).ctx;
+	await mock.commands.get("accounts")?.handler("ignored", defaultContext);
 	assert.deepEqual(collectCredentialOffers(mock, sessionManager, "github-copilot"), []);
 	await mock.events.get("session_shutdown")?.[0]?.({}, ctx);
 	assert.deepEqual(collectCredentialOffers(mock, sessionManager, "github-copilot"), []);
@@ -1286,7 +1863,7 @@ test("credential source suppresses pending, stale, failed-closed, and replaced a
 		providers: [fakeProvider("openai-codex"), fakeProvider("anthropic"), copilot],
 	});
 	const { registry } = runtimeHarness(mock);
-	const sessionManager = {};
+	const sessionManager = createTestSessionManager();
 	const { ctx } = createMockContext({
 		model: { provider: "github-copilot", id: "allowed" },
 		modelRegistry: registry,
@@ -1296,8 +1873,15 @@ test("credential source suppresses pending, stale, failed-closed, and replaced a
 	const older = mock.events.get("session_start")?.[0]?.({}, ctx);
 	await firstStarted;
 	assert.deepEqual(collectCredentialOffers(mock, sessionManager, "github-copilot"), []);
-	await store.updateProvider("github-copilot", (state) => ({ ...state, active: "second" }));
-	await mock.events.get("before_agent_start")?.[0]?.({}, ctx);
+	const secondContext = createInteractiveAccountContext(
+		{
+			model: { provider: "github-copilot", id: "allowed" },
+			modelRegistry: registry,
+			sessionManager,
+		},
+		{ selections: ["Switch GitHub Copilot account", "second"] },
+	).ctx;
+	await mock.commands.get("accounts")?.handler("ignored", secondContext);
 	assert.equal(
 		collectCredentialOffers(mock, sessionManager, "github-copilot")[0]?.access,
 		"access-second",
@@ -1311,16 +1895,23 @@ test("credential source suppresses pending, stale, failed-closed, and replaced a
 
 	await store.updateProvider("github-copilot", (state) => ({
 		...state,
-		active: "failing",
 		accounts: { ...state.accounts, failing: credential("failing") },
 	}));
-	await mock.events.get("before_agent_start")?.[0]?.({}, ctx);
+	const failingContext = createInteractiveAccountContext(
+		{
+			model: { provider: "github-copilot", id: "allowed" },
+			modelRegistry: registry,
+			sessionManager,
+		},
+		{ selections: ["Switch GitHub Copilot account", "failing"] },
+	).ctx;
+	await mock.commands.get("accounts")?.handler("ignored", failingContext);
 	assert.deepEqual(collectCredentialOffers(mock, sessionManager, "github-copilot"), []);
 
 	const replacement = createMockContext({
 		model: { provider: "github-copilot", id: "allowed" },
 		modelRegistry: registry,
-		sessionManager: {},
+		sessionManager: createTestSessionManager(),
 	}).ctx;
 	await mock.events.get("session_start")?.[0]?.({}, replacement);
 	assert.deepEqual(collectCredentialOffers(mock, sessionManager, "github-copilot"), []);
@@ -1361,8 +1952,8 @@ test("session replacement invalidates a pending credential offer before old work
 		providers: [fakeProvider("openai-codex"), fakeProvider("anthropic"), copilot],
 	});
 	const { registry } = runtimeHarness(mock);
-	const oldSession = {};
-	const newSession = {};
+	const oldSession = createTestSessionManager();
+	const newSession = createTestSessionManager();
 	const oldContext = createMockContext({ modelRegistry: registry, sessionManager: oldSession }).ctx;
 	const newContext = createMockContext({ modelRegistry: registry, sessionManager: newSession }).ctx;
 
@@ -1391,7 +1982,7 @@ test("xAI named OAuth applies its access token and restores default auth", async
 	});
 	const mock = createMockPi();
 	const { keys, registry } = runtimeHarness(mock);
-	const sessionManager = {};
+	const sessionManager = createTestSessionManager();
 	const { ctx } = createMockContext({
 		model: { provider: "xai", id: "grok-4.3" },
 		modelRegistry: registry,
@@ -1399,7 +1990,7 @@ test("xAI named OAuth applies its access token and restores default auth", async
 	});
 	const coordinator = new RuntimeAuthCoordinator(mock.pi, fakeProvider("xai"));
 
-	const active = await coordinator.ensureActive(ctx, store);
+	const active = await ensureStoredSelection(coordinator, ctx, store);
 	assert.deepEqual(active, {
 		status: "active",
 		providerId: "xai",
@@ -1416,7 +2007,7 @@ test("xAI named OAuth applies its access token and restores default auth", async
 	assert.equal(offers[0]?.access, "access-xai");
 
 	await store.updateProvider("xai", (state) => ({ ...state, active: undefined }));
-	assert.deepEqual(await coordinator.ensureActive(ctx, store), {
+	assert.deepEqual(await ensureStoredSelection(coordinator, ctx, store), {
 		status: "inactive",
 		providerId: "xai",
 	});
@@ -1436,7 +2027,7 @@ test("OpenRouter named OAuth applies its access token and restores default auth"
 	});
 	const mock = createMockPi();
 	const { keys, refreshCalls, registry } = runtimeHarness(mock);
-	const sessionManager = {};
+	const sessionManager = createTestSessionManager();
 	const { ctx } = createMockContext({
 		model: { provider: "openrouter", id: "openrouter-model" },
 		modelRegistry: registry,
@@ -1444,7 +2035,7 @@ test("OpenRouter named OAuth applies its access token and restores default auth"
 	});
 	const coordinator = new RuntimeAuthCoordinator(mock.pi, fakeProvider("openrouter"));
 
-	const active = await coordinator.ensureActive(ctx, store);
+	const active = await ensureStoredSelection(coordinator, ctx, store);
 	assert.deepEqual(active, {
 		status: "active",
 		providerId: "openrouter",
@@ -1462,7 +2053,7 @@ test("OpenRouter named OAuth applies its access token and restores default auth"
 	assert.deepEqual(refreshCalls, []);
 
 	await store.updateProvider("openrouter", (state) => ({ ...state, active: undefined }));
-	assert.deepEqual(await coordinator.ensureActive(ctx, store), {
+	assert.deepEqual(await ensureStoredSelection(coordinator, ctx, store), {
 		status: "inactive",
 		providerId: "openrouter",
 	});
@@ -1486,7 +2077,7 @@ test("OpenRouter activation observes an already cancelled menu operation", async
 	owner.abort(new DOMException("Menu cancelled", "AbortError"));
 
 	assert.equal(
-		(await coordinator.ensureActive(ctx, store, Date.now(), owner.signal)).status,
+		(await ensureStoredSelection(coordinator, ctx, store, Date.now(), owner.signal)).status,
 		"error",
 	);
 	assert.equal(keys.get("openrouter"), FAIL_CLOSED_API_KEY);
@@ -1511,7 +2102,7 @@ test("Radius resolves OAuth from Pi's active gateway provider", async () => {
 	const { ctx } = createMockContext({ modelRegistry });
 	const coordinator = new RuntimeAuthCoordinator(mock.pi, radius);
 
-	assert.equal((await coordinator.ensureActive(ctx, store)).status, "active");
+	assert.equal((await ensureStoredSelection(coordinator, ctx, store)).status, "active");
 	assert.equal(keys.get("radius"), "gateway:access-radius");
 });
 
@@ -1543,7 +2134,7 @@ test("Radius refreshes its dynamic catalog for named and restored default auth",
 	const { ctx } = createMockContext({ modelRegistry: registry });
 	const coordinator = new RuntimeAuthCoordinator(mock.pi, fakeProvider("radius"));
 
-	assert.deepEqual(await coordinator.ensureActive(ctx, store), {
+	assert.deepEqual(await ensureStoredSelection(coordinator, ctx, store), {
 		status: "active",
 		providerId: "radius",
 		accountName: "work",
@@ -1553,11 +2144,11 @@ test("Radius refreshes its dynamic catalog for named and restored default auth",
 		models.some((model) => model.id === "named-radius-model"),
 		true,
 	);
-	assert.equal((await coordinator.ensureActive(ctx, store)).status, "active");
+	assert.equal((await ensureStoredSelection(coordinator, ctx, store)).status, "active");
 	assert.deepEqual(refreshKeys, ["access-radius"]);
 
 	await store.updateProvider("radius", (state) => ({ ...state, active: undefined }));
-	assert.deepEqual(await coordinator.ensureActive(ctx, store), {
+	assert.deepEqual(await ensureStoredSelection(coordinator, ctx, store), {
 		status: "inactive",
 		providerId: "radius",
 	});
@@ -1588,7 +2179,7 @@ test("Radius rebinds a retained selected model to its refreshed endpoint", async
 	const { ctx } = createMockContext({ model: selected, modelRegistry: registry });
 	const coordinator = new RuntimeAuthCoordinator(mock.pi, fakeProvider("radius"));
 
-	assert.equal((await coordinator.ensureActive(ctx, store)).status, "active");
+	assert.equal((await ensureStoredSelection(coordinator, ctx, store)).status, "active");
 	assert.equal(mock.setModels.length, 1);
 	assert.equal(
 		(mock.setModels[0] as { baseUrl?: string }).baseUrl,
@@ -1616,7 +2207,7 @@ test("Radius fails closed when the selected model disappears from the refreshed 
 	const { ctx } = createMockContext({ model: selected, modelRegistry: registry });
 	const coordinator = new RuntimeAuthCoordinator(mock.pi, fakeProvider("radius"));
 
-	const result = await coordinator.ensureActive(ctx, store);
+	const result = await ensureStoredSelection(coordinator, ctx, store);
 	assert.equal(result.status, "error");
 	if (result.status === "error") assert.match(result.message, /model radius-model is unavailable/);
 	assert.equal(keys.get("radius"), FAIL_CLOSED_API_KEY);
@@ -1637,7 +2228,7 @@ test("Radius catalog refresh errors fail closed", async () => {
 	const { ctx } = createMockContext({ modelRegistry: registry });
 	const coordinator = new RuntimeAuthCoordinator(mock.pi, fakeProvider("radius"));
 
-	const result = await coordinator.ensureActive(ctx, store);
+	const result = await ensureStoredSelection(coordinator, ctx, store);
 	assert.equal(result.status, "error");
 	if (result.status === "error") assert.match(result.message, /catalog unavailable/);
 	assert.equal(keys.get("radius"), FAIL_CLOSED_API_KEY);
@@ -1672,13 +2263,13 @@ test("a newer Radius account operation aborts stale catalog refresh work", async
 	const { ctx } = createMockContext({ modelRegistry: registry });
 	const coordinator = new RuntimeAuthCoordinator(mock.pi, fakeProvider("radius"));
 
-	const stale = coordinator.ensureActive(ctx, store);
+	const stale = ensureStoredSelection(coordinator, ctx, store);
 	await firstStarted;
 	await store.updateProvider("radius", (state) => ({
 		...state,
 		accounts: { work: credential("radius-new") },
 	}));
-	const current = await coordinator.ensureActive(ctx, store);
+	const current = await ensureStoredSelection(coordinator, ctx, store);
 	assert.deepEqual(current, {
 		status: "active",
 		providerId: "radius",
@@ -1720,13 +2311,13 @@ test("stale Radius default restoration cannot fail close a newer named activatio
 	};
 	const { ctx } = createMockContext({ modelRegistry: registry });
 	const coordinator = new RuntimeAuthCoordinator(mock.pi, fakeProvider("radius"));
-	assert.equal((await coordinator.ensureActive(ctx, store)).status, "active");
+	assert.equal((await ensureStoredSelection(coordinator, ctx, store)).status, "active");
 
 	await store.updateProvider("radius", (state) => ({ ...state, active: undefined }));
-	const staleDefault = coordinator.ensureActive(ctx, store);
+	const staleDefault = ensureStoredSelection(coordinator, ctx, store);
 	await defaultStarted;
 	await store.updateProvider("radius", (state) => ({ ...state, active: "beta" }));
-	const current = await coordinator.ensureActive(ctx, store);
+	const current = await ensureStoredSelection(coordinator, ctx, store);
 
 	assert.equal(current.status, "active");
 	assert.deepEqual(await staleDefault, { status: "inactive", providerId: "radius" });
@@ -1734,7 +2325,7 @@ test("stale Radius default restoration cannot fail close a newer named activatio
 	assert.equal(refreshes, 3);
 });
 
-test("Radius retries when account selection changes during catalog publication", async () => {
+test("Radius keeps the explicit session account when the global default changes", async () => {
 	const store = new AccountStore(new InMemoryAccountStorageBackend());
 	await store.write({
 		version: 1,
@@ -1758,13 +2349,14 @@ test("Radius retries when account selection changes during catalog publication",
 	const { ctx } = createMockContext({ modelRegistry: registry });
 	const coordinator = new RuntimeAuthCoordinator(mock.pi, fakeProvider("radius"));
 
-	assert.deepEqual(await coordinator.ensureActive(ctx, store), {
+	assert.deepEqual(await ensureStoredSelection(coordinator, ctx, store), {
 		status: "active",
 		providerId: "radius",
-		accountName: "beta",
+		accountName: "alpha",
 	});
-	assert.equal(keys.get("radius"), "access-radius-beta");
-	assert.equal(refreshes, 2);
+	assert.equal(keys.get("radius"), "access-radius-alpha");
+	assert.equal((await store.readProviderAsync("radius")).active, "beta");
+	assert.equal(refreshes, 1);
 });
 
 test("Radius menu cancellation aborts post-login catalog work and fails closed", async () => {
@@ -1791,7 +2383,7 @@ test("Radius menu cancellation aborts post-login catalog work and fails closed",
 	const coordinator = new RuntimeAuthCoordinator(mock.pi, fakeProvider("radius"));
 	const owner = new AbortController();
 
-	const activation = coordinator.ensureActive(ctx, store, Date.now(), owner.signal);
+	const activation = ensureStoredSelection(coordinator, ctx, store, Date.now(), owner.signal);
 	await refreshStarted;
 	owner.abort(new DOMException("Menu cancelled", "AbortError"));
 	assert.equal((await activation).status, "error");
@@ -1825,8 +2417,14 @@ test("Radius session replacement aborts the stale catalog refresh", async () => 
 		}
 		return { aborted: options.signal?.aborted ?? false, errors: new Map<string, Error>() };
 	};
-	const oldContext = createMockContext({ modelRegistry: registry, sessionManager: {} }).ctx;
-	const newContext = createMockContext({ modelRegistry: registry, sessionManager: {} }).ctx;
+	const oldContext = createMockContext({
+		modelRegistry: registry,
+		sessionManager: createTestSessionManager(),
+	}).ctx;
+	const newContext = createMockContext({
+		modelRegistry: registry,
+		sessionManager: createTestSessionManager(),
+	}).ctx;
 
 	const oldStart = mock.events.get("session_start")?.[0]?.({}, oldContext);
 	await firstStarted;
@@ -1910,7 +2508,7 @@ test("new provider adapters refresh expiring named credentials before activation
 		const { ctx } = createMockContext({ modelRegistry: registry });
 		const coordinator = new RuntimeAuthCoordinator(mock.pi, fakeProvider(providerId));
 
-		assert.equal((await coordinator.ensureActive(ctx, store)).status, "active");
+		assert.equal((await ensureStoredSelection(coordinator, ctx, store)).status, "active");
 		assert.equal(
 			(await store.readProviderAsync(providerId)).accounts.work?.access,
 			`access-${providerId}-refreshed`,
@@ -1941,7 +2539,7 @@ test("Kimi named OAuth displaces default auth with its Bearer header and restore
 	});
 	const coordinator = new RuntimeAuthCoordinator(mock.pi, fakeProvider("kimi-coding"));
 
-	assert.deepEqual(await coordinator.ensureActive(ctx, store), {
+	assert.deepEqual(await ensureStoredSelection(coordinator, ctx, store), {
 		status: "active",
 		providerId: "kimi-coding",
 		accountName: "work",
@@ -1952,7 +2550,7 @@ test("Kimi named OAuth displaces default auth with its Bearer header and restore
 	});
 
 	await store.updateProvider("kimi-coding", (state) => ({ ...state, active: undefined }));
-	assert.deepEqual(await coordinator.ensureActive(ctx, store), {
+	assert.deepEqual(await ensureStoredSelection(coordinator, ctx, store), {
 		status: "inactive",
 		providerId: "kimi-coding",
 	});
@@ -1985,7 +2583,7 @@ test("Kimi named auth resolves through Pi with the selector and Bearer header", 
 	const { ctx } = createMockContext({ model, modelRegistry: registry });
 	const coordinator = new RuntimeAuthCoordinator(pi as never, fakeProvider("kimi-coding"));
 
-	assert.equal((await coordinator.ensureActive(ctx, store)).status, "active");
+	assert.equal((await ensureStoredSelection(coordinator, ctx, store)).status, "active");
 	assert.deepEqual(await registry.getApiKeyAndHeaders(model), {
 		ok: true,
 		apiKey: "pi-accounts-header-auth",
@@ -1994,7 +2592,7 @@ test("Kimi named auth resolves through Pi with the selector and Bearer header", 
 	});
 
 	await store.updateProvider("kimi-coding", (state) => ({ ...state, active: undefined }));
-	assert.equal((await coordinator.ensureActive(ctx, store)).status, "inactive");
+	assert.equal((await ensureStoredSelection(coordinator, ctx, store)).status, "inactive");
 	assert.equal(registry.getRegisteredProviderConfig("kimi-coding"), undefined);
 });
 
@@ -2010,7 +2608,7 @@ test("Kimi session shutdown cancels ownership and restores default auth", async 
 	mock.rawPi.registerProvider("kimi-coding", { headers: { Existing: "yes" } });
 	accountsExtension(mock.pi, { store, providers: [fakeProvider("kimi-coding")] });
 	const { keys, registry } = runtimeHarness(mock);
-	const sessionManager = {};
+	const sessionManager = createTestSessionManager();
 	const { ctx } = createMockContext({
 		model: { provider: "kimi-coding", id: "k3" },
 		modelRegistry: registry,
@@ -2059,7 +2657,7 @@ test("Kimi malformed header auth fails closed without retaining a named Bearer t
 		kimi.oauth.toAuth = async () => auth;
 		const coordinator = new RuntimeAuthCoordinator(mock.pi, kimi);
 
-		const result = await coordinator.ensureActive(ctx, store);
+		const result = await ensureStoredSelection(coordinator, ctx, store);
 		assert.equal(result.status, "error");
 		assert.equal(keys.get("kimi-coding"), FAIL_CLOSED_API_KEY);
 		assert.equal(
@@ -2084,7 +2682,7 @@ test("providers without account-specific overlays leave existing registrations u
 	const { registry } = runtimeHarness(mock);
 	const { ctx } = createMockContext({ modelRegistry: registry });
 
-	assert.equal((await coordinator.ensureActive(ctx, store)).status, "active");
+	assert.equal((await ensureStoredSelection(coordinator, ctx, store)).status, "active");
 	assert.equal(mock.providerRegistrations.length, registrationsBefore);
 	assert.deepEqual(mock.providers.get("anthropic"), { headers: { Existing: "yes" } });
 });
@@ -2115,7 +2713,7 @@ test("GitHub Copilot activation applies its endpoint and available model project
 	const { registry, keys } = runtimeHarness(mock);
 	const { ctx } = createMockContext({ modelRegistry: registry });
 
-	const result = await coordinator.ensureActive(ctx, store);
+	const result = await ensureStoredSelection(coordinator, ctx, store);
 	assert.deepEqual(result, {
 		status: "active",
 		providerId: "github-copilot",
@@ -2135,7 +2733,7 @@ test("GitHub Copilot activation applies its endpoint and available model project
 	);
 
 	await store.updateProvider("github-copilot", (state) => ({ ...state, active: undefined }));
-	await coordinator.ensureActive(ctx, store);
+	await ensureStoredSelection(coordinator, ctx, store);
 	assert.deepEqual(mock.providers.get("github-copilot"), { headers: { Existing: "yes" } });
 	assert.equal(keys.has("github-copilot"), false);
 });
@@ -2160,7 +2758,7 @@ test("Copilot account switches rebuild model filtering from the complete pre-ove
 	const { registry } = runtimeHarness(mock);
 	const { ctx } = createMockContext({ modelRegistry: registry });
 
-	await coordinator.ensureActive(ctx, store);
+	await ensureStoredSelection(coordinator, ctx, store);
 	assert.deepEqual(
 		(mock.providers.get("github-copilot") as { models: Array<{ id: string }> }).models.map(
 			(model) => model.id,
@@ -2168,7 +2766,7 @@ test("Copilot account switches rebuild model filtering from the complete pre-ove
 		["allowed"],
 	);
 	await store.updateProvider("github-copilot", (state) => ({ ...state, active: "second" }));
-	await coordinator.ensureActive(ctx, store);
+	await ensureStoredSelection(coordinator, ctx, store);
 	assert.deepEqual(
 		(mock.providers.get("github-copilot") as { models: Array<{ id: string }> }).models.map(
 			(model) => model.id,
@@ -2201,7 +2799,7 @@ test("unsafe provider endpoints and malformed model metadata fail closed", async
 		const { registry, keys } = runtimeHarness(mock);
 		const { ctx } = createMockContext({ modelRegistry: registry });
 
-		assert.equal((await coordinator.ensureActive(ctx, store)).status, "error");
+		assert.equal((await ensureStoredSelection(coordinator, ctx, store)).status, "error");
 		assert.equal(keys.get("github-copilot"), FAIL_CLOSED_API_KEY);
 	}
 });
@@ -2233,7 +2831,7 @@ test("expired credentials refresh with a concrete signal and activate", async ()
 	const { registry, keys } = runtimeHarness(mock);
 	const { ctx } = createMockContext({ modelRegistry: registry });
 
-	const result = await coordinator.ensureActive(ctx, store);
+	const result = await ensureStoredSelection(coordinator, ctx, store);
 
 	assert.deepEqual(result, {
 		status: "active",
@@ -2292,12 +2890,12 @@ test("refresh invalidation rejects stale credentials and rotates the signal", as
 	const { registry, keys } = runtimeHarness(mock);
 	const { ctx } = createMockContext({ modelRegistry: registry });
 
-	const staleActivation = coordinator.ensureActive(ctx, store);
+	const staleActivation = ensureStoredSelection(coordinator, ctx, store);
 	await started;
 	coordinator.invalidate(ctx);
 	releaseFirst();
 	const staleResult = await staleActivation;
-	const freshResult = await coordinator.ensureActive(ctx, store);
+	const freshResult = await ensureStoredSelection(coordinator, ctx, store);
 
 	assert.equal(staleResult.status, "inactive");
 	assert.deepEqual(freshResult, {
@@ -2338,7 +2936,7 @@ test("invalid refreshed credentials fail closed instead of escaping storage vali
 	const { registry, keys } = runtimeHarness(mock);
 	const { ctx } = createMockContext({ modelRegistry: registry });
 
-	const result = await coordinator.ensureActive(ctx, store);
+	const result = await ensureStoredSelection(coordinator, ctx, store);
 	assert.equal(result.status, "error");
 	assert.equal(keys.get("anthropic"), FAIL_CLOSED_API_KEY);
 	assert.equal(
@@ -2369,7 +2967,7 @@ test("fail-closed runtime keys are attempted even when a provider overlay is rej
 	const { registry, keys } = runtimeHarness(mock);
 	const { ctx } = createMockContext({ modelRegistry: registry });
 
-	const result = await coordinator.ensureActive(ctx, store);
+	const result = await ensureStoredSelection(coordinator, ctx, store);
 	assert.equal(result.status, "error");
 	assert.equal(keys.get("openai-codex"), FAIL_CLOSED_API_KEY);
 });
@@ -2464,7 +3062,8 @@ test("account reset during OAuth conversion cannot restore a stale runtime overr
 	const reset = mock.commands.get("accounts")?.handler("ignored", resetContext);
 	releaseConversion?.();
 	await Promise.all([startup, reset]);
-	assert.equal((await store.readProviderAsync("anthropic")).active, undefined);
+	assert.equal((await store.readProviderAsync("anthropic")).active, "work");
+	assert.equal(latestSessionSelections(mock).anthropic, null);
 	assert.equal(keys.has("anthropic"), false);
 });
 
@@ -2500,10 +3099,12 @@ test("an overlapping account switch reports when its requested account was super
 		providers: [codex, fakeProvider("anthropic"), fakeProvider("github-copilot")],
 	});
 	const { registry } = runtimeHarness(mock);
+	const sessionManager = createTestSessionManager();
 	const olderContext = createInteractiveAccountContext(
 		{
 			model: { provider: "openai-codex", id: "codex" },
 			modelRegistry: registry,
+			sessionManager,
 		},
 		{ selections: ["Switch OpenAI Codex account", "alpha"] },
 	);
@@ -2511,6 +3112,7 @@ test("an overlapping account switch reports when its requested account was super
 		{
 			model: { provider: "openai-codex", id: "codex" },
 			modelRegistry: registry,
+			sessionManager,
 		},
 		{ selections: ["Switch OpenAI Codex account", "beta"] },
 	);
@@ -2521,7 +3123,8 @@ test("an overlapping account switch reports when its requested account was super
 	releaseAlpha?.();
 	await older;
 
-	assert.equal((await store.readProviderAsync("openai-codex")).active, "beta");
+	assert.equal((await store.readProviderAsync("openai-codex")).active, undefined);
+	assert.equal(latestSessionSelections(mock)["openai-codex"], "beta");
 	assert.match(olderContext.notifications.at(-1)?.message ?? "", /alpha.*superseded/);
 });
 

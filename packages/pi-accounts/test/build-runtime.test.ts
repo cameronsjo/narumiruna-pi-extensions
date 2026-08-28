@@ -17,7 +17,7 @@ import { test } from "vitest";
 
 const packageRoot = resolve("packages/pi-accounts");
 const builderUrl = pathToFileURL(join(packageRoot, "scripts/build-runtime.mjs")).href;
-const forbiddenEagerInputs: readonly string[] = [];
+const forbiddenEagerInputs: readonly string[] = ["src/account-menu.ts"];
 
 type BuildMetadata = {
 	outputs?: Record<
@@ -192,6 +192,45 @@ test("generated runtime is loadable by Pi's Jiti resource loader", async () => {
 		assert.ok(extension?.commands.has("accounts"));
 		assert.ok(extension?.handlers.has("session_start"));
 		assert.ok(extension?.handlers.has("session_shutdown"));
+
+		const notifications: string[] = [];
+		const sessionId = "generated-session";
+		const ctx = {
+			hasUI: false,
+			model: undefined,
+			modelRegistry: {},
+			sessionManager: {
+				getSessionId: () => sessionId,
+				getEntries: () => [
+					{
+						type: "custom",
+						customType: "pi-accounts-selection",
+						data: {
+							version: 1,
+							sessionId,
+							providers: {
+								anthropic: null,
+								"github-copilot": null,
+								"kimi-coding": null,
+								"openai-codex": null,
+								openrouter: null,
+								radius: null,
+								xai: null,
+							},
+						},
+					},
+				],
+			},
+			ui: {
+				notify(message: string) {
+					notifications.push(message);
+				},
+			},
+		};
+		const command = extension?.commands.get("accounts");
+		assert.ok(command);
+		await command.handler("", ctx as never);
+		assert.match(notifications.at(-1) ?? "", /requires interactive UI/iu);
 	} finally {
 		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;

@@ -27,6 +27,14 @@ import {
 	RuntimeAuthCoordinator,
 	redactTokenText,
 } from "./runtime-auth.js";
+import {
+	ACCOUNT_SELECTION_ENTRY_TYPE,
+	cloneAccountSelections,
+	createAccountSelectionEntryData,
+	type ProviderAccountSelections,
+	restoreAccountSelections,
+	setAccountSelection,
+} from "./session-selection.js";
 
 export {
 	ACCOUNTS_FILE,
@@ -51,11 +59,30 @@ export type AccountsDependencies = {
 	closeCodexWebSockets?: (sessionId?: string) => unknown | Promise<unknown>;
 };
 
+type SessionSelectionOwner = {
+	generation: number;
+	sessionManager: ExtensionContext["sessionManager"];
+	sessionId: string;
+	selections: ProviderAccountSelections;
+	error?: string;
+	signal: AbortSignal;
+	ready: Promise<void>;
+};
+
 type SyncProvider = (
 	providerId: AccountProviderId,
 	ctx: ExtensionContext,
+	owner: SessionSelectionOwner,
 	ownerSignal?: AbortSignal,
+	model?: ExtensionContext["model"],
 ) => Promise<EnsureActiveProviderAuthResult>;
+
+type PersistSelection = (
+	owner: SessionSelectionOwner,
+	providerId: AccountProviderId,
+	accountName: string | null,
+	isCurrent: () => boolean,
+) => boolean;
 
 export default function accountsExtension(
 	pi: ExtensionAPI,
@@ -79,41 +106,164 @@ export default function accountsExtension(
 	const syncTasks = new Map<AccountProviderId, Promise<EnsureActiveProviderAuthResult>>();
 	let sessionGeneration = 0;
 	let menuController = new AbortController();
+	let sessionOwner: SessionSelectionOwner | undefined;
 
-	const syncProvider = (
-		providerId: AccountProviderId,
+	const isOwnerCurrent = (owner: SessionSelectionOwner): boolean =>
+		sessionOwner === owner && owner.generation === sessionGeneration && !owner.signal.aborted;
+
+	const initializeOwner = async (
+		owner: SessionSelectionOwner,
 		ctx: ExtensionContext,
-		ownerSignal?: AbortSignal,
-		model = ctx.model,
-	): Promise<EnsureActiveProviderAuthResult> => {
+	): Promise<void> => {
+		const restored = restoreAccountSelections(ctx.sessionManager.getEntries(), owner.sessionId);
+		if (restored.status === "invalid") {
+			owner.error = restored.message;
+			ctx.ui.notify(restored.message, "error");
+			return;
+		}
+		let selections =
+			restored.status === "loaded"
+				? restored.selections
+				: cloneAccountSelections(Object.create(null) as ProviderAccountSelections);
+		const missingProviders = providers.filter(
+			(provider) => !Object.hasOwn(selections, provider.id),
+		);
+		if (restored.status === "loaded" && missingProviders.length === 0) {
+			owner.selections = selections;
+			return;
+		}
+		try {
+			const data = await store.readAsync();
+			if (!isOwnerCurrent(owner)) return;
+			for (const provider of missingProviders) {
+				selections = setAccountSelection(
+					selections,
+					provider.id,
+					data.providers[provider.id]?.active ?? null,
+				);
+			}
+			pi.appendEntry(
+				ACCOUNT_SELECTION_ENTRY_TYPE,
+				createAccountSelectionEntryData(owner.sessionId, selections),
+			);
+			if (!isOwnerCurrent(owner)) return;
+			owner.selections = selections;
+		} catch {
+			if (!isOwnerCurrent(owner)) return;
+			owner.error =
+				"Could not persist this Pi session's account selection. Choose an account or default from /accounts to retry.";
+			ctx.ui.notify(owner.error, "error");
+		}
+	};
+
+	const startSessionOwner = (ctx: ExtensionContext): SessionSelectionOwner => {
+		sessionGeneration += 1;
+		menuController.abort(new DOMException("Accounts session replaced", "AbortError"));
+		menuController = new AbortController();
+		results.clear();
+		appliedIdentities.clear();
+		abortProviders.clear();
+		syncTasks.clear();
+		for (const coordinator of coordinators.values()) coordinator.invalidate(ctx);
+		const owner = {
+			generation: sessionGeneration,
+			sessionManager: ctx.sessionManager,
+			sessionId: ctx.sessionManager.getSessionId(),
+			selections: cloneAccountSelections(Object.create(null) as ProviderAccountSelections),
+			signal: menuController.signal,
+			ready: Promise.resolve(),
+		};
+		sessionOwner = owner;
+		owner.ready = initializeOwner(owner, ctx);
+		return owner;
+	};
+
+	const ensureSessionOwner = async (ctx: ExtensionContext): Promise<SessionSelectionOwner> => {
+		let owner = sessionOwner;
+		if (
+			!owner ||
+			owner.sessionManager !== ctx.sessionManager ||
+			owner.sessionId !== ctx.sessionManager.getSessionId()
+		) {
+			owner = startSessionOwner(ctx);
+		}
+		await owner.ready;
+		return owner;
+	};
+
+	const persistSelection: PersistSelection = (owner, providerId, accountName, isCurrent) => {
+		if (!isOwnerCurrent(owner) || !isCurrent()) return false;
+		let selections = owner.error
+			? providers.reduce<ProviderAccountSelections>(
+					(current, provider) => setAccountSelection(current, provider.id, null),
+					cloneAccountSelections(Object.create(null) as ProviderAccountSelections),
+				)
+			: owner.selections;
+		selections = setAccountSelection(selections, providerId, accountName);
+		pi.appendEntry(
+			ACCOUNT_SELECTION_ENTRY_TYPE,
+			createAccountSelectionEntryData(owner.sessionId, selections),
+		);
+		if (!isOwnerCurrent(owner) || !isCurrent()) return false;
+		owner.selections = selections;
+		owner.error = undefined;
+		return true;
+	};
+
+	const staleResult = (providerId: AccountProviderId): EnsureActiveProviderAuthResult => ({
+		status: "inactive",
+		providerId,
+	});
+
+	const syncProvider: SyncProvider = (providerId, ctx, owner, ownerSignal, model = ctx.model) => {
 		let task!: Promise<EnsureActiveProviderAuthResult>;
 		task = (async () => {
 			const adapter = requireAdapter(adapters, providerId);
 			const coordinator = coordinators.get(providerId);
 			if (!coordinator) throw new Error(`Missing runtime coordinator for ${providerId}.`);
-			let result = await coordinator.ensureActive(ctx, store, Date.now(), ownerSignal);
+			if (!isOwnerCurrent(owner)) return staleResult(providerId);
+			const signal = ownerSignal ? AbortSignal.any([owner.signal, ownerSignal]) : owner.signal;
+			let result = owner.error
+				? await coordinator.forceFailClosed(ctx, "unknown", new Error(owner.error))
+				: await coordinator.ensureActive(
+						ctx,
+						store,
+						owner.selections[providerId] ?? null,
+						Date.now(),
+						signal,
+					);
 			let identity: string | undefined;
 			let latest = syncTasks.get(providerId);
+			if (!isOwnerCurrent(owner))
+				return latest && latest !== task ? latest : staleResult(providerId);
 			if (latest && latest !== task) return latest;
 			try {
 				identity = await authIdentity(store, result);
 				latest = syncTasks.get(providerId);
+				if (!isOwnerCurrent(owner))
+					return latest && latest !== task ? latest : staleResult(providerId);
 				if (latest && latest !== task) return latest;
 				const previousIdentity = appliedIdentities.get(providerId);
 				const shouldInvalidate =
 					previousIdentity !== identity &&
 					!(previousIdentity === undefined && identity === "default");
 				if (shouldInvalidate) {
-					await adapter.invalidateConnections?.(ctx.sessionManager.getSessionId());
+					await adapter.invalidateConnections?.(owner.sessionId);
 					latest = syncTasks.get(providerId);
+					if (!isOwnerCurrent(owner))
+						return latest && latest !== task ? latest : staleResult(providerId);
 					if (latest && latest !== task) return latest;
 				}
 				appliedIdentities.set(providerId, identity);
 			} catch (error) {
 				latest = syncTasks.get(providerId);
+				if (!isOwnerCurrent(owner))
+					return latest && latest !== task ? latest : staleResult(providerId);
 				if (latest && latest !== task) return latest;
 				const credential = await selectedCredential(store, providerId, result);
 				latest = syncTasks.get(providerId);
+				if (!isOwnerCurrent(owner))
+					return latest && latest !== task ? latest : staleResult(providerId);
 				if (latest && latest !== task) return latest;
 				result = await coordinator.forceFailClosed(
 					ctx,
@@ -123,6 +273,8 @@ export default function accountsExtension(
 				);
 			}
 			latest = syncTasks.get(providerId);
+			if (!isOwnerCurrent(owner))
+				return latest && latest !== task ? latest : staleResult(providerId);
 			if (latest && latest !== task) return latest;
 			coordinator.publishCredentialOffer(ctx, result, identity ?? "");
 			results.set(providerId, result);
@@ -133,9 +285,11 @@ export default function accountsExtension(
 		return task;
 	};
 
-	const syncAll = async (ctx: ExtensionContext): Promise<void> => {
+	const syncAll = async (ctx: ExtensionContext, owner: SessionSelectionOwner): Promise<void> => {
 		for (const provider of providers) {
-			const result = await syncProvider(provider.id, ctx);
+			if (!isOwnerCurrent(owner)) return;
+			const result = await syncProvider(provider.id, ctx, owner);
+			if (!isOwnerCurrent(owner)) return;
 			if (result.status === "error") {
 				ctx.ui.notify(
 					`${provider.displayName} account "${result.accountName}" failed closed: ${result.message}`,
@@ -143,42 +297,49 @@ export default function accountsExtension(
 				);
 			}
 		}
-		updateStatus(ctx, results);
+		if (isOwnerCurrent(owner)) updateStatus(ctx, results);
 	};
 
-	const accountCommand = createAccountCommand(pi, store, adapters, syncProvider, () => {
-		const generation = sessionGeneration;
-		return {
-			signal: menuController.signal,
-			isCurrent: () => generation === sessionGeneration && !menuController.signal.aborted,
-		};
-	});
-	pi.registerCommand("accounts", accountCommand);
+	pi.registerCommand(
+		"accounts",
+		createAccountCommand(
+			pi,
+			store,
+			adapters,
+			syncProvider,
+			persistSelection,
+			ensureSessionOwner,
+			(owner) => ({ signal: owner.signal, isCurrent: () => isOwnerCurrent(owner) }),
+		),
+	);
 
 	pi.on("session_start", async (_event, ctx) => {
-		sessionGeneration += 1;
-		menuController.abort(new DOMException("Accounts session replaced", "AbortError"));
-		menuController = new AbortController();
-		for (const coordinator of coordinators.values()) coordinator.invalidate(ctx);
+		const owner = startSessionOwner(ctx);
 		if (migrationNotice) {
 			ctx.ui.notify(migrationNotice, "warning");
 			migrationNotice = undefined;
 		}
-		await syncAll(ctx);
+		await owner.ready;
+		if (isOwnerCurrent(owner)) await syncAll(ctx, owner);
 	});
 
 	pi.on("model_select", async (event, ctx) => {
+		const owner = await ensureSessionOwner(ctx);
+		if (!isOwnerCurrent(owner)) return;
 		const providerId = toProviderId(event.model.provider);
-		if (providerId) await syncProvider(providerId, ctx, undefined, event.model);
+		if (providerId) await syncProvider(providerId, ctx, owner, undefined, event.model);
 		else updateStatus(ctx, results, event.model);
 	});
 
 	pi.on("before_agent_start", async (_event, ctx) => {
 		abortProviders.clear();
+		const owner = await ensureSessionOwner(ctx);
+		if (!isOwnerCurrent(owner)) return;
 		const providerId = toProviderId(ctx.model?.provider);
 		if (!providerId) return;
 		try {
-			const result = await syncProvider(providerId, ctx);
+			const result = await syncProvider(providerId, ctx, owner);
+			if (!isOwnerCurrent(owner)) return;
 			const coordinator = coordinators.get(providerId);
 			if (result.status === "error") abortProviders.add(providerId);
 			if (
@@ -209,7 +370,11 @@ export default function accountsExtension(
 	pi.on("session_shutdown", async (_event, ctx) => {
 		sessionGeneration += 1;
 		menuController.abort(new DOMException("Accounts session shut down", "AbortError"));
+		sessionOwner = undefined;
+		results.clear();
+		appliedIdentities.clear();
 		abortProviders.clear();
+		syncTasks.clear();
 		await Promise.allSettled(
 			[...coordinators.values()].map(async (coordinator) => {
 				coordinator.invalidate(ctx, false);
@@ -225,397 +390,66 @@ function createAccountCommand(
 	store: AccountStore,
 	adapters: Map<AccountProviderId, AccountProviderAdapter>,
 	syncProvider: SyncProvider,
-	getMenuOwner: () => { signal: AbortSignal; isCurrent(): boolean },
+	persistSelection: PersistSelection,
+	ensureSessionOwner: (ctx: ExtensionContext) => Promise<SessionSelectionOwner>,
+	getMenuOwner: (owner: SessionSelectionOwner) => { signal: AbortSignal; isCurrent(): boolean },
 ) {
 	return {
 		description: "Open the interactive OAuth account manager",
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
-			await showAccountsMenu(pi, ctx, store, adapters, syncProvider, getMenuOwner());
+			const owner = await ensureSessionOwner(ctx);
+			const menuOwner = getMenuOwner(owner);
+			if (!menuOwner.isCurrent()) return;
+			const { showAccountsMenu } = await import("./account-menu.js");
+			if (!menuOwner.isCurrent()) return;
+			await showAccountsMenu(
+				ctx,
+				store,
+				adapters,
+				owner,
+				{
+					login: (adapter, name, signal, isCurrent) =>
+						loginAccount(
+							pi,
+							ctx,
+							store,
+							adapter,
+							name,
+							signal,
+							syncProvider,
+							persistSelection,
+							owner,
+							isCurrent,
+						),
+					switch: (adapter, name, signal, isCurrent) =>
+						switchAccount(
+							ctx,
+							store,
+							adapter,
+							name,
+							signal,
+							syncProvider,
+							persistSelection,
+							owner,
+							isCurrent,
+						),
+					remove: (adapter, name, signal, isCurrent) =>
+						removeAccount(
+							ctx,
+							store,
+							adapter,
+							name,
+							signal,
+							syncProvider,
+							persistSelection,
+							owner,
+							isCurrent,
+						),
+				},
+				menuOwner,
+			);
 		},
 	};
-}
-
-const LOGIN_ACTION = "Login new account";
-const REMOVE_ACTION = "Remove account";
-const SWITCH_PROVIDER_ACTION = "Switch provider account";
-const SWITCH_ANOTHER_PROVIDER_ACTION = "Switch another provider’s account";
-
-type ProviderMenuState = {
-	id: AccountProviderId;
-	adapter: AccountProviderAdapter;
-	active: string | undefined;
-	accounts: Record<string, StoredOAuthCredential>;
-};
-
-async function showAccountsMenu(
-	pi: ExtensionAPI,
-	ctx: ExtensionCommandContext,
-	store: AccountStore,
-	adapters: Map<AccountProviderId, AccountProviderAdapter>,
-	syncProvider: SyncProvider,
-	owner: { signal: AbortSignal; isCurrent(): boolean },
-): Promise<void> {
-	if (!ctx.hasUI) {
-		ctx.ui.notify("/accounts requires interactive UI (TUI or RPC mode).", "error");
-		return;
-	}
-	const { defineMenu, runMenu } = await import("@narumitw/pi-tui-kit");
-	if (!owner.isCurrent()) return;
-	let selectedProviderId: AccountProviderId | undefined;
-	type State = {
-		states: Map<AccountProviderId, ProviderMenuState>;
-		currentProviderId: AccountProviderId | undefined;
-		hasAnyStoredAccount: boolean;
-	};
-	type Screen = "main" | "login-providers" | "switch-providers" | "switch-accounts" | "remove";
-	type Action =
-		| "login-route"
-		| "login-provider"
-		| "switch-current"
-		| "switch-route"
-		| "switch-provider"
-		| "switch-account"
-		| "remove-route"
-		| "remove-account";
-	const menu = defineMenu<State, Screen, Action, ExtensionCommandContext>({
-		start: "main",
-		screens: {
-			main: ({ state }) => {
-				const currentState = state.currentProviderId
-					? state.states.get(state.currentProviderId)
-					: undefined;
-				return {
-					kind: "actions",
-					title: "Accounts",
-					lines: formatAccountsMenuTitle(ctx, state.states, state.hasAnyStoredAccount)
-						.split("\n")
-						.slice(1),
-					items: buildAccountMainItems(state.states, currentState, state.hasAnyStoredAccount),
-					hint: "close",
-				};
-			},
-			"login-providers": ({ state }) => ({
-				kind: "actions",
-				title: "Select provider",
-				items: sortedProviderStates(state.states).map((provider) => ({
-					id: provider.id,
-					label: provider.adapter.displayName,
-					action: "login-provider",
-				})),
-				hint: "back",
-			}),
-			"switch-providers": ({ state }) => ({
-				kind: "actions",
-				title: "Select provider",
-				items: providerStatesWithAccounts(state.states, state.currentProviderId).map(
-					(provider) => ({
-						id: provider.id,
-						label: provider.adapter.displayName,
-						action: "switch-provider",
-					}),
-				),
-				hint: "back",
-			}),
-			"switch-accounts": ({ state }) => {
-				const provider = selectedProviderId ? state.states.get(selectedProviderId) : undefined;
-				const options = provider
-					? switchAccountOptions(provider.active, Object.keys(provider.accounts))
-					: [];
-				return {
-					kind: "actions",
-					title: provider ? `Switch ${provider.adapter.displayName} account` : "Switch account",
-					items: options.map((option) => {
-						const accountName = stripActiveMarker(option);
-						return {
-							id: accountItemId(accountName),
-							label: option,
-							action: "switch-account" as const,
-							disabled: accountName === (provider?.active ?? "default"),
-						};
-					}),
-					hint: "back",
-				};
-			},
-			remove: ({ state }) => ({
-				kind: "actions",
-				title: "Remove account",
-				items: removeAccountOptions(state.states, state.currentProviderId).map((option) => ({
-					id: removeAccountItemId(option.adapter.id, option.accountName),
-					label: option.label,
-					action: "remove-account",
-				})),
-				hint: "back",
-			}),
-		},
-		actions: {
-			"login-route": async () => ({ kind: "to", screen: "login-providers" }),
-			"login-provider": async ({ itemId, signal }) => {
-				if (!isAccountProviderId(itemId)) return { kind: "rejected" };
-				const adapter = requireAdapter(adapters, itemId);
-				const name = await ctx.ui.input(`Name this ${adapter.displayName} account:`, "work", {
-					signal,
-				});
-				if (name === undefined || !owner.isCurrent()) return { kind: "close" };
-				await loginAccount(pi, ctx, store, adapter, name, signal, syncProvider, owner.isCurrent);
-				return { kind: "close" };
-			},
-			"switch-current": async ({ itemId }) => {
-				if (!isAccountProviderId(itemId)) return { kind: "rejected" };
-				selectedProviderId = itemId;
-				return { kind: "to", screen: "switch-accounts" };
-			},
-			"switch-route": async () => ({ kind: "to", screen: "switch-providers" }),
-			"switch-provider": async ({ itemId }) => {
-				if (!isAccountProviderId(itemId)) return { kind: "rejected" };
-				selectedProviderId = itemId;
-				return { kind: "to", screen: "switch-accounts" };
-			},
-			"switch-account": async ({ itemId, signal }) => {
-				const providerId = selectedProviderId;
-				if (!providerId) return { kind: "rejected" };
-				const latest = await store.readProviderAsync(providerId);
-				if (!owner.isCurrent()) return { kind: "close" };
-				const accountName = switchAccountOptions(latest.active, Object.keys(latest.accounts))
-					.map(stripActiveMarker)
-					.find((name) => accountItemId(name) === itemId);
-				if (!accountName) return { kind: "rejected" };
-				await switchAccount(
-					ctx,
-					store,
-					requireAdapter(adapters, providerId),
-					accountName,
-					signal,
-					syncProvider,
-					owner.isCurrent,
-				);
-				return { kind: "close" };
-			},
-			"remove-route": async () => ({ kind: "to", screen: "remove" }),
-			"remove-account": async ({ itemId, signal }) => {
-				const states = await readProviderMenuStates(store, adapters);
-				if (!owner.isCurrent()) return { kind: "close" };
-				const option = removeAccountOptions(states, toProviderId(ctx.model?.provider)).find(
-					(candidate) =>
-						removeAccountItemId(candidate.adapter.id, candidate.accountName) === itemId,
-				);
-				if (!option) return { kind: "rejected" };
-				const confirmed = await ctx.ui.confirm(
-					"Remove account",
-					`Remove ${option.adapter.displayName} account "${option.accountName}"?`,
-				);
-				if (!confirmed || !owner.isCurrent()) return { kind: "close" };
-				await removeAccount(
-					ctx,
-					store,
-					option.adapter,
-					option.accountName,
-					signal,
-					syncProvider,
-					owner.isCurrent,
-				);
-				return { kind: "close" };
-			},
-		},
-	});
-	await runMenu(ctx, menu, {
-		getState: async () => {
-			const states = await readProviderMenuStates(store, adapters);
-			return {
-				states,
-				currentProviderId: toProviderId(ctx.model?.provider),
-				hasAnyStoredAccount: [...states.values()].some((state) => accountNames(state).length > 0),
-			};
-		},
-		signal: owner.signal,
-		isCurrent: owner.isCurrent,
-	});
-}
-
-async function readProviderMenuStates(
-	store: AccountStore,
-	adapters: Map<AccountProviderId, AccountProviderAdapter>,
-): Promise<Map<AccountProviderId, ProviderMenuState>> {
-	const states = new Map<AccountProviderId, ProviderMenuState>();
-	for (const id of adapters.keys()) {
-		const state = await store.readProviderAsync(id);
-		states.set(id, {
-			id,
-			adapter: requireAdapter(adapters, id),
-			active: state.active,
-			accounts: state.accounts,
-		});
-	}
-	return states;
-}
-
-function formatAccountsMenuTitle(
-	ctx: ExtensionCommandContext,
-	states: Map<AccountProviderId, ProviderMenuState>,
-	hasAnyStoredAccount: boolean,
-): string {
-	if (!hasAnyStoredAccount) return "Accounts\n\nNo saved accounts yet.\n\nWhat do you want to do?";
-	const activeLines = sortedProviderStates(states).map(
-		(state) => `  ${state.adapter.displayName}: ${state.active ?? "default"}`,
-	);
-	return [
-		"Accounts",
-		"",
-		"Current model:",
-		`  ${formatCurrentModel(ctx)}`,
-		"",
-		"Active accounts:",
-		...activeLines,
-		"",
-		"What do you want to do?",
-	].join("\n");
-}
-
-function formatCurrentModel(ctx: ExtensionCommandContext): string {
-	if (!ctx.model) return "(none)";
-	const providerId = toProviderId(ctx.model.provider);
-	const providerName = providerId ? providerDisplayName(providerId) : ctx.model.provider;
-	return `${providerName} / ${ctx.model.id}`;
-}
-
-function buildAccountMainItems(
-	states: Map<AccountProviderId, ProviderMenuState>,
-	currentState: ProviderMenuState | undefined,
-	hasAnyStoredAccount: boolean,
-): Array<{
-	id: string;
-	label: string;
-	action: "login-route" | "switch-current" | "switch-route" | "remove-route";
-}> {
-	if (!hasAnyStoredAccount) {
-		return [{ id: "login", label: LOGIN_ACTION, action: "login-route" }];
-	}
-	const currentHasAccounts = currentState ? accountNames(currentState).length > 0 : false;
-	if (currentState && currentHasAccounts) {
-		return [
-			{
-				id: currentState.id,
-				label: switchCurrentProviderAction(currentState.adapter),
-				action: "switch-current",
-			},
-			{ id: "login", label: LOGIN_ACTION, action: "login-route" },
-			{ id: "remove", label: REMOVE_ACTION, action: "remove-route" },
-			...(providerStatesWithAccounts(states, currentState.id).length > 0
-				? [
-						{
-							id: "switch-other",
-							label: SWITCH_ANOTHER_PROVIDER_ACTION,
-							action: "switch-route" as const,
-						},
-					]
-				: []),
-		];
-	}
-	return [
-		{ id: "login", label: LOGIN_ACTION, action: "login-route" },
-		{
-			id: "switch-provider",
-			label: currentState ? SWITCH_ANOTHER_PROVIDER_ACTION : SWITCH_PROVIDER_ACTION,
-			action: "switch-route",
-		},
-		{ id: "remove", label: REMOVE_ACTION, action: "remove-route" },
-	];
-}
-
-function accountItemId(accountName: string): string {
-	return `account:${encodeURIComponent(accountName)}`;
-}
-
-function removeAccountItemId(providerId: AccountProviderId, accountName: string): string {
-	return `${providerId}:${encodeURIComponent(accountName)}`;
-}
-
-function switchCurrentProviderAction(adapter: AccountProviderAdapter): string {
-	return `Switch ${adapter.displayName} account`;
-}
-
-function sortedProviderStates(
-	states: Map<AccountProviderId, ProviderMenuState>,
-): ProviderMenuState[];
-function sortedProviderStates(states: readonly ProviderMenuState[]): ProviderMenuState[];
-function sortedProviderStates(
-	states: Map<AccountProviderId, ProviderMenuState> | readonly ProviderMenuState[],
-): ProviderMenuState[] {
-	const values = Array.isArray(states) ? [...states] : [...states.values()];
-	return values.sort((left, right) =>
-		left.adapter.displayName.localeCompare(right.adapter.displayName),
-	);
-}
-
-function providerStatesWithAccounts(
-	states: Map<AccountProviderId, ProviderMenuState>,
-	excludeProviderId?: AccountProviderId,
-): ProviderMenuState[] {
-	return sortedProviderStates(states).filter(
-		(state) => state.id !== excludeProviderId && accountNames(state).length > 0,
-	);
-}
-
-function accountNames(state: ProviderMenuState): string[] {
-	return Object.keys(state.accounts).sort();
-}
-
-function switchAccountOptions(activeName: string | undefined, names: string[]): string[] {
-	const active = activeName ?? "default";
-	const sortedNames = [...names].sort();
-	const options = [formatSwitchAccountOption(active, true)];
-	for (const name of sortedNames) {
-		if (name !== active) options.push(formatSwitchAccountOption(name, false));
-	}
-	if (active !== "default") options.push(formatSwitchAccountOption("default", false));
-	return options;
-}
-
-function formatSwitchAccountOption(name: string, active: boolean): string {
-	return active ? `✓ ${name}` : name;
-}
-
-function stripActiveMarker(value: string): string {
-	return value.replace(/^✓\s+/, "");
-}
-
-function removeAccountOptions(
-	states: Map<AccountProviderId, ProviderMenuState>,
-	currentProviderId?: AccountProviderId,
-): Array<{ label: string; adapter: AccountProviderAdapter; accountName: string }> {
-	const providerStates = providerStatesWithAccounts(states);
-	if (currentProviderId) {
-		const currentIndex = providerStates.findIndex((state) => state.id === currentProviderId);
-		if (currentIndex > 0) {
-			const [current] = providerStates.splice(currentIndex, 1);
-			if (current) providerStates.unshift(current);
-		}
-	}
-	return providerStates.flatMap((state) =>
-		accountNames(state).map((accountName) => ({
-			label: `${state.adapter.displayName} · ${accountName}`,
-			adapter: state.adapter,
-			accountName,
-		})),
-	);
-}
-
-function providerDisplayName(providerId: AccountProviderId): string {
-	switch (providerId) {
-		case "anthropic":
-			return "Anthropic";
-		case "github-copilot":
-			return "GitHub Copilot";
-		case "kimi-coding":
-			return "Kimi For Coding";
-		case "openai-codex":
-			return "OpenAI Codex";
-		case "openrouter":
-			return "OpenRouter";
-		case "radius":
-			return "Radius";
-		case "xai":
-			return "xAI";
-	}
 }
 
 async function loginAccount(
@@ -626,6 +460,8 @@ async function loginAccount(
 	nameArg: string,
 	signal: AbortSignal,
 	syncProvider: SyncProvider,
+	persistSelection: PersistSelection,
+	session: SessionSelectionOwner,
 	isCurrent: () => boolean,
 ): Promise<void> {
 	const parsed = parseAccountName(nameArg);
@@ -648,6 +484,7 @@ async function loginAccount(
 		if (!confirmed || !isCurrent()) return;
 	}
 	ctx.ui.notify(`Starting ${adapter.displayName} login for "${parsed.name}".`, "info");
+	let credentialSaved = false;
 	try {
 		const credential = normalizeStoredCredential(
 			await loginWithOAuthUI(ctx, adapter, signal),
@@ -657,13 +494,15 @@ async function loginAccount(
 		await store.updateProvider(adapter.id, (state) =>
 			isCurrent()
 				? {
-						active: parsed.name,
+						...state,
 						accounts: defineOwn(state.accounts, parsed.name, credential),
 					}
 				: state,
 		);
 		if (!isCurrent()) return;
-		const result = await syncProvider(adapter.id, ctx, signal);
+		credentialSaved = true;
+		if (!persistSelection(session, adapter.id, parsed.name, isCurrent)) return;
+		const result = await syncProvider(adapter.id, ctx, session, signal);
 		if (!isCurrent()) return;
 		await selectDefaultModelIfUnknown(pi, ctx, adapter);
 		if (!isCurrent()) return;
@@ -673,8 +512,11 @@ async function loginAccount(
 		);
 	} catch (error) {
 		if (!isCurrent()) return;
+		const message = redactTokenText(errorMessage(error));
 		ctx.ui.notify(
-			`${adapter.displayName} login failed: ${redactTokenText(errorMessage(error))}`,
+			credentialSaved
+				? `${adapter.displayName} account "${parsed.name}" was saved, but this session could not select it: ${message}`
+				: `${adapter.displayName} login failed: ${message}`,
 			"error",
 		);
 	}
@@ -687,6 +529,8 @@ async function switchAccount(
 	nameArg: string,
 	signal: AbortSignal,
 	syncProvider: SyncProvider,
+	persistSelection: PersistSelection,
+	session: SessionSelectionOwner,
 	isCurrent: () => boolean,
 ): Promise<void> {
 	if (!isCurrent()) return;
@@ -696,11 +540,17 @@ async function switchAccount(
 		return;
 	}
 	if (isDefaultPiLoginArg(name)) {
-		await store.updateProvider(adapter.id, (state) =>
-			isCurrent() ? { ...state, active: undefined } : state,
-		);
-		if (!isCurrent()) return;
-		const result = await syncProvider(adapter.id, ctx, signal);
+		try {
+			if (!persistSelection(session, adapter.id, null, isCurrent)) return;
+		} catch (error) {
+			if (!isCurrent()) return;
+			ctx.ui.notify(
+				`Could not save the default ${adapter.displayName} selection for this session: ${redactTokenText(errorMessage(error))}`,
+				"error",
+			);
+			return;
+		}
+		const result = await syncProvider(adapter.id, ctx, session, signal);
 		if (!isCurrent()) return;
 		if (result.status === "error") {
 			ctx.ui.notify(
@@ -714,18 +564,23 @@ async function switchAccount(
 	}
 	const parsed = parseAccountName(name);
 	if (!parsed.ok) return ctx.ui.notify(parsed.error, "warning");
-	let found = false;
-	await store.updateProvider(adapter.id, (state) => {
-		if (!isCurrent() || !getOwnCredential(state.accounts, parsed.name)) return state;
-		found = true;
-		return { ...state, active: parsed.name };
-	});
+	const state = await store.readProviderAsync(adapter.id);
 	if (!isCurrent()) return;
-	if (!found) {
+	if (!getOwnCredential(state.accounts, parsed.name)) {
 		ctx.ui.notify(`${adapter.displayName} account "${parsed.name}" was not found.`, "warning");
 		return;
 	}
-	const result = await syncProvider(adapter.id, ctx, signal);
+	try {
+		if (!persistSelection(session, adapter.id, parsed.name, isCurrent)) return;
+	} catch (error) {
+		if (!isCurrent()) return;
+		ctx.ui.notify(
+			`Could not save ${adapter.displayName} account "${parsed.name}" for this session: ${redactTokenText(errorMessage(error))}`,
+			"error",
+		);
+		return;
+	}
+	const result = await syncProvider(adapter.id, ctx, session, signal);
 	if (!isCurrent()) return;
 	ctx.ui.notify(
 		formatActivationMessage("Activated", adapter, parsed.name, result),
@@ -740,28 +595,44 @@ async function removeAccount(
 	nameArg: string,
 	signal: AbortSignal,
 	syncProvider: SyncProvider,
+	persistSelection: PersistSelection,
+	session: SessionSelectionOwner,
 	isCurrent: () => boolean,
 ): Promise<void> {
 	if (!isCurrent()) return;
 	const parsed = parseAccountName(nameArg);
 	if (!parsed.ok) return ctx.ui.notify(parsed.error, "warning");
 	let removed = false;
-	let removedActive = false;
 	await store.updateProvider(adapter.id, (state) => {
 		if (!isCurrent() || !getOwnCredential(state.accounts, parsed.name)) return state;
 		removed = true;
-		removedActive = state.active === parsed.name;
 		const accounts = defineOwnMap(state.accounts);
 		delete accounts[parsed.name];
-		return { active: removedActive ? undefined : state.active, accounts };
+		return {
+			active: state.active === parsed.name ? undefined : state.active,
+			accounts,
+		};
 	});
 	if (!isCurrent()) return;
 	if (!removed) {
 		ctx.ui.notify(`${adapter.displayName} account "${parsed.name}" was not found.`, "warning");
 		return;
 	}
-	if (removedActive) {
-		const result = await syncProvider(adapter.id, ctx, signal);
+	const removedSelection = !session.error && session.selections[adapter.id] === parsed.name;
+	if (removedSelection) {
+		try {
+			if (!persistSelection(session, adapter.id, null, isCurrent)) return;
+		} catch (error) {
+			if (!isCurrent()) return;
+			const result = await syncProvider(adapter.id, ctx, session, signal);
+			if (!isCurrent()) return;
+			ctx.ui.notify(
+				`Removed ${adapter.displayName} account "${parsed.name}", but this session could not save its default selection and will fail closed: ${redactTokenText(errorMessage(error))}${result.status === "error" ? ` (${result.message})` : ""}`,
+				"error",
+			);
+			return;
+		}
+		const result = await syncProvider(adapter.id, ctx, session, signal);
 		if (!isCurrent()) return;
 		if (result.status === "error") {
 			ctx.ui.notify(
