@@ -1,5 +1,8 @@
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 
+export const MAX_SUBAGENT_TASK_BYTES = 50 * 1024;
+export const MAX_SUBAGENT_TOOLS = 64;
+
 export const JOB_STATES = [
 	"queued",
 	"running",
@@ -58,6 +61,7 @@ export interface BrokerCredentials {
 
 export interface ChildRequest {
 	task: string;
+	agentPrompt?: string;
 	tools: string[];
 	model: string;
 	thinkingLevel: SubagentThinkingLevel;

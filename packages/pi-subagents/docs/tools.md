@@ -4,14 +4,27 @@
 
 | Parameter | Type | Required | Constraint / default |
 | --- | --- | --- | --- |
-| `task` | `string` | Yes | Self-contained task, up to 50 KiB of UTF-8 text. |
-| `tools` | `string[]` | No | Up to 64 names from `read`, `bash`, `powershell`, `edit`, `write`, `grep`, `find`, and `ls`; defaults to `read`, `grep`, `find`, and `ls`. |
-| `thinkingLevel` | `string` | No | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`; defaults to the main agent's effective thinking level. |
-| `timeout` | `number` | No | Seconds; `> 0` through `2,147,483.647`; no default timeout. |
+| `task` | `string` | Yes | Self-contained assignment, up to 50 KiB of UTF-8 text. |
+| `agent` | `string` | No | Lowercase kebab-case name from `<getAgentDir()>/pi-subagents.json`; empty, whitespace-only, or omitted selects no profile. |
+| `tools` | `string[]` | No | Up to 64 names from `read`, `bash`, `powershell`, `edit`, `write`, `grep`, `find`, and `ls`; defaults to the selected profile, then `read`, `grep`, `find`, and `ls`. |
+| `thinkingLevel` | `string` | No | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`; defaults to the selected profile, then the main agent's effective level. |
+| `timeout` | `number` | No | Seconds; `> 0` through `2,147,483.647`; defaults to the selected profile, otherwise no timeout. |
 
-Starts one task-specialized subagent job with the selected tool capabilities and returns its job ID immediately.
+Starts one task-specialized subagent job with the effective tool capabilities and returns its job ID immediately.
 
-The runtime always adds `subagent_ask` and `subagent_wait` to the selected tools.
+A selected agent requires `task`, `tools`, `timeout`, and `thinkingLevel` in the user JSON object.
+
+The `/subagents` TUI manager owns profile creation, field updates, rename, deletion, validation, and atomic user-file publication.
+
+Unknown profile fields are preserved by manager mutations.
+
+Its non-empty `task` is limited to 50 KiB and appended to the child system prompt.
+
+Explicit spawn `tools`, `timeout`, and `thinkingLevel` values override profile defaults.
+
+Profile selection reads the file for each spawn and rejects missing, malformed, unknown, or invalid selected definitions before queueing.
+
+The runtime always adds `subagent_ask` and `subagent_wait` to the effective tools.
 
 The child inherits the main agent's effective provider and model at spawn time.
 

@@ -24,13 +24,23 @@ Nested subagents are unsupported.
 
 Use `subagent_spawn` for one subagent job.
 
-The task defines the child's specialization, objective, constraints, and expected result.
+The task defines the child's assignment, objective, constraints, and expected result.
 
-The selected tools define what the child can do.
+Use `agent` only when the user requests or has established a named profile in Pi's user `pi-subagents.json`.
+
+When the user asks to manage profiles, direct them to the argument-free `/subagents` TUI manager.
+
+A selected profile supplies a child prompt plus `tools`, `timeout`, and `thinkingLevel` defaults.
+
+Explicit spawn values override profile defaults.
+
+Omit `agent` for ordinary delegation, and do not treat a profile as authorization or a reason to bypass the delegation gate.
+
+The effective tools define what the child can do.
 
 Select only from `read`, `bash`, `powershell`, `edit`, `write`, `grep`, `find`, and `ls`.
 
-Omit `tools` for the read-only default of `read`, `grep`, `find`, and `ls`.
+Omit `tools` to use a selected profile's list, then the read-only default of `read`, `grep`, `find`, and `ls`.
 
 Pass an explicit empty list when the child needs no work tools.
 
@@ -48,7 +58,7 @@ Spawn rejects model providers registered only by a parent extension and process-
 
 Use a child-visible provider with Pi's stored credentials or inherited environment credentials.
 
-Omit `thinkingLevel` to follow the main agent's effective thinking level.
+Omit `thinkingLevel` to use a selected profile's level, then the main agent's effective thinking level.
 
 Set `thinkingLevel` explicitly only when the task justifies a different level.
 
@@ -88,9 +98,9 @@ Grant the implementation task only the work tools it needs.
 
 Set `timeout` in seconds to the shortest realistic execution deadline for the task.
 
-Execution timeouts accept positive finite numbers and have no default.
+Execution timeouts accept positive finite numbers and have no built-in default.
 
-Omit `timeout` only when the child may run until completion, explicit cancellation, session shutdown, or process exit.
+Omit `timeout` to use a selected profile's deadline, or to let an unprofiled child run until completion, explicit cancellation, session shutdown, or process exit.
 
 Use short deadlines for extraction and focused review, moderate deadlines for ordinary multi-file work, and longer deadlines only when the scoped work genuinely requires them.
 

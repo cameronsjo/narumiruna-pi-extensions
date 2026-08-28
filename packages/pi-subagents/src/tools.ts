@@ -1,6 +1,7 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
+import { loadAgentProfile, MAX_AGENT_NAME_LENGTH } from "./agent-profiles.js";
 import {
 	type BrokerQuestion,
 	MAX_IDENTIFIER_LENGTH,
@@ -15,12 +16,12 @@ import { type RuntimeDependencies, SubagentRuntime } from "./runtime.js";
 import {
 	CHILD_CORE_TOOL_NAMES,
 	DEFAULT_SUBAGENT_TOOLS,
+	MAX_SUBAGENT_TASK_BYTES,
+	MAX_SUBAGENT_TOOLS,
 	SUBAGENT_THINKING_LEVELS,
 	type SubagentThinkingLevel,
 } from "./types.js";
 
-const MAX_TASK_BYTES = 50 * 1024;
-const MAX_TOOLS = 64;
 const QUESTION_MESSAGE_TYPE = "pi-subagents-question";
 const CHILD_CORE_TOOL_SET = new Set<string>(CHILD_CORE_TOOL_NAMES);
 const THINKING_LEVEL_SET = new Set<string>(SUBAGENT_THINKING_LEVELS);
@@ -28,9 +29,16 @@ const THINKING_LEVEL_SET = new Set<string>(SUBAGENT_THINKING_LEVELS);
 const SpawnParameters = Type.Object(
 	{
 		task: Type.String({
-			description: "Self-contained task, constraints, and expected result. Maximum 50 KiB.",
-			maxLength: MAX_TASK_BYTES,
+			description: "Self-contained assignment, constraints, and expected result. Maximum 50 KiB.",
+			maxLength: MAX_SUBAGENT_TASK_BYTES,
 		}),
+		agent: Type.Optional(
+			Type.String({
+				description:
+					"User-defined agent name from Pi's pi-subagents.json. Empty, whitespace-only, or omitted uses no agent profile.",
+				maxLength: MAX_AGENT_NAME_LENGTH,
+			}),
+		),
 		tools: Type.Optional(
 			Type.Array(
 				StringEnum(CHILD_CORE_TOOL_NAMES, {
@@ -38,18 +46,22 @@ const SpawnParameters = Type.Object(
 				}),
 				{
 					description:
-						"Child work tools. Defaults to read, grep, find, and ls. Communication tools are always added.",
-					maxItems: MAX_TOOLS,
+						"Child work tools. Defaults to the selected agent profile, then read, grep, find, and ls. Communication tools are always added.",
+					maxItems: MAX_SUBAGENT_TOOLS,
 				},
 			),
 		),
 		thinkingLevel: Type.Optional(
 			StringEnum(SUBAGENT_THINKING_LEVELS, {
-				description: "Child thinking level. Defaults to the main agent's effective level.",
+				description:
+					"Child thinking level. Defaults to the selected agent profile, then the main agent's effective level.",
 			}),
 		),
 		timeout: Type.Optional(
-			Type.Number({ description: "Timeout in seconds (optional, no default timeout)" }),
+			Type.Number({
+				description:
+					"Execution timeout in seconds. Defaults to the selected agent profile, otherwise no timeout.",
+			}),
 		),
 	},
 	{ additionalProperties: false },
@@ -118,7 +130,7 @@ export function registerSubagentTools(
 		name: "subagent_spawn",
 		label: "Subagent · Spawn",
 		description:
-			"Use subagent_spawn to start one Pi subagent job and return its jobId immediately. The task defines the child's specialization, and the selected tools define its capabilities. The job may ask the main agent questions and publishes one asynchronous completion when terminal.",
+			"Use subagent_spawn to start one Pi subagent job and return its jobId immediately. An optional user-defined agent supplies a child prompt and execution defaults, the task defines the assignment, and the effective tools define the child's capabilities. The job may ask the main agent questions and publishes one asynchronous completion when terminal.",
 		promptSnippet: "Use subagent_spawn to start one Pi subagent job",
 		parameters: SpawnParameters,
 		prepareArguments: prepareSpawnArguments,
@@ -126,20 +138,23 @@ export function registerSubagentTools(
 			throwIfAborted(signal, "Subagent spawn was cancelled");
 			assertNotNested();
 			const task = validateTask(params.task, "subagent_spawn");
-			const tools = resolveTools(params.tools);
+			const agent = loadAgentProfile(params.agent);
+			const tools = resolveTools(params.tools ?? agent?.tools);
 			const model = resolveChildModel(ctx);
 			const thinkingLevel = resolveThinkingLevel(
-				params.thinkingLevel ?? ctx.thinkingLevel ?? pi.getThinkingLevel(),
+				params.thinkingLevel ?? agent?.thinkingLevel ?? ctx.thinkingLevel ?? pi.getThinkingLevel(),
 			);
-			resolveTimeoutMs(params.timeout);
+			const timeout = params.timeout ?? agent?.timeout;
+			resolveTimeoutMs(timeout);
 			return toolResult(
 				runtime.start({
 					task,
+					...(agent ? { agentPrompt: agent.task } : {}),
 					tools,
 					model,
 					thinkingLevel,
 					cwd: ctx.cwd,
-					timeout: params.timeout,
+					timeout,
 					projectTrusted: ctx.isProjectTrusted(),
 				}),
 			);
@@ -258,16 +273,16 @@ function deliverQuestion(pi: ExtensionAPI, question: BrokerQuestion): void {
 function validateTask(value: string, toolName: string): string {
 	const task = requiredString(value, "task");
 	if (task.includes("\0")) throw new Error(`${toolName} task must not contain NUL bytes.`);
-	if (Buffer.byteLength(task, "utf8") > MAX_TASK_BYTES) {
-		throw new Error(`${toolName} task must be at most ${MAX_TASK_BYTES} UTF-8 bytes.`);
+	if (Buffer.byteLength(task, "utf8") > MAX_SUBAGENT_TASK_BYTES) {
+		throw new Error(`${toolName} task must be at most ${MAX_SUBAGENT_TASK_BYTES} UTF-8 bytes.`);
 	}
 	return task;
 }
 
 function resolveTools(value: unknown): string[] {
 	if (value === undefined) return [...DEFAULT_SUBAGENT_TOOLS];
-	if (!Array.isArray(value) || value.length > MAX_TOOLS) {
-		throw new Error(`Subagent tools must be an array of at most ${MAX_TOOLS} names.`);
+	if (!Array.isArray(value) || value.length > MAX_SUBAGENT_TOOLS) {
+		throw new Error(`Subagent tools must be an array of at most ${MAX_SUBAGENT_TOOLS} names.`);
 	}
 	const tools: string[] = [];
 	for (const candidate of value) {

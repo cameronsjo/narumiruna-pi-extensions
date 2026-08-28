@@ -13,7 +13,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { DefaultResourceLoader, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { createTuiHarness } from "@narumitw/pi-tui-kit/testing";
 import { test } from "vitest";
+import { createMockContext } from "../../../test/support.js";
 
 const packageRoot = resolve("packages/pi-subagents");
 const builderUrl = pathToFileURL(join(packageRoot, "scripts/build-runtime.mjs")).href;
@@ -196,6 +198,25 @@ test("Pi's Jiti loader loads the generated extension and child bridge", async ()
 			[...(main?.tools.keys() ?? [])],
 			["subagent_spawn", "subagent_inspect", "subagent_cancel", "subagent_wait", "subagent_reply"],
 		);
+		const spawnParameters = main?.tools.get("subagent_spawn")?.definition.parameters as
+			| { properties?: Record<string, unknown> }
+			| undefined;
+		assert.ok(spawnParameters?.properties?.agent);
+		assert.ok(main?.commands.has("subagents"));
+
+		const tui = createTuiHarness({ width: 48, rows: 14 });
+		const context = createMockContext({ mode: "tui", hasUI: true, custom: tui.custom });
+		for (const handler of main?.handlers.get("session_start") ?? []) {
+			await handler({ type: "session_start", reason: "startup" }, context.ctx);
+		}
+		const menuRun = main?.commands.get("subagents")?.handler("", context.ctx);
+		await tui.waitForOpen();
+		assert.match(tui.render().join("\n"), /Pi Subagents/u);
+		tui.press("ctrl+c");
+		await menuRun;
+		for (const handler of main?.handlers.get("session_shutdown") ?? []) {
+			await handler({ type: "session_shutdown", reason: "quit" }, context.ctx);
+		}
 
 		const childLoader = new DefaultResourceLoader({
 			cwd: root,

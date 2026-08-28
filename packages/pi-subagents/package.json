@@ -39,6 +39,9 @@
 		"typecheck": "tsc --noEmit",
 		"prepack": "npm run build"
 	},
+	"dependencies": {
+		"@narumitw/pi-tui-kit": "^0.59.0"
+	},
 	"peerDependencies": {
 		"@earendil-works/pi-ai": "*",
 		"@earendil-works/pi-coding-agent": "*",

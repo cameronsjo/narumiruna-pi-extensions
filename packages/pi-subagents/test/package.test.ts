@@ -16,6 +16,7 @@ test("package declares one generated extension and one bundled operating skill",
 		files: string[];
 		pi: { extensions: string[]; skills: string[] };
 		piExtension: { lifecycle: string };
+		dependencies: Record<string, string>;
 		peerDependencies: Record<string, string>;
 		repository: { directory: string };
 	};
@@ -26,6 +27,7 @@ test("package declares one generated extension and one bundled operating skill",
 	assert.deepEqual(manifest.pi.extensions, ["./dist/index.ts"]);
 	assert.deepEqual(manifest.pi.skills, ["./skills"]);
 	assert.equal(manifest.piExtension.lifecycle, "stable");
+	assert.equal(manifest.dependencies["@narumitw/pi-tui-kit"], "^0.59.0");
 	assert.equal(manifest.peerDependencies["@earendil-works/pi-ai"], "*");
 	assert.equal(manifest.peerDependencies["@earendil-works/pi-coding-agent"], "*");
 	assert.ok(manifest.files.includes("src"));
@@ -44,12 +46,16 @@ test("bundled skill documents every minimal-runtime operating responsibility", (
 	for (const evidence of [
 		/prefer direct work/i,
 		/subagent_spawn/i,
+		/Pi's user `pi-subagents\.json`/i,
+		/argument-free `\/subagents` TUI manager/i,
+		/profile supplies.*`tools`.*`timeout`.*`thinkingLevel`/i,
+		/explicit spawn values override profile defaults/i,
 		/default of `read`, `grep`, `find`, and `ls`/i,
 		/select only from `read`, `bash`, `powershell`, `edit`, `write`, `grep`, `find`, and `ls`/i,
 		/smallest sufficient tool set/i,
 		/`bash` and `powershell` as unrestricted command execution/i,
 		/inherits the main agent's effective provider and model/i,
-		/omit `thinkingLevel` to follow the main agent/i,
+		/omit `thinkingLevel`.*profile.*main agent/is,
 		/self-contained tasks/i,
 		/shortest realistic execution deadline/i,
 		/parallel tool batch/i,

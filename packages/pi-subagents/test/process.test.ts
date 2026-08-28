@@ -66,6 +66,10 @@ test("buildPiArgs isolates the child and preserves selected communication tools"
 
 	const noWorkTools = buildPiArgs(childRequest({ tools: [] }));
 	assert.equal(noWorkTools[noWorkTools.indexOf("--tools") + 1], "subagent_ask,subagent_wait");
+
+	const profiled = buildPiArgs(childRequest({ agentPrompt: "Review independently." }));
+	assert.equal(profiled[profiled.indexOf("--append-system-prompt") + 1], "Review independently.");
+	assert.equal(profiled.at(-1), "Task: task");
 });
 
 test("runChild classifies completed and partial subprocess output", async () => {

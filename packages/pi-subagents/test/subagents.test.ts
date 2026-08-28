@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
 import { visibleWidth } from "@earendil-works/pi-tui";
@@ -66,7 +69,21 @@ test("registers five fixed main-agent tools with stable schemas and explicit lim
 		["subagent_spawn", "subagent_inspect", "subagent_cancel", "subagent_wait", "subagent_reply"],
 	);
 	assert.equal(tools[0]?.parameters.properties?.task?.maxLength, 50 * 1024);
+	assert.equal(tools[0]?.parameters.properties?.agent?.maxLength, 64);
+	assert.match(tools[0]?.parameters.properties?.agent?.description ?? "", /empty.*omitted/i);
 	assert.equal(tools[0]?.parameters.properties?.tools?.maxItems, 64);
+	assert.match(
+		tools[0]?.parameters.properties?.tools?.description ?? "",
+		/selected agent profile/i,
+	);
+	assert.match(
+		tools[0]?.parameters.properties?.thinkingLevel?.description ?? "",
+		/selected agent profile/i,
+	);
+	assert.match(
+		tools[0]?.parameters.properties?.timeout?.description ?? "",
+		/selected agent profile/i,
+	);
 	assert.deepEqual(
 		(tools[0]?.parameters.properties?.tools as { items?: { enum?: string[] } })?.items?.enum,
 		["read", "bash", "powershell", "edit", "write", "grep", "find", "ls"],
@@ -98,7 +115,7 @@ test("registers five fixed main-agent tools with stable schemas and explicit lim
 		assert.deepEqual(preparedMalformed, malformedAlias);
 		assert.equal(Check(candidate?.parameters, preparedMalformed), false);
 	}
-	assert.match(tools[0]?.description ?? "", /task defines.*selected tools define/is);
+	assert.match(tools[0]?.description ?? "", /task defines.*effective tools define/is);
 	for (const candidate of tools) {
 		assert.doesNotMatch(
 			JSON.stringify({
@@ -109,7 +126,7 @@ test("registers five fixed main-agent tools with stable schemas and explicit lim
 			/\b(?:background|bounded)\b/i,
 		);
 	}
-	assert.deepEqual([...mock.commands.keys()], []);
+	assert.deepEqual([...mock.commands.keys()], ["subagents"]);
 	const definitions = JSON.stringify(
 		tools.map(({ name, description, parameters }) => ({ name, description, parameters })),
 	);
@@ -234,6 +251,147 @@ test("spawns jobs with default and explicit tools and thinking levels", async ()
 	]);
 });
 
+test("applies selected agent defaults and explicit spawn overrides without caching", async () => {
+	const agentDirectory = mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-agents-"));
+	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	try {
+		const requests: ChildRequest[] = [];
+		const { mock, context } = await setup({
+			runChild: async (request) => {
+				requests.push(request);
+				return completed("done");
+			},
+		});
+		const agentsPath = path.join(agentDirectory, "pi-subagents.json");
+		writeFileSync(
+			agentsPath,
+			JSON.stringify({
+				reviewer: {
+					task: "Review independently.",
+					tools: ["read", "grep"],
+					timeout: 120,
+					thinkingLevel: "high",
+				},
+			}),
+			"utf8",
+		);
+		const profileSpawn = await tool(mock, "subagent_spawn").execute(
+			"profile",
+			{ agent: "reviewer", task: "Review one thing" },
+			undefined,
+			undefined,
+			context.ctx,
+		);
+		await waitFor(mock, context, String(profileSpawn.details.jobId));
+
+		writeFileSync(
+			agentsPath,
+			JSON.stringify({
+				reviewer: {
+					task: "Use the updated reviewer prompt.",
+					tools: [],
+					timeout: 30,
+					thinkingLevel: "medium",
+				},
+			}),
+			"utf8",
+		);
+		const overrideSpawn = await tool(mock, "subagent_spawn").execute(
+			"override",
+			{
+				agent: "reviewer",
+				task: "Review another thing",
+				tools: ["read", "edit"],
+				timeout: 5,
+				thinkingLevel: "low",
+			},
+			undefined,
+			undefined,
+			context.ctx,
+		);
+		await waitFor(mock, context, String(overrideSpawn.details.jobId));
+
+		writeFileSync(agentsPath, "{", "utf8");
+		const unprofiledSpawn = await tool(mock, "subagent_spawn").execute(
+			"unprofiled",
+			{ agent: "", task: "Work directly" },
+			undefined,
+			undefined,
+			context.ctx,
+		);
+		await waitFor(mock, context, String(unprofiledSpawn.details.jobId));
+
+		assert.deepEqual(
+			requests.map(({ task, agentPrompt, tools, timeout, thinkingLevel }) => ({
+				task,
+				agentPrompt,
+				tools,
+				timeout,
+				thinkingLevel,
+			})),
+			[
+				{
+					task: "Review one thing",
+					agentPrompt: "Review independently.",
+					tools: ["read", "grep"],
+					timeout: 120,
+					thinkingLevel: "high",
+				},
+				{
+					task: "Review another thing",
+					agentPrompt: "Use the updated reviewer prompt.",
+					tools: ["read", "edit"],
+					timeout: 5,
+					thinkingLevel: "low",
+				},
+				{
+					task: "Work directly",
+					agentPrompt: undefined,
+					tools: ["read", "grep", "find", "ls"],
+					timeout: undefined,
+					thinkingLevel: "off",
+				},
+			],
+		);
+	} finally {
+		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		rmSync(agentDirectory, { recursive: true, force: true });
+	}
+});
+
+test("rejects unavailable selected agents before a child is queued", async () => {
+	const agentDirectory = mkdtempSync(path.join(os.tmpdir(), "pi-subagents-missing-agent-"));
+	const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	try {
+		let launches = 0;
+		const { mock, context } = await setup({
+			runChild: async () => {
+				launches++;
+				return completed("unexpected");
+			},
+		});
+		await assert.rejects(
+			() =>
+				tool(mock, "subagent_spawn").execute(
+					"missing-agent",
+					{ agent: "reviewer", task: "Review" },
+					undefined,
+					undefined,
+					context.ctx,
+				),
+			/does not exist/i,
+		);
+		assert.equal(launches, 0);
+	} finally {
+		if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
+		rmSync(agentDirectory, { recursive: true, force: true });
+	}
+});
+
 test("shows active job timing, timeout, and selected tools above the editor", async () => {
 	let refreshWidget: (() => void) | undefined;
 	const fakeTimer = { unref() {} } as NodeJS.Timeout;
@@ -302,6 +460,28 @@ test("shows active job timing, timeout, and selected tools above the editor", as
 test("does not install the component widget outside TUI mode", async () => {
 	const { context } = await setup({}, {}, { mode: "rpc", hasUI: true });
 	assert.equal(context.widgets.has(SUBAGENT_WIDGET_KEY), false);
+});
+
+test("subagents command rejects arguments and unsupported modes observably", async () => {
+	const rpc = await setup({}, {}, { mode: "rpc", hasUI: true });
+	const command = rpc.mock.commands.get("subagents");
+	assert.ok(command);
+	await command.handler("unexpected", rpc.context.ctx);
+	await command.handler("", rpc.context.ctx);
+	assert.deepEqual(
+		rpc.context.notifications.map(({ message, level }) => ({ message, level })),
+		[
+			{ message: "/subagents does not accept arguments.", level: "warning" },
+			{ message: "/subagents requires Pi TUI mode.", level: "warning" },
+		],
+	);
+
+	const print = await setup({}, {}, { mode: "print", hasUI: false });
+	const printCommand = print.mock.commands.get("subagents");
+	assert.ok(printCommand);
+	await assert.rejects(async () => {
+		await printCommand.handler("", print.context.ctx);
+	}, /requires Pi TUI mode/i);
 });
 
 test("falls back to the Pi thinking level when context has none", async () => {

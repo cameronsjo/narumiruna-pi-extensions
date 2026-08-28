@@ -49,6 +49,7 @@ export interface ActiveJobDisplay {
 
 export interface StartJobInput {
 	task: string;
+	agentPrompt?: string;
 	tools: string[];
 	model: string;
 	thinkingLevel: SubagentThinkingLevel;
@@ -154,6 +155,7 @@ export class SubagentRuntime {
 			try {
 				child = await this.runChild({
 					task: input.task,
+					...(input.agentPrompt ? { agentPrompt: input.agentPrompt } : {}),
 					tools: [...input.tools],
 					model: input.model,
 					thinkingLevel: input.thinkingLevel,

@@ -83,6 +83,7 @@ export function buildPiArgs(request: ChildRequest): string[] {
 		request.thinkingLevel,
 		request.projectTrusted ? "--approve" : "--no-approve",
 	];
+	if (request.agentPrompt) args.push("--append-system-prompt", request.agentPrompt);
 	const tools = [...new Set([...request.tools, ...CHILD_COMMUNICATION_TOOL_NAMES])];
 	args.push("--tools", tools.join(","));
 	args.push(`Task: ${request.task}`);
