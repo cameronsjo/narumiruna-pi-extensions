@@ -37,6 +37,15 @@ test("renders every widget line within the supplied width", () => {
 	assert.ok(lines.some((line) => stripTerminalSequences(line).startsWith("AAPL $110.00")));
 });
 
+test("renders Yahoo pence prices without treating them as pounds", () => {
+	const plain = formatTickerPlain({
+		items: [{ symbol: "VOD.L", quote: { ...quote, symbol: "VOD.L", price: 75, currency: "GBp" } }],
+		loading: false,
+	});
+	assert.match(plain[1] ?? "", /VOD\.L 75\.00p/);
+	assert.doesNotMatch(plain[1] ?? "", /£75/);
+});
+
 test("keeps the previous quote as stale when one refresh fails", () => {
 	const merged = mergeQuoteResults(
 		[{ symbol: "NVDA", quote }],

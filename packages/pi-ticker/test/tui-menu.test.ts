@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import type { ExtensionCommandContext, KeybindingsManager } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey } from "@earendil-works/pi-tui";
+import { Key, matchesKey, visibleWidth } from "@earendil-works/pi-tui";
 import { createTuiHarness } from "@narumitw/pi-tui-kit/testing";
 import { test, vi } from "vitest";
 import type { TickerMenuOptions } from "../src/menu.js";
@@ -144,6 +144,7 @@ test("keeps standard remapped navigation ahead of reorder shortcuts", async () =
 
 	assert.deepEqual(state.symbols, ["NVDA", "AAPL"]);
 	assert.match(tui.render().join("\n"), /› \[x\] AAPL/);
+	assert.doesNotMatch(tui.render().join("\n"), /changes its order/);
 	assert.doesNotMatch(tui.render().at(-1) ?? "", /move up|move down/);
 	tui.press("ctrl+c");
 	await running;
@@ -175,6 +176,63 @@ test("searches safely through the focused Input and disables reorder while filte
 	await running;
 });
 
+test("keeps raw control-bearing search text invalid while rendering a safe projection", async () => {
+	const tui = createTuiHarness({ width: 72, rows: 22 });
+	const input = vi.fn<ExtensionCommandContext["ui"]["input"]>(async () => undefined);
+	const { ctx, notifications } = context(tui, input);
+	const state = createOptions(["NVDA"]);
+	const running = showTickerTuiMenu(ctx, state.options);
+	await tui.waitForOpen();
+	tui.setFocused(true);
+	tui.send(`${"\u001b[200~"}\u001b[2Jvti${"\u001b[201~"}`);
+	const frame = tui.render().join("\n");
+
+	assert.equal(frame.includes("\u001b[2J"), false);
+	assert.match(frame, /> vti/);
+	assert.match(frame, /Add custom ticker/);
+	assert.doesNotMatch(frame, /Add VTI/);
+	tui.press("tui.select.confirm");
+	assert.deepEqual(state.symbols, ["NVDA"]);
+	assert.deepEqual(state.applied, []);
+	assert.equal(input.mock.calls.length, 0);
+	assert.match(notifications.at(-1)?.[0] ?? "", /Invalid stock symbol/);
+	tui.press("ctrl+c");
+	await running;
+});
+
+test("renders every line within a one-column viewport under vertical overflow", async () => {
+	const tui = createTuiHarness({ width: 1, rows: 10 });
+	const { ctx } = context(tui);
+	const state = createOptions(["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]);
+	const running = showTickerTuiMenu(ctx, state.options);
+	await tui.waitForOpen();
+
+	assert.ok(tui.render().every((line) => visibleWidth(line) <= 1));
+	tui.press("ctrl+c");
+	await running;
+});
+
+test("derives row instructions from remapped confirm and available reorder keys", async () => {
+	const tui = createTuiHarness({
+		width: 100,
+		rows: 22,
+		keybindings: remappedConfirmKeybindings(),
+	});
+	const { ctx } = context(tui);
+	const state = createOptions(["NVDA"]);
+	const running = showTickerTuiMenu(ctx, state.options);
+	await tui.waitForOpen();
+	assert.match(tui.render().join("\n"), /ctrl\+x\/space removes this ticker/);
+	assert.match(tui.render().join("\n"), /shift\+up\/shift\+down changes its order/);
+
+	tui.setFocused(true);
+	tui.type("vti");
+	assert.match(tui.render().join("\n"), /ctrl\+x\/space adds VTI directly/);
+	assert.doesNotMatch(tui.render().join("\n"), /Enter or Space/);
+	tui.press("ctrl+c");
+	await running;
+});
+
 test("adds a valid unmatched search directly with Enter", async () => {
 	const tui = createTuiHarness({ width: 72, rows: 22 });
 	const input = vi.fn<ExtensionCommandContext["ui"]["input"]>(async () => undefined);
@@ -186,7 +244,7 @@ test("adds a valid unmatched search directly with Enter", async () => {
 	tui.type("vti");
 	assert.match(tui.render().join("\n"), /› Add VTI/);
 	assert.doesNotMatch(tui.render().join("\n"), /Add custom ticker/);
-	assert.match(tui.render().join("\n"), /Press Enter or Space to add VTI directly/);
+	assert.match(tui.render().join("\n"), /enter\/space adds VTI directly/);
 	tui.press("tui.select.confirm");
 	await tui.waitForPending();
 
@@ -301,6 +359,47 @@ test("aborts and drains pending inline reordering on session replacement", async
 	assert.equal(drained, true);
 	assert.deepEqual(state.applied, []);
 });
+
+function remappedConfirmKeybindings(): Pick<KeybindingsManager, "matches" | "getKeys"> {
+	return {
+		matches(data, binding) {
+			switch (binding) {
+				case "tui.select.up":
+					return matchesKey(data, Key.up);
+				case "tui.select.down":
+					return matchesKey(data, Key.down);
+				case "tui.select.pageUp":
+					return matchesKey(data, Key.pageUp);
+				case "tui.select.pageDown":
+					return matchesKey(data, Key.pageDown);
+				case "tui.select.confirm":
+					return matchesKey(data, Key.ctrl("x"));
+				case "tui.select.cancel":
+					return matchesKey(data, Key.escape);
+				default:
+					return false;
+			}
+		},
+		getKeys(binding) {
+			switch (binding) {
+				case "tui.select.up":
+					return ["up"];
+				case "tui.select.down":
+					return ["down"];
+				case "tui.select.pageUp":
+					return ["pageUp"];
+				case "tui.select.pageDown":
+					return ["pageDown"];
+				case "tui.select.confirm":
+					return ["ctrl+x"];
+				case "tui.select.cancel":
+					return ["escape"];
+				default:
+					return [];
+			}
+		},
+	};
+}
 
 function shiftedNavigationKeybindings(): Pick<KeybindingsManager, "matches" | "getKeys"> {
 	return {

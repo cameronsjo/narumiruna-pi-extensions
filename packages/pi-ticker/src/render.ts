@@ -81,8 +81,9 @@ function formatItemPlain(item: TickerItem): string {
 }
 
 function formatPrice(quote: Quote): string {
-	const prefix = currencyPrefix(quote.currency);
-	return `${prefix}${quote.price.toFixed(quote.price < 1 ? 4 : 2)}`;
+	const value = quote.price.toFixed(quote.price < 1 ? 4 : 2);
+	if (quote.currency === "GBp") return `${value}p`;
+	return `${currencyPrefix(quote.currency)}${value}`;
 }
 
 function formatChange(quote: Quote): string {

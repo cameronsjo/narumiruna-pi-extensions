@@ -83,6 +83,7 @@ function finiteNumber(value: unknown): number | undefined {
 }
 
 function safeCurrency(value: unknown): string | undefined {
+	if (value === "GBp") return value;
 	if (typeof value !== "string") return undefined;
 	const normalized = value.toUpperCase();
 	return /^[A-Z]{3}$/.test(normalized) ? normalized : undefined;

@@ -9,7 +9,7 @@ function response(payload: unknown, status = 200): Response {
 	});
 }
 
-function quotePayload(symbol: string, price = 110, previousClose = 100): unknown {
+function quotePayload(symbol: string, price = 110, previousClose = 100, currency = "usd"): unknown {
 	return {
 		chart: {
 			result: [
@@ -18,7 +18,7 @@ function quotePayload(symbol: string, price = 110, previousClose = 100): unknown
 						symbol,
 						regularMarketPrice: price,
 						previousClose,
-						currency: "usd",
+						currency,
 						regularMarketTime: 1_700_000_000,
 					},
 				},
@@ -37,6 +37,10 @@ test("parses a quote and computes its daily change", () => {
 		currency: "USD",
 		marketTime: 1_700_000_000_000,
 	});
+});
+
+test("preserves Yahoo's case-sensitive pence currency unit", () => {
+	assert.equal(parseQuote("VOD.L", quotePayload("VOD.L", 75, 74, "GBp")).currency, "GBp");
 });
 
 test("fetches symbols independently and retains partial failures", async () => {

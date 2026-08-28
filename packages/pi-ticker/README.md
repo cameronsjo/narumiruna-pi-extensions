@@ -54,7 +54,7 @@ The widget appears after the settings save and the first quote request completes
 
 TUI mode keeps search, symbol removal, direct add, widget visibility, and refresh actions on one screen.
 
-Enter or Space activates the focused row.
+The configured confirm binding or Space activates the focused row.
 
 An unmatched valid search changes the add row to **Add SYMBOL** so the symbol can be added directly.
 
@@ -125,6 +125,8 @@ Unknown JSON fields are preserved during saves.
 Malformed or invalid settings are reported, ignored at runtime, and never overwritten by the extension.
 
 Writes are ordered within one Pi process and published through a temporary file plus atomic rename.
+
+Reload and session replacement wait for accepted writes before loading the next settings snapshot.
 
 Separate Pi processes do not share a cross-process lock.
 

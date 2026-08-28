@@ -7,6 +7,7 @@ import {
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
+import { sanitizeTerminalText } from "@narumitw/pi-tui-kit/terminal-text";
 import { fetchQuotes } from "./quotes.js";
 import {
 	formatTickerPlain,
@@ -17,18 +18,27 @@ import {
 } from "./render.js";
 import { createSettingsWriter, loadSettings, normalizeSymbols, parseSymbols } from "./settings.js";
 
+export interface StockTickerDependencies {
+	createSettingsWriter: typeof createSettingsWriter;
+	loadSettings: typeof loadSettings;
+}
+
 export const WIDGET_KEY = "ticker";
 export const SETTINGS_FILE_NAME = "pi-ticker.json";
 export const POLL_INTERVAL_MS = 30_000;
 export const REQUEST_TIMEOUT_MS = 10_000;
 
-const HELP = "Usage: /ticker [SYMBOL ...] | /ticker refresh | /ticker help";
+const HELP = "Usage: /ticker [SYMBOL ...] | /ticker refresh | /ticker reset | /ticker help";
 const COMPLETIONS: AutocompleteItem[] = [
 	{ value: "refresh", label: "refresh", description: "Refresh quotes now" },
+	{ value: "reset", label: "reset", description: "Explain why no default reset is available" },
 	{ value: "help", label: "help", description: "Show command usage" },
 ];
 
-export default function stockTicker(pi: ExtensionAPI): void {
+export default function stockTicker(
+	pi: ExtensionAPI,
+	dependencies: Partial<StockTickerDependencies> = {},
+): void {
 	let activeSession: ExtensionContext["sessionManager"] | undefined;
 	let generation = 0;
 	let cycleVersion = 0;
@@ -39,7 +49,8 @@ export default function stockTicker(pi: ExtensionAPI): void {
 	let symbols: string[] = [];
 	let widgetEnabled = true;
 	let view: TickerView = createInitialView(symbols);
-	const settingsWriter = createSettingsWriter();
+	const settingsWriter = (dependencies.createSettingsWriter ?? createSettingsWriter)();
+	const readSettings = dependencies.loadSettings ?? loadSettings;
 
 	const ownsSession = (ctx: ExtensionContext, expectedGeneration = generation): boolean =>
 		ctx.sessionManager === activeSession && expectedGeneration === generation;
@@ -99,7 +110,7 @@ export default function stockTicker(pi: ExtensionAPI): void {
 			view = {
 				items: mergeQuoteResults(view.items, results),
 				loading: false,
-				updatedAt: Date.now(),
+				updatedAt: results.some((result) => result.quote) ? Date.now() : view.updatedAt,
 			};
 			publish(ctx);
 		} catch {
@@ -201,13 +212,15 @@ export default function stockTicker(pi: ExtensionAPI): void {
 		view = createInitialView(symbols);
 		publish(ctx);
 
-		const loaded = await loadSettings(settingsPath());
+		await settingsWriter.flush();
+		if (!ownsSession(ctx, expectedGeneration)) return;
+		const loaded = await readSettings(settingsPath());
 		if (!ownsSession(ctx, expectedGeneration)) return;
 		symbols = loaded.settings.symbols;
 		widgetEnabled = loaded.settings.widgetEnabled;
 		view = createInitialView(symbols);
 		publish(ctx);
-		if (loaded.warning && ctx.hasUI) ctx.ui.notify(loaded.warning, "warning");
+		if (loaded.warning) notify(ctx, loaded.warning, "warning");
 		if (ctx.hasUI && widgetEnabled && symbols.length > 0) startCycle(ctx, expectedGeneration);
 	});
 
@@ -238,7 +251,7 @@ export default function stockTicker(pi: ExtensionAPI): void {
 
 			const words = input.split(/\s+/);
 			const route = words[0]?.toLowerCase();
-			if (["help", "refresh"].includes(route ?? "") && words.length > 1) {
+			if (["help", "refresh", "reset"].includes(route ?? "") && words.length > 1) {
 				notify(ctx, `${route} does not accept trailing arguments.`, "error");
 				return;
 			}
@@ -322,7 +335,7 @@ function notify(
 	message: string,
 	type: "info" | "warning" | "error" = "info",
 ): void {
-	if (ctx.hasUI) ctx.ui.notify(message, type);
+	if (ctx.hasUI) ctx.ui.notify(sanitizeTerminalText(message), type);
 }
 
 function errorMessage(error: unknown): string {

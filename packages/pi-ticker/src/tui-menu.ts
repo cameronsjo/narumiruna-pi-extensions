@@ -46,6 +46,7 @@ export async function showTickerTuiMenu(
 			create: ({ tui, theme, keybindings, complete }) => {
 				let symbols = [...options.getSymbols()];
 				let widgetEnabled = options.getWidgetEnabled();
+				const rawSearchInput = new Input();
 				const searchInput = new Input();
 				let selectedIndex = 0;
 				let rows: Row[] = [];
@@ -56,6 +57,17 @@ export async function showTickerTuiMenu(
 				let pending = Promise.resolve();
 				const shortcutUp = shortcutAvailable(keybindings, "shift+up");
 				const shortcutDown = shortcutAvailable(keybindings, "shift+down");
+				const activationHint = (label: string) =>
+					formatInteractionHints(keybindings, [
+						{ bindings: ["tui.select.confirm"], keys: ["space"], label },
+					]);
+				const reorderKeys = [shortcutUp, shortcutDown].filter(
+					(shortcut): shortcut is "shift+up" | "shift+down" => shortcut !== undefined,
+				);
+				const tickerDescription = `${[
+					activationHint("removes this ticker"),
+					...(reorderKeys.length > 0 ? [`${reorderKeys.join("/")} changes its order`] : []),
+				].join("; ")}.`;
 				const topRule = new HorizontalRule({
 					label: "Manage tickers",
 					labelAlignment: "left",
@@ -86,7 +98,7 @@ export async function showTickerTuiMenu(
 							? `Add ${sanitizeTerminalText(directSymbol)}`
 							: "Add custom ticker…",
 						description: directSymbol
-							? `Press Enter or Space to add ${sanitizeTerminalText(directSymbol)} directly.`
+							? `${activationHint(`adds ${sanitizeTerminalText(directSymbol)} directly`)}.`
 							: "Add and select one Yahoo Finance symbol.",
 					},
 					{
@@ -113,7 +125,7 @@ export async function showTickerTuiMenu(
 						sanitizeTerminalText(row.symbol.replaceAll("-", " ")).toLowerCase(),
 					);
 					const directSymbol =
-						filtered.length === 0 ? tryDirectSymbol(searchInput.getValue()) : undefined;
+						filtered.length === 0 ? tryDirectSymbol(rawSearchInput.getValue()) : undefined;
 					return [...filtered, ...actionRows(directSymbol)];
 				};
 				const selectedRow = () => rows[selectedIndex];
@@ -151,7 +163,10 @@ export async function showTickerTuiMenu(
 							await options.applySymbols(symbols, options.signal);
 							if (options.signal.aborted || !options.isCurrent()) return;
 							symbols = [...options.getSymbols()];
-							if (clearSearchOnSuccess) searchInput.setValue("");
+							if (clearSearchOnSuccess) {
+								rawSearchInput.setValue("");
+								searchInput.setValue("");
+							}
 						} catch (error) {
 							if (options.signal.aborted || !options.isCurrent()) return;
 							symbols = [...previousSymbols];
@@ -203,7 +218,7 @@ export async function showTickerTuiMenu(
 					if (
 						busy ||
 						disposed ||
-						searchInput.getValue() ||
+						rawSearchInput.getValue() ||
 						options.signal.aborted ||
 						!options.isCurrent()
 					) {
@@ -230,7 +245,7 @@ export async function showTickerTuiMenu(
 						return;
 					}
 					if (row.id === "add") {
-						const query = searchInput.getValue();
+						const query = rawSearchInput.getValue();
 						const hasTickerMatch = rows.some((candidate) => candidate.kind === "ticker");
 						if (query.trim() && !hasTickerMatch) {
 							let symbol: string;
@@ -257,9 +272,9 @@ export async function showTickerTuiMenu(
 				const handleSearch = (data: string) => {
 					const previousId = selectedRow()?.id;
 					errorMessage = undefined;
+					rawSearchInput.handleInput(data);
 					searchInput.handleInput(data);
-					const safeValue = sanitizeTerminalText(searchInput.getValue());
-					if (safeValue !== searchInput.getValue()) searchInput.setValue(safeValue);
+					searchInput.setValue(sanitizeTerminalText(rawSearchInput.getValue()));
 					rebuild(previousId, 0);
 				};
 
@@ -283,14 +298,19 @@ export async function showTickerTuiMenu(
 							return focused ? theme.fg("accent", bounded) : bounded;
 						});
 						if (viewportSize < rows.length) {
-							content.push(theme.fg("dim", `  (${selectedIndex + 1}/${rows.length})`));
+							content.push(
+								theme.fg(
+									"dim",
+									truncateToWidth(`  (${selectedIndex + 1}/${rows.length})`, safeWidth, ""),
+								),
+							);
 						}
 						const row = selectedRow();
 						const description =
 							row?.kind === "ticker"
-								? searchInput.getValue()
+								? rawSearchInput.getValue()
 									? "Clear search before reordering."
-									: "Enter or Space removes this ticker; Shift+Up/Down changes its order."
+									: tickerDescription
 								: row?.description;
 						const status = errorMessage
 							? theme.fg("error", errorMessage)
@@ -307,7 +327,7 @@ export async function showTickerTuiMenu(
 									"",
 								),
 							),
-							...searchInput.render(safeWidth),
+							...searchInput.render(safeWidth).map((line) => truncateToWidth(line, safeWidth, "")),
 							...content,
 							...(description
 								? [theme.fg("dim", truncateToWidth(`  ${description}`, safeWidth, ""))]

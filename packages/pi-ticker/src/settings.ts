@@ -14,6 +14,12 @@ export interface LoadedSettings {
 	warning?: string;
 }
 
+export interface SettingsWriter {
+	save(path: string, symbols: readonly string[]): Promise<void>;
+	saveWidgetEnabled(path: string, widgetEnabled: boolean): Promise<void>;
+	flush(): Promise<void>;
+}
+
 const SYMBOL_PATTERN = /^[A-Z0-9.^=-]{1,15}$/;
 
 export function parseSymbols(values: Iterable<string>): string[] {
@@ -71,11 +77,7 @@ export async function saveWidgetEnabled(path: string, widgetEnabled: boolean): P
 	await saveSettingsPatch(path, { widgetEnabled: parseWidgetEnabled(widgetEnabled) });
 }
 
-export function createSettingsWriter(): {
-	save(path: string, symbols: readonly string[]): Promise<void>;
-	saveWidgetEnabled(path: string, widgetEnabled: boolean): Promise<void>;
-	flush(): Promise<void>;
-} {
+export function createSettingsWriter(): SettingsWriter {
 	let queue = Promise.resolve();
 	const enqueue = (operation: () => Promise<void>) => {
 		const running = queue.catch(() => undefined).then(operation);

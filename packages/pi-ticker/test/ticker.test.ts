@@ -3,19 +3,21 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
-import type { Component } from "@earendil-works/pi-tui";
+import type { AutocompleteItem, Component } from "@earendil-works/pi-tui";
 import { createRpcHarness } from "@narumitw/pi-tui-kit/testing";
 import { afterEach, test, vi } from "vitest";
+import type { SettingsWriter } from "../src/settings.js";
 import stockTicker, {
 	POLL_INTERVAL_MS,
 	SETTINGS_FILE_NAME,
+	type StockTickerDependencies,
 	settingsPath,
 	WIDGET_KEY,
 } from "../src/ticker.js";
 
 interface Command {
 	handler: (argumentsText: string, ctx: ExtensionContext) => Promise<void>;
-	getArgumentCompletions: (prefix: string) => unknown;
+	getArgumentCompletions: (prefix: string) => AutocompleteItem[] | null;
 }
 
 type Handler = (event: never, ctx: ExtensionContext) => unknown;
@@ -30,12 +32,13 @@ const identityTheme = {
 } as unknown as Theme;
 
 afterEach(async () => {
+	vi.restoreAllMocks();
 	vi.unstubAllEnvs();
 	vi.unstubAllGlobals();
 	await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true })));
 });
 
-function createHarness() {
+function createHarness(dependencies: Partial<StockTickerDependencies> = {}) {
 	const handlers = new Map<string, Handler[]>();
 	let command: Command | undefined;
 	let commandName: string | undefined;
@@ -48,7 +51,7 @@ function createHarness() {
 			command = registered;
 		},
 	} as unknown as ExtensionAPI;
-	stockTicker(pi);
+	stockTicker(pi, dependencies);
 	return {
 		get command(): Command {
 			assert.ok(command);
@@ -124,6 +127,10 @@ test("registers the ticker command and uses user-scoped settings", () => {
 	assert.equal(POLL_INTERVAL_MS, 30_000);
 	assert.equal(SETTINGS_FILE_NAME, "pi-ticker.json");
 	assert.equal(settingsPath(), join("/tmp/pi-ticker-agent", SETTINGS_FILE_NAME));
+	assert.deepEqual(
+		harness.command.getArgumentCompletions("res")?.map((item) => item.value),
+		["reset"],
+	);
 });
 
 test("starts empty without polling or showing a widget", async () => {
@@ -152,6 +159,32 @@ test("ignores project-local ticker settings", async () => {
 	await harness.emit("session_start", current.ctx);
 	assert.equal(fetchMock.mock.calls.length, 0);
 	assert.equal(await readFile(projectSettingsPath, "utf8"), '{"symbols":["NVDA"]}\n');
+	await harness.emit("session_shutdown", current.ctx);
+});
+
+test("sanitizes settings paths before displaying load and save errors", async () => {
+	const fetchMock = vi.fn(successfulResponse);
+	vi.stubGlobal("fetch", fetchMock);
+	const harness = createHarness();
+	const current = await createContext();
+	const unsafeAgentDirectory = join(current.cwd, "\u001b]0;owned\u0007agent");
+	vi.stubEnv("PI_CODING_AGENT_DIR", unsafeAgentDirectory);
+	await mkdir(unsafeAgentDirectory, { recursive: true });
+	await writeFile(join(unsafeAgentDirectory, SETTINGS_FILE_NAME), "{not json\n");
+
+	await harness.emit("session_start", current.ctx);
+	await harness.command.handler("MSFT", current.ctx);
+
+	assert.equal(fetchMock.mock.calls.length, 0);
+	assert.equal(current.notifications.length, 2);
+	for (const [message] of current.notifications) {
+		const hasTerminalControl = [...message].some((character) => {
+			const codePoint = character.codePointAt(0) ?? 0;
+			return codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f);
+		});
+		assert.equal(hasTerminalControl, false);
+		assert.equal(message.includes("owned"), false);
+	}
 	await harness.emit("session_shutdown", current.ctx);
 });
 
@@ -230,6 +263,35 @@ test("disables and hides an active widget immediately through the RPC menu", asy
 	await harness.emit("session_shutdown", current.ctx);
 });
 
+test("keeps the last successful update time when every refresh request fails", async () => {
+	const fetchMock = vi.fn(successfulResponse);
+	vi.stubGlobal("fetch", fetchMock);
+	const now = vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+	const harness = createHarness();
+	const current = await createContext();
+	await writeFile(join(current.cwd, SETTINGS_FILE_NAME), '{"symbols":["NVDA"]}\n');
+
+	await harness.emit("session_start", current.ctx);
+	await vi.waitFor(() => assert.equal(fetchMock.mock.calls.length, 1));
+	await vi.waitFor(() =>
+		assert.match(render(current.widgets.at(-1))?.join("\n") ?? "", /NVDA \$110\.00/),
+	);
+	const successfulHeading = render(current.widgets.at(-1))?.find((line) =>
+		line.includes("updated"),
+	);
+	assert.ok(successfulHeading);
+
+	now.mockReturnValue(1_700_000_060_000);
+	fetchMock.mockImplementation(async () => new Response("unavailable", { status: 503 }));
+	await harness.command.handler("refresh", current.ctx);
+	await vi.waitFor(() =>
+		assert.match(render(current.widgets.at(-1))?.join("\n") ?? "", /NVDA .* stale/),
+	);
+	const failedHeading = render(current.widgets.at(-1))?.find((line) => line.includes("updated"));
+	assert.equal(failedHeading, successfulHeading);
+	await harness.emit("session_shutdown", current.ctx);
+});
+
 test("uses plain RPC widgets and rejects commands without a UI", async () => {
 	const fetchMock = vi.fn(successfulResponse);
 	vi.stubGlobal("fetch", fetchMock);
@@ -244,7 +306,7 @@ test("uses plain RPC widgets and rejects commands without a UI", async () => {
 	);
 	assert.ok(Array.isArray(rpc.widgets.at(-1)?.[1]));
 	await harness.command.handler("help", rpc.ctx);
-	assert.match(rpc.notifications.at(-1)?.[0] ?? "", /Usage: \/ticker/);
+	assert.match(rpc.notifications.at(-1)?.[0] ?? "", /Usage: \/ticker.*reset/);
 	await harness.emit("session_shutdown", rpc.ctx);
 
 	fetchMock.mockClear();
@@ -257,6 +319,61 @@ test("uses plain RPC widgets and rejects commands without a UI", async () => {
 	assert.equal(json.notifications.length, 0);
 	await assert.rejects(readFile(join(json.cwd, SETTINGS_FILE_NAME)), { code: "ENOENT" });
 	await harness.emit("session_shutdown", json.ctx);
+});
+
+test("waits for queued saves before a replacement session loads settings", async () => {
+	const fetchMock = vi.fn(successfulResponse);
+	vi.stubGlobal("fetch", fetchMock);
+	let savedSymbols: string[] = [];
+	let pendingSave = Promise.resolve();
+	let saveStarted!: () => void;
+	const started = new Promise<void>((resolve) => {
+		saveStarted = resolve;
+	});
+	let releaseSave!: () => void;
+	const saveGate = new Promise<void>((resolve) => {
+		releaseSave = resolve;
+	});
+	const writer: SettingsWriter = {
+		save(_path, nextSymbols) {
+			saveStarted();
+			pendingSave = saveGate.then(() => {
+				savedSymbols = [...nextSymbols];
+			});
+			return pendingSave;
+		},
+		async saveWidgetEnabled() {},
+		flush: () => pendingSave,
+	};
+	const readSettings = vi.fn(async () => ({
+		settings: { symbols: [...savedSymbols], widgetEnabled: true },
+	}));
+	const harness = createHarness({ createSettingsWriter: () => writer, loadSettings: readSettings });
+	const current = await createContext();
+	await harness.emit("session_start", current.ctx);
+
+	const saving = harness.command.handler("MSFT", current.ctx);
+	await started;
+	const replacement = {
+		...current.ctx,
+		sessionManager: {} as ExtensionContext["sessionManager"],
+	} as ExtensionContext;
+	const startingReplacement = harness.emit("session_start", replacement);
+	let replacementSettled = false;
+	void startingReplacement.then(() => {
+		replacementSettled = true;
+	});
+	await Promise.resolve();
+
+	assert.equal(readSettings.mock.calls.length, 1);
+	assert.equal(replacementSettled, false);
+	releaseSave();
+	await saving;
+	await startingReplacement;
+	assert.equal(readSettings.mock.calls.length, 2);
+	assert.deepEqual(savedSymbols, ["MSFT"]);
+	await vi.waitFor(() => assert.equal(fetchMock.mock.calls.length, 1));
+	await harness.emit("session_shutdown", replacement);
 });
 
 test("opens the Kit menu for bare commands and drains it during shutdown", async () => {
@@ -300,6 +417,8 @@ test("ignores stale session shutdown and persists command symbol changes", async
 
 	await harness.command.handler("reset", current.ctx);
 	assert.match(current.notifications.at(-1)?.[0] ?? "", /No default ticker list/);
+	await harness.command.handler("reset now", current.ctx);
+	assert.match(current.notifications.at(-1)?.[0] ?? "", /trailing arguments/);
 	await harness.command.handler("refresh now", current.ctx);
 	assert.match(current.notifications.at(-1)?.[0] ?? "", /trailing arguments/);
 	await harness.emit("session_shutdown", current.ctx);
