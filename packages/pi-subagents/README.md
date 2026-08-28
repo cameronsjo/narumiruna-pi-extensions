@@ -4,7 +4,7 @@
 
 Pi Subagents starts bounded background Pi jobs and lets each child ask the main agent necessary questions through an authenticated loopback broker.
 
-A bundled `subagents` skill owns delegation strategy, least-privilege tool selection, parallel-work guidance, timeout selection, question handling, result review, and writer safety.
+A bundled `using-pi-subagents` skill owns delegation strategy, least-privilege tool selection, parallel-work guidance, timeout selection, question handling, result review, and writer safety.
 
 ## ✨ Features
 
@@ -61,7 +61,7 @@ Review the source before installing or invoking the extension.
 
 ## 🚀 Quick start
 
-Ask Pi to use the bundled `subagents` skill when deciding whether to delegate.
+Ask Pi to use the bundled `using-pi-subagents` skill when deciding whether to delegate, or invoke `/skill:using-pi-subagents` directly.
 
 Start one bounded background job with `subagent-spawn`.
 
@@ -250,7 +250,7 @@ packages/pi-subagents/
 ├── docs/                        # Concise tools and design references
 ├── scripts/                     # Deterministic runtime builder
 ├── src/                         # Extension, broker, child bridge, and subprocess runtime
-├── skills/subagents/           # Delegation and messaging operating manual
+├── skills/using-pi-subagents/  # Delegation and messaging operating manual
 ├── test/                        # Protocol, lifecycle, process, and policy tests
 ├── package.json                 # Pi extension and skill declarations
 └── README.md                    # User guide and safety boundaries
