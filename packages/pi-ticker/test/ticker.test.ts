@@ -7,9 +7,9 @@ import type { Component } from "@earendil-works/pi-tui";
 import { createRpcHarness } from "@narumitw/pi-tui-kit/testing";
 import { afterEach, test, vi } from "vitest";
 import stockTicker, {
-	LEGACY_SETTINGS_FILE_NAMES,
 	POLL_INTERVAL_MS,
 	SETTINGS_FILE_NAME,
+	settingsPath,
 	WIDGET_KEY,
 } from "../src/ticker.js";
 
@@ -30,6 +30,7 @@ const identityTheme = {
 } as unknown as Theme;
 
 afterEach(async () => {
+	vi.unstubAllEnvs();
 	vi.unstubAllGlobals();
 	await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true })));
 });
@@ -65,6 +66,7 @@ function createHarness() {
 async function createContext(mode: ExtensionContext["mode"] = "tui") {
 	const cwd = await mkdtemp(join(tmpdir(), "pi-stock-ticker-context-"));
 	temporaryDirectories.push(cwd);
+	vi.stubEnv("PI_CODING_AGENT_DIR", cwd);
 	const widgets: WidgetRecord[] = [];
 	const notifications: Array<[string, string | undefined]> = [];
 	const sessionManager = {} as ExtensionContext["sessionManager"];
@@ -73,7 +75,6 @@ async function createContext(mode: ExtensionContext["mode"] = "tui") {
 		mode,
 		hasUI: mode === "tui" || mode === "rpc",
 		sessionManager,
-		isProjectTrusted: () => true,
 		ui: {
 			setWidget(key: string, content: string[] | WidgetFactory | undefined, options?: unknown) {
 				widgets.push([key, content, options]);
@@ -116,12 +117,13 @@ function render(record: WidgetRecord | undefined, width = 80): string[] | undefi
 		: content;
 }
 
-test("registers the ticker command and uses the requested refresh interval", () => {
+test("registers the ticker command and uses user-scoped settings", () => {
+	vi.stubEnv("PI_CODING_AGENT_DIR", "/tmp/pi-ticker-agent");
 	const harness = createHarness();
 	assert.equal(harness.commandName, "ticker");
 	assert.equal(POLL_INTERVAL_MS, 30_000);
 	assert.equal(SETTINGS_FILE_NAME, "pi-ticker.json");
-	assert.deepEqual(LEGACY_SETTINGS_FILE_NAMES, ["ticker.json", "stock-ticker.json"]);
+	assert.equal(settingsPath(), join("/tmp/pi-ticker-agent", SETTINGS_FILE_NAME));
 });
 
 test("starts empty without polling or showing a widget", async () => {
@@ -138,24 +140,18 @@ test("starts empty without polling or showing a widget", async () => {
 	assert.deepEqual(current.widgets.at(-1), [WIDGET_KEY, undefined, undefined]);
 });
 
-test("migrates the oldest project-local settings name on session start", async () => {
+test("ignores project-local ticker settings", async () => {
 	const fetchMock = vi.fn(successfulResponse);
 	vi.stubGlobal("fetch", fetchMock);
 	const harness = createHarness();
 	const current = await createContext();
+	const projectSettingsPath = join(current.cwd, ".pi", SETTINGS_FILE_NAME);
 	await mkdir(join(current.cwd, ".pi"), { recursive: true });
-	const oldestLegacyName = LEGACY_SETTINGS_FILE_NAMES.at(-1);
-	assert.ok(oldestLegacyName);
-	const oldestLegacyPath = join(current.cwd, ".pi", oldestLegacyName);
-	await writeFile(oldestLegacyPath, '{"symbols":["NVDA"]}\n');
+	await writeFile(projectSettingsPath, '{"symbols":["NVDA"]}\n');
 
 	await harness.emit("session_start", current.ctx);
-	await vi.waitFor(() => assert.equal(fetchMock.mock.calls.length, 1));
-	assert.equal(
-		await readFile(join(current.cwd, ".pi", SETTINGS_FILE_NAME), "utf8"),
-		'{"symbols":["NVDA"]}\n',
-	);
-	await assert.rejects(readFile(oldestLegacyPath), { code: "ENOENT" });
+	assert.equal(fetchMock.mock.calls.length, 0);
+	assert.equal(await readFile(projectSettingsPath, "utf8"), '{"symbols":["NVDA"]}\n');
 	await harness.emit("session_shutdown", current.ctx);
 });
 
@@ -164,9 +160,8 @@ test("keeps a persisted disabled widget hidden and blocks manual refresh", async
 	vi.stubGlobal("fetch", fetchMock);
 	const harness = createHarness();
 	const current = await createContext();
-	await mkdir(join(current.cwd, ".pi"), { recursive: true });
 	await writeFile(
-		join(current.cwd, ".pi", SETTINGS_FILE_NAME),
+		join(current.cwd, SETTINGS_FILE_NAME),
 		'{"symbols":["NVDA"],"widgetEnabled":false}\n',
 	);
 
@@ -184,9 +179,8 @@ test("enables a persisted widget immediately through the RPC menu", async () => 
 	vi.stubGlobal("fetch", fetchMock);
 	const harness = createHarness();
 	const current = await createContext("rpc");
-	await mkdir(join(current.cwd, ".pi"), { recursive: true });
 	await writeFile(
-		join(current.cwd, ".pi", SETTINGS_FILE_NAME),
+		join(current.cwd, SETTINGS_FILE_NAME),
 		'{"symbols":["NVDA"],"widgetEnabled":false}\n',
 	);
 	const rpc = createRpcHarness([
@@ -198,9 +192,9 @@ test("enables a persisted widget immediately through the RPC menu", async () => 
 	await harness.emit("session_start", current.ctx);
 	await harness.command.handler("", current.ctx);
 	await vi.waitFor(() => assert.equal(fetchMock.mock.calls.length, 1));
-	const settings = JSON.parse(
-		await readFile(join(current.cwd, ".pi", SETTINGS_FILE_NAME), "utf8"),
-	) as { widgetEnabled: boolean };
+	const settings = JSON.parse(await readFile(join(current.cwd, SETTINGS_FILE_NAME), "utf8")) as {
+		widgetEnabled: boolean;
+	};
 	assert.equal(settings.widgetEnabled, true);
 	await vi.waitFor(() =>
 		assert.match(render(current.widgets.at(-1))?.join("\n") ?? "", /NVDA \$110\.00/),
@@ -214,9 +208,8 @@ test("disables and hides an active widget immediately through the RPC menu", asy
 	vi.stubGlobal("fetch", fetchMock);
 	const harness = createHarness();
 	const current = await createContext("rpc");
-	await mkdir(join(current.cwd, ".pi"), { recursive: true });
 	await writeFile(
-		join(current.cwd, ".pi", SETTINGS_FILE_NAME),
+		join(current.cwd, SETTINGS_FILE_NAME),
 		'{"symbols":["NVDA"],"widgetEnabled":true}\n',
 	);
 	const rpc = createRpcHarness([
@@ -229,9 +222,9 @@ test("disables and hides an active widget immediately through the RPC menu", asy
 	await vi.waitFor(() => assert.equal(fetchMock.mock.calls.length, 1));
 	await harness.command.handler("", current.ctx);
 	assert.deepEqual(current.widgets.at(-1), [WIDGET_KEY, undefined, undefined]);
-	const settings = JSON.parse(
-		await readFile(join(current.cwd, ".pi", SETTINGS_FILE_NAME), "utf8"),
-	) as { widgetEnabled: boolean };
+	const settings = JSON.parse(await readFile(join(current.cwd, SETTINGS_FILE_NAME), "utf8")) as {
+		widgetEnabled: boolean;
+	};
 	assert.equal(settings.widgetEnabled, false);
 	rpc.assertConsumed();
 	await harness.emit("session_shutdown", current.ctx);
@@ -242,8 +235,7 @@ test("uses plain RPC widgets and rejects commands without a UI", async () => {
 	vi.stubGlobal("fetch", fetchMock);
 	const harness = createHarness();
 	const rpc = await createContext("rpc");
-	await mkdir(join(rpc.cwd, ".pi"), { recursive: true });
-	await writeFile(join(rpc.cwd, ".pi", SETTINGS_FILE_NAME), '{"symbols":["NVDA"]}\n');
+	await writeFile(join(rpc.cwd, SETTINGS_FILE_NAME), '{"symbols":["NVDA"]}\n');
 
 	await harness.emit("session_start", rpc.ctx);
 	await vi.waitFor(() => assert.equal(fetchMock.mock.calls.length, 1));
@@ -263,7 +255,7 @@ test("uses plain RPC widgets and rejects commands without a UI", async () => {
 	await assert.rejects(harness.command.handler("help", json.ctx), /requires TUI or RPC mode/);
 	await assert.rejects(harness.command.handler("NVDA", json.ctx), /requires TUI or RPC mode/);
 	assert.equal(json.notifications.length, 0);
-	await assert.rejects(readFile(join(json.cwd, ".pi", SETTINGS_FILE_NAME)), { code: "ENOENT" });
+	await assert.rejects(readFile(join(json.cwd, SETTINGS_FILE_NAME)), { code: "ENOENT" });
 	await harness.emit("session_shutdown", json.ctx);
 });
 
@@ -299,9 +291,9 @@ test("ignores stale session shutdown and persists command symbol changes", async
 	assert.equal(current.widgets.length, currentWidgetCount);
 
 	await harness.command.handler("msft spy", current.ctx);
-	const settings = JSON.parse(
-		await readFile(join(current.cwd, ".pi", SETTINGS_FILE_NAME), "utf8"),
-	) as { symbols: string[] };
+	const settings = JSON.parse(await readFile(join(current.cwd, SETTINGS_FILE_NAME), "utf8")) as {
+		symbols: string[];
+	};
 	assert.deepEqual(settings.symbols, ["MSFT", "SPY"]);
 	assert.match(current.notifications.at(-1)?.[0] ?? "", /MSFT SPY/);
 	assert.equal(harness.command.getArgumentCompletions("ref") !== null, true);

@@ -35,14 +35,7 @@ export function normalizeSymbols(values: Iterable<string>, allowEmpty: boolean):
 	return unique;
 }
 
-export async function loadSettings(path: string, trusted: boolean): Promise<LoadedSettings> {
-	if (!trusted) {
-		return {
-			settings: defaultSettings(),
-			warning: "Project settings are unavailable because the project is not trusted.",
-		};
-	}
-
+export async function loadSettings(path: string): Promise<LoadedSettings> {
 	let text: string;
 	try {
 		text = await readFile(path, "utf8");
@@ -76,62 +69,6 @@ export async function saveSymbols(path: string, symbols: readonly string[]): Pro
 
 export async function saveWidgetEnabled(path: string, widgetEnabled: boolean): Promise<void> {
 	await saveSettingsPatch(path, { widgetEnabled: parseWidgetEnabled(widgetEnabled) });
-}
-
-export async function migrateLegacySettings(
-	legacyPath: string,
-	canonicalPath: string,
-): Promise<string | undefined> {
-	try {
-		await readFile(canonicalPath);
-		try {
-			await readFile(legacyPath);
-			return `${legacyPath} was ignored because ${canonicalPath} takes precedence.`;
-		} catch (error) {
-			return isMissingFile(error)
-				? undefined
-				: `Could not inspect legacy settings at ${legacyPath}.`;
-		}
-	} catch (error) {
-		if (!isMissingFile(error)) return undefined;
-	}
-
-	let legacyBytes: Buffer;
-	try {
-		legacyBytes = await readFile(legacyPath);
-		const document = parseDocument(legacyBytes.toString("utf8"));
-		validateKnownSettings(document);
-	} catch (error) {
-		if (isMissingFile(error)) return undefined;
-		return `${errorMessage(error)} Legacy settings at ${legacyPath} were not changed.`;
-	}
-
-	try {
-		await writeFile(canonicalPath, legacyBytes, { flag: "wx", mode: 0o600 });
-	} catch (error) {
-		if (isAlreadyExists(error)) {
-			return `${legacyPath} was ignored because ${canonicalPath} was created concurrently.`;
-		}
-		return `Could not migrate ${legacyPath} to ${canonicalPath}; the legacy file was not changed.`;
-	}
-
-	let currentLegacy: Buffer;
-	try {
-		currentLegacy = await readFile(legacyPath);
-	} catch {
-		return `Migrated settings to ${canonicalPath}; the legacy file disappeared before cleanup.`;
-	}
-	if (!currentLegacy.equals(legacyBytes)) {
-		await removeInstalledCopyIfUnchanged(canonicalPath, legacyBytes);
-		return `${legacyPath} changed during migration; no legacy settings were removed.`;
-	}
-
-	try {
-		await unlink(legacyPath);
-		return `Migrated settings from ${legacyPath} to ${canonicalPath}.`;
-	} catch {
-		return `Migrated settings to ${canonicalPath}; remove the unchanged legacy file at ${legacyPath} when convenient.`;
-	}
 }
 
 export function createSettingsWriter(): {
@@ -215,24 +152,8 @@ function parseWidgetEnabled(value: unknown): boolean {
 	return value;
 }
 
-async function removeInstalledCopyIfUnchanged(
-	canonicalPath: string,
-	expectedBytes: Buffer,
-): Promise<void> {
-	try {
-		const current = await readFile(canonicalPath);
-		if (current.equals(expectedBytes)) await unlink(canonicalPath);
-	} catch {
-		// A concurrent canonical file takes precedence and must not be removed.
-	}
-}
-
 function isMissingFile(error: unknown): boolean {
 	return hasErrorCode(error, "ENOENT");
-}
-
-function isAlreadyExists(error: unknown): boolean {
-	return hasErrorCode(error, "EEXIST");
 }
 
 function hasErrorCode(error: unknown, code: string): boolean {

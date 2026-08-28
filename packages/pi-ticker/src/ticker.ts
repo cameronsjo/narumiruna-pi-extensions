@@ -1,9 +1,9 @@
 import { join } from "node:path";
 import {
-	CONFIG_DIR_NAME,
 	type ExtensionAPI,
 	type ExtensionCommandContext,
 	type ExtensionContext,
+	getAgentDir,
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
@@ -15,17 +15,10 @@ import {
 	type TickerItem,
 	type TickerView,
 } from "./render.js";
-import {
-	createSettingsWriter,
-	loadSettings,
-	migrateLegacySettings,
-	normalizeSymbols,
-	parseSymbols,
-} from "./settings.js";
+import { createSettingsWriter, loadSettings, normalizeSymbols, parseSymbols } from "./settings.js";
 
 export const WIDGET_KEY = "ticker";
 export const SETTINGS_FILE_NAME = "pi-ticker.json";
-export const LEGACY_SETTINGS_FILE_NAMES = ["ticker.json", "stock-ticker.json"] as const;
 export const POLL_INTERVAL_MS = 30_000;
 export const REQUEST_TIMEOUT_MS = 10_000;
 
@@ -161,11 +154,8 @@ export default function stockTicker(pi: ExtensionAPI): void {
 				getSymbols: () => [...symbols],
 				applySymbols: async (nextSymbols, signal) => {
 					if (signal.aborted || !ownsSession(ctx, expectedGeneration)) return;
-					if (!ctx.isProjectTrusted()) {
-						throw new Error("Ticker settings require a trusted project.");
-					}
 					const normalized = normalizeSymbols(nextSymbols, true);
-					await settingsWriter.save(settingsPath(ctx), normalized);
+					await settingsWriter.save(settingsPath(), normalized);
 					if (signal.aborted || !ownsSession(ctx, expectedGeneration)) return;
 					symbols = normalized;
 					view = createInitialView(symbols);
@@ -175,10 +165,7 @@ export default function stockTicker(pi: ExtensionAPI): void {
 				getWidgetEnabled: () => widgetEnabled,
 				applyWidgetEnabled: async (nextWidgetEnabled, signal) => {
 					if (signal.aborted || !ownsSession(ctx, expectedGeneration)) return;
-					if (!ctx.isProjectTrusted()) {
-						throw new Error("Ticker settings require a trusted project.");
-					}
-					await settingsWriter.saveWidgetEnabled(settingsPath(ctx), nextWidgetEnabled);
+					await settingsWriter.saveWidgetEnabled(settingsPath(), nextWidgetEnabled);
 					if (signal.aborted || !ownsSession(ctx, expectedGeneration)) return;
 					widgetEnabled = nextWidgetEnabled;
 					if (!widgetEnabled) stopPolling();
@@ -214,26 +201,13 @@ export default function stockTicker(pi: ExtensionAPI): void {
 		view = createInitialView(symbols);
 		publish(ctx);
 
-		const trusted = ctx.isProjectTrusted();
-		const path = settingsPath(ctx);
-		const migrationNotices: string[] = [];
-		if (trusted) {
-			for (const legacyPath of legacySettingsPaths(ctx)) {
-				const notice = await migrateLegacySettings(legacyPath, path);
-				if (!ownsSession(ctx, expectedGeneration)) return;
-				if (notice) migrationNotices.push(notice);
-			}
-		}
-		const loaded = await loadSettings(path, trusted);
+		const loaded = await loadSettings(settingsPath());
 		if (!ownsSession(ctx, expectedGeneration)) return;
 		symbols = loaded.settings.symbols;
 		widgetEnabled = loaded.settings.widgetEnabled;
 		view = createInitialView(symbols);
 		publish(ctx);
-		if (ctx.hasUI) {
-			for (const notice of migrationNotices) ctx.ui.notify(notice, "info");
-			if (loaded.warning) ctx.ui.notify(loaded.warning, "warning");
-		}
+		if (loaded.warning && ctx.hasUI) ctx.ui.notify(loaded.warning, "warning");
 		if (ctx.hasUI && widgetEnabled && symbols.length > 0) startCycle(ctx, expectedGeneration);
 	});
 
@@ -302,13 +276,8 @@ export default function stockTicker(pi: ExtensionAPI): void {
 				notify(ctx, errorMessage(error), "error");
 				return;
 			}
-			if (!ctx.isProjectTrusted()) {
-				notify(ctx, "Stock ticker settings require a trusted project.", "error");
-				return;
-			}
-
 			try {
-				await settingsWriter.save(settingsPath(ctx), nextSymbols);
+				await settingsWriter.save(settingsPath(), nextSymbols);
 			} catch (error) {
 				notify(ctx, `Could not save stock ticker settings: ${errorMessage(error)}`, "error");
 				return;
@@ -323,12 +292,8 @@ export default function stockTicker(pi: ExtensionAPI): void {
 	});
 }
 
-export function settingsPath(ctx: Pick<ExtensionContext, "cwd">): string {
-	return join(ctx.cwd, CONFIG_DIR_NAME, SETTINGS_FILE_NAME);
-}
-
-export function legacySettingsPaths(ctx: Pick<ExtensionContext, "cwd">): string[] {
-	return LEGACY_SETTINGS_FILE_NAMES.map((name) => join(ctx.cwd, CONFIG_DIR_NAME, name));
+export function settingsPath(): string {
+	return join(getAgentDir(), SETTINGS_FILE_NAME);
 }
 
 export function completeArguments(prefix: string): AutocompleteItem[] | null {

@@ -10,7 +10,7 @@ Show configurable Yahoo Finance market quotes in a width-aware widget above Pi's
 - Starts empty and performs no quote requests until at least one symbol is added.
 - Packs complete ticker entries into rows that fit the current terminal width.
 - Provides searchable TUI and RPC menus for adding, removing, and reordering symbols.
-- Persists widget visibility and the ordered symbol list in trusted project settings.
+- Persists widget visibility and the ordered symbol list in user settings.
 - Refreshes every 30 seconds while enabled and marks the last successful quote stale after a partial failure.
 - Cancels polling, in-flight requests, and active menus during reload, session replacement, and shutdown.
 
@@ -38,7 +38,7 @@ Extensions run with Pi's permissions, so install only trusted packages.
 
 ## 🚀 Quick start
 
-Trust the project, run Pi in TUI mode, and open the ticker manager:
+Run Pi in TUI mode and open the ticker manager:
 
 ```text
 /ticker
@@ -84,11 +84,21 @@ Print and JSON modes reject the command before changing settings.
 
 ## ⚙️ Settings
 
-The extension stores explicit project settings in `.pi/pi-ticker.json`.
+The canonical user settings file is:
 
-The project must be trusted before the extension reads, migrates, or writes settings.
+```text
+<getAgentDir()>/pi-ticker.json
+```
 
-A missing file uses an empty symbol list, keeps the widget enabled, and does not create a file or start polling.
+The normal path is `~/.pi/agent/pi-ticker.json`.
+
+Pi's configured agent directory replaces `~/.pi/agent` when applicable.
+
+Ticker preferences are user-scoped and apply across projects.
+
+The extension does not read project settings or extension-specific environment-variable overrides.
+
+A missing file uses an empty symbol list, keeps the widget enabled, and does not create the file, its parent directory, or a polling task.
 
 The file must contain a JSON object with these optional fields:
 
@@ -110,14 +120,6 @@ Example:
 }
 ```
 
-A valid legacy `.pi/ticker.json` or `.pi/stock-ticker.json` file migrates to `.pi/pi-ticker.json` when the canonical file is absent.
-
-The canonical `.pi/pi-ticker.json` file always takes precedence.
-
-When it is absent, migration tries `.pi/ticker.json` before `.pi/stock-ticker.json` and installs the first valid legacy file.
-
-Migration copies the original valid JSON bytes and removes a legacy file only when it remains unchanged.
-
 Unknown JSON fields are preserved during saves.
 
 Malformed or invalid settings are reported, ignored at runtime, and never overwritten by the extension.
@@ -134,7 +136,7 @@ The extension requests public chart metadata from Yahoo Finance over HTTPS witho
 
 Requested ticker symbols and the host network address are visible to Yahoo Finance.
 
-Project settings are read and written only after Pi reports the project as trusted.
+The user settings file contains only ticker symbols and widget visibility; it stores no credential or secret.
 
 Ticker symbols and quote data are shown locally and are not added to model context by this extension.
 
@@ -157,7 +159,7 @@ packages/pi-ticker/
 │   ├── ticker.ts      # Registration, commands, polling, and lifecycle ownership
 │   ├── menu.ts        # Mode dispatch and RPC management flow
 │   ├── tui-menu.ts    # Searchable TUI manager and reorder shortcuts
-│   ├── settings.ts    # Validation, migration, and atomic persistence
+│   ├── settings.ts    # Validation and atomic user-settings persistence
 │   ├── quotes.ts      # Yahoo Finance requests and response parsing
 │   └── render.ts      # Width-bounded plain and themed widget rendering
 ├── test/              # Deterministic package behavior tests
