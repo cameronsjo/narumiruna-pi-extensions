@@ -1590,6 +1590,57 @@ test("Codex connections invalidate only when the applied account identity change
 	assert.deepEqual(invalidations, ["test-session", "test-session"]);
 });
 
+test("connection invalidation tracks the credential actually applied before a shared replacement", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: {
+			"openai-codex": { active: "work", accounts: { work: credential("old") } },
+		},
+	});
+	const originalRead = store.readProviderAsync.bind(store);
+	let reads = 0;
+	store.readProviderAsync = async (providerId) => {
+		const snapshot = await originalRead(providerId);
+		if (providerId === "openai-codex") {
+			reads += 1;
+			if (reads === 3) {
+				await store.updateProvider("openai-codex", (state) => ({
+					...state,
+					accounts: { work: credential("new") },
+				}));
+			}
+		}
+		return snapshot;
+	};
+	const invalidations: Array<string | undefined> = [];
+	const codex = fakeProvider("openai-codex");
+	codex.invalidateConnections = (sessionId) => {
+		invalidations.push(sessionId);
+	};
+	const mock = createMockPi();
+	accountsExtension(mock.pi, {
+		store,
+		providers: [codex, fakeProvider("anthropic"), fakeProvider("github-copilot")],
+	});
+	const { registry, keys } = runtimeHarness(mock);
+	const sessionManager = createTestSessionManager("credential-race-session");
+	const { ctx } = createMockContext({
+		model: { provider: "openai-codex", id: "codex" },
+		modelRegistry: registry,
+		sessionManager,
+	});
+
+	await mock.events.get("session_start")?.[0]?.({}, ctx);
+	assert.equal(keys.get("openai-codex"), "access-old");
+	assert.equal((await originalRead("openai-codex")).accounts.work?.access, "access-new");
+	assert.deepEqual(invalidations, ["credential-race-session"]);
+
+	await mock.events.get("before_agent_start")?.[0]?.({}, ctx);
+	assert.equal(keys.get("openai-codex"), "access-new");
+	assert.deepEqual(invalidations, ["credential-race-session", "credential-race-session"]);
+});
+
 test("an older overlapping provider sync cannot publish stale inactive state", async () => {
 	const store = new AccountStore(new InMemoryAccountStorageBackend());
 	await store.write({
@@ -2355,11 +2406,59 @@ test("Radius rebinds a retained selected model to its refreshed endpoint", async
 	const coordinator = new RuntimeAuthCoordinator(mock.pi, fakeProvider("radius"));
 
 	assert.equal((await ensureStoredSelection(coordinator, ctx, store)).status, "active");
-	assert.equal(mock.setModels.length, 1);
+	assert.equal(mock.setModels.length, 0);
+	assert.equal(selected.baseUrl, "https://account.radius.example");
+});
+
+test("Radius model rebinding stays scoped to each concurrent session context", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: { radius: { active: "work", accounts: { work: credential("radius") } } },
+	});
+	const mock = createMockPi();
+	const first = runtimeHarness(mock, { isolateProviders: true });
+	const second = runtimeHarness(mock, { isolateProviders: true });
+	const firstSelected = first.registry.find("radius", "radius-model");
+	const secondSelected = second.registry.find("radius", "radius-model");
+	assert.ok(firstSelected);
+	assert.ok(secondSelected);
+	first.registry.refresh = async () => {
+		const radius = first.models.find((model) => model.provider === "radius");
+		assert.ok(radius);
+		radius.baseUrl = "https://first.radius.example";
+		return { aborted: false, errors: new Map<string, Error>() };
+	};
+	second.registry.refresh = async () => {
+		const radius = second.models.find((model) => model.provider === "radius");
+		assert.ok(radius);
+		radius.baseUrl = "https://second.radius.example";
+		return { aborted: false, errors: new Map<string, Error>() };
+	};
+	const firstContext = createMockContext({
+		model: firstSelected,
+		modelRegistry: first.registry,
+		sessionManager: createTestSessionManager("first-radius-session"),
+	}).ctx;
+	const secondContext = createMockContext({
+		model: secondSelected,
+		modelRegistry: second.registry,
+		sessionManager: createTestSessionManager("second-radius-session"),
+	}).ctx;
+	const firstCoordinator = new RuntimeAuthCoordinator(mock.pi, fakeProvider("radius"));
+	const secondCoordinator = new RuntimeAuthCoordinator(mock.pi, fakeProvider("radius"));
+
 	assert.equal(
-		(mock.setModels[0] as { baseUrl?: string }).baseUrl,
-		"https://account.radius.example",
+		(await ensureStoredSelection(firstCoordinator, firstContext, store)).status,
+		"active",
 	);
+	assert.equal(
+		(await ensureStoredSelection(secondCoordinator, secondContext, store)).status,
+		"active",
+	);
+	assert.equal(firstSelected.baseUrl, "https://first.radius.example");
+	assert.equal(secondSelected.baseUrl, "https://second.radius.example");
+	assert.equal(mock.setModels.length, 0);
 });
 
 test("Radius fails closed when the selected model disappears from the refreshed catalog", async () => {

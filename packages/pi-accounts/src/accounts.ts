@@ -259,11 +259,7 @@ export default function accountsExtension(
 				return latest && latest !== task ? latest : staleResult(providerId);
 			if (latest && latest !== task) return latest;
 			try {
-				identity = await authIdentity(store, result);
-				latest = owner.syncTasks.get(providerId);
-				if (!isOwnerCurrent(owner))
-					return latest && latest !== task ? latest : staleResult(providerId);
-				if (latest && latest !== task) return latest;
+				identity = coordinator.getAppliedAuthIdentity(ctx, result);
 				const previousIdentity = owner.appliedIdentities.get(providerId);
 				const shouldInvalidate =
 					previousIdentity !== identity &&
@@ -745,16 +741,6 @@ async function selectedCredential(
 	} catch {
 		return undefined;
 	}
-}
-
-async function authIdentity(
-	store: AccountStore,
-	result: EnsureActiveProviderAuthResult,
-): Promise<string> {
-	if (result.status === "inactive") return "default";
-	if (result.status === "error") return `error:${result.accountName}`;
-	const state = await store.readProviderAsync(result.providerId);
-	return `${result.accountName}:${getOwnCredential(state.accounts, result.accountName)?.access ?? "missing"}`;
 }
 
 function updateStatus(

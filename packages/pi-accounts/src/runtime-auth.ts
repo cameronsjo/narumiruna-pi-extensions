@@ -74,7 +74,7 @@ export class RuntimeAuthCoordinator {
 	private activeCredentialOffer: ActiveCredentialOffer | undefined;
 
 	constructor(
-		private readonly pi: ExtensionAPI,
+		_pi: ExtensionAPI,
 		readonly provider: AccountProviderAdapter,
 		private readonly failClosedApiKey = RUNTIME_FAIL_CLOSED_API_KEY,
 	) {
@@ -300,6 +300,23 @@ export class RuntimeAuthCoordinator {
 		return !this.availableModelIds || this.availableModelIds.has(modelId);
 	}
 
+	getAppliedAuthIdentity(ctx: ExtensionContext, result: EnsureActiveProviderAuthResult): string {
+		if (result.status === "inactive") return "default";
+		if (result.status === "error") return `error:${result.accountName}`;
+		const pending = this.pendingCredentialOffer;
+		if (
+			!pending ||
+			pending.session !== ctx.sessionManager ||
+			pending.accountName !== result.accountName ||
+			!this.overlay.isCurrent(pending.operation)
+		) {
+			throw new Error(
+				`${this.provider.displayName} could not identify the credential applied to this session.`,
+			);
+		}
+		return `${pending.accountName}:${pending.credential.access}`;
+	}
+
 	publishCredentialOffer(
 		ctx: ExtensionContext,
 		result: EnsureActiveProviderAuthResult,
@@ -392,12 +409,10 @@ export class RuntimeAuthCoordinator {
 			);
 		}
 		if (sameModelDefinition(ctx.model, refreshed)) return;
-		if (!(await this.pi.setModel(refreshed))) {
-			throw new Error(
-				`Pi could not select the refreshed ${this.provider.displayName} model ${refreshed.id}.`,
-			);
-		}
 		if (!this.overlay.isCurrent(operation)) return;
+		// ExtensionContext has no session-scoped setModel action. Replace the live definition held by
+		// this context instead of using the factory-bound action, which can target another runner.
+		replaceModelDefinition(ctx.model, refreshed);
 	}
 
 	async forceFailClosed(
@@ -750,6 +765,17 @@ function sameModelDefinition(left: unknown, right: unknown): boolean {
 		return JSON.stringify(left) === JSON.stringify(right);
 	} catch {
 		return false;
+	}
+}
+
+function replaceModelDefinition(target: object, source: object): void {
+	const writable = target as Record<string, unknown>;
+	for (const key of Object.keys(writable)) {
+		if (!Object.hasOwn(source, key)) delete writable[key];
+	}
+	Object.assign(writable, source);
+	if (!sameModelDefinition(writable, source)) {
+		throw new Error("Pi did not retain the refreshed model definition.");
 	}
 }
 
