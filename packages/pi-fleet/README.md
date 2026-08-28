@@ -6,14 +6,15 @@
 > Pi Fleet is experimental.
 > Its local protocol, terminal automation, tool schemas, and agent-request behavior may change between releases.
 
-Start another Pi process in a terminal split without replacing the current session, then optionally connect trusted local Pi sessions for bounded messages and one-turn requests.
+Launch another Pi process in a terminal split without replacing the current session.
+You can also connect trusted local Pi sessions for bounded notifications and one-turn requests.
 
-Pi Fleet automatically detects tmux, Zellij, or Ghostty, and lets you pin a backend when needed.
+Pi Fleet detects tmux, Zellij, or Ghostty automatically, and you can pin a backend when needed.
 
 ## ✨ Features
 
 - Opens a distinct Pi process in tmux, Ghostty, or Zellij while preserving the parent session.
-- Inherits the cwd, model, thinking level, and an optional first task after a reviewed launch flow.
+- Inherits the cwd, model, thinking level, and optional first task after consent and launch review.
 - Waits for the child to authenticate before reporting that the new session is ready.
 - Connects explicitly joined same-user sessions through owner-only local sockets and ephemeral invites.
 - Delivers notifications without a model turn and bounds each allowed request to one turn.
@@ -22,7 +23,7 @@ Pi Fleet automatically detects tmux, Zellij, or Ghostty, and lets you pin a back
 
 ## 📦 Install
 
-Install persistently after the package is published:
+Install persistently:
 
 ```bash
 pi install npm:@narumitw/pi-fleet
@@ -43,21 +44,21 @@ pi --no-extensions --no-skills --no-session -e ./packages/pi-fleet
 
 The package declares `dist/index.ts`, so an unbuilt local checkout must run the build before Pi loads the package directory.
 
-A child started in any supported terminal backend uses normal Pi extension discovery.
-Install Pi Fleet persistently before testing the complete split-and-auto-join flow because a parent's temporary `-e` argument is not copied into the child process.
+A child started in any supported terminal uses normal Pi extension discovery.
+Install Pi Fleet persistently to test split-and-auto-join because the child does not inherit the parent's temporary `-e` argument.
 
 Pi extensions execute with your user permissions.
 Review extension source before installing it.
 
 ## 🚀 Quick start
 
-Run `/fleet`, choose **New Pi session…**, select a split direction, and optionally provide the first task.
-Pi Fleet asks for one-time experimental consent and shows the configured launch confirmation before creating a split.
+Run `/fleet`, choose **New Pi session…**, select a split direction, and optionally enter a first task.
+Before creating a split, Pi Fleet asks for one-time experimental consent and any configured launch confirmation.
 
 ## 🧭 Launch flow
 
-Choose **Settings** first when you want to pin a terminal backend or change final launch confirmation.
-Pi Fleet otherwise resolves the current supported terminal automatically.
+Use **Settings** to pin a terminal backend or change final launch confirmation.
+With the default settings, Pi Fleet detects the current supported terminal.
 
 After consent and any configured launch confirmation, Pi Fleet:
 
@@ -67,7 +68,8 @@ After consent and any configured launch confirmation, Pi Fleet:
 4. Waits for the child to authenticate and report readiness.
 5. Sends the optional first task through a launch-specific one-time kickoff.
 
-If the terminal creates a split but the child does not become ready, Pi Fleet leaves the visible split open and reports a partial launch instead of closing a potentially useful pane.
+If the terminal creates a split but the child does not become ready, Pi Fleet reports a partial launch.
+It leaves the visible split open instead of closing a potentially useful pane.
 
 ## 🛠️ Tools
 
@@ -83,8 +85,8 @@ Creates a separate Pi process in a terminal split.
 | `name` | No | Child session display name. |
 | `cwd` | No | Existing directory; defaults to the current cwd. |
 
-The tool works only in TUI and RPC modes because Pi Fleet requires experimental consent and may require launch confirmation.
-JSON and print modes fail before creating a group, launcher, or split.
+The tool supports only TUI and RPC modes because launch requires experimental consent and may require confirmation.
+In JSON and print modes, it fails before creating a group, launcher, or split.
 Successful details include `terminal`, `terminalId`, and `terminalVersion`.
 Ghostty results also retain `ghosttyVersion` for compatibility.
 
@@ -98,8 +100,7 @@ Lists or messages sessions in the active Pi Fleet group.
 | `send` | `targetSessionId`, `message`, optional `mode` | Sends `notify` by default or a permitted one-turn `request`. |
 | `reply` | `targetSessionId`, `message`, `replyTo` | Correlates a reply without starting another automatic turn. |
 
-An accepted acknowledgement means the recipient extension accepted or deduplicated the message.
-It does not prove that a remote agent completed the requested work.
+An accepted acknowledgement means the recipient extension accepted or deduplicated the message, not that the remote agent completed the work.
 Rejected and busy acknowledgements use stable codes such as `requests_disabled`, `rate_limited`, `target_busy`, and `delivery_failed`.
 Rate-limited responses may include a bounded retry delay.
 Peer-list text and details share a 40 KiB UTF-8 result budget below Pi's tool-output limit.
@@ -129,10 +130,11 @@ It selects the first complete signature in this fixed order:
 2. Zellij when `ZELLIJ` is non-empty and `ZELLIJ_PANE_ID` is numeric.
 3. Ghostty when `TERM_PROGRAM` is exactly `ghostty`.
 
-This order is deterministic when nested terminals leave more than one signature in the environment, and it may select an outer multiplexer instead of the visually innermost pane.
+When nested terminals leave multiple signatures, this fixed order may select an outer multiplexer instead of the visible inner pane.
 Pi Fleet does not inspect the process tree.
 If no signature matches, Pi Fleet fails before creating a group, launcher, socket, or split and asks the user to enter a supported context or pin a backend.
-After resolution, Pi Fleet preflights only the selected adapter and never switches backends after a version, platform, executable, focus, permission, split, child-startup, or kickoff failure.
+After resolution, Pi Fleet preflights only the selected adapter.
+It does not switch backends after a version, platform, executable, focus, permission, split, child-startup, or kickoff failure.
 
 ### tmux
 
@@ -198,16 +200,17 @@ An explicit `session_spawn.terminal` value strictly overrides `defaultTerminal` 
 Disabling launch confirmation does not disable one-time experimental consent.
 Pi Fleet reads standard terminal context variables only for automatic selection and does not treat them as settings overrides.
 Pi Fleet does not read project settings or extension-specific environment-variable overrides.
-A missing file keeps defaults without creating the file, while each Settings change saves immediately.
-Writes preserve unknown fields, serialize within one Pi process, and publish atomically through a private temporary file and rename.
-Malformed or invalid files are reported and never overwritten by the Settings screen.
-Separately running Pi processes do not share a settings lock, so avoid changing this file concurrently from multiple sessions.
+A missing file uses the defaults without creating the file.
+Each Settings change saves immediately.
+Writes preserve unknown fields, run in order within one Pi process, and publish atomically through a private temporary file and rename.
+The Settings screen reports malformed or invalid files and does not overwrite them.
+Separate Pi processes do not share a settings lock, so do not edit this file concurrently from multiple sessions.
 A Settings change applies immediately in the current process; other running Pi processes reload it on their next session start or `/reload`.
 
 Group secrets, request permission, peers, readiness state, and deduplication state stay in memory except for the short-lived private Zellij launch copy described below.
-The `pifleet:v1` prefix versions the bearer-invite encoding independently from the version-2 socket protocol.
+The `pifleet:v1` prefix versions the bearer-invite encoding separately from the version-2 socket protocol.
 Version-2 messages normally expire after two minutes and cannot declare a lifetime longer than five minutes.
-Accepted message ids remain deduplicated for ten minutes, so their retry window outlives their valid delivery window.
+Accepted message ids remain deduplicated for ten minutes, longer than their valid delivery window.
 A copied invite is still a reusable bearer secret, so discard it or start a new group when you need to rotate access.
 A short-lived in-process handoff preserves a group across `/reload` for the same `sessionManager` only.
 Membership does not carry into `/new`, `/resume`, or another logical session without a new invite.
@@ -226,19 +229,22 @@ Enabling them permits trusted invite holders to start paid model turns that may 
 - Discovery ignores symlinks, non-regular files, oversized manifests, wrong owners, malformed records, endpoint filename mismatches, and incompatible versions.
 - Discovery scans at most 512 directory entries, accepts at most 64 valid manifests, probes at most 16 peers concurrently, and finishes under one overall deadline.
 - Invalid manifests do not consume the valid-peer quota, and bounded non-secret diagnostics distinguish saturation, conflicts, protocol failures, deadlines, and unreachable peers.
-- Every manifest, request, and response is authenticated for its group and endpoint instance, while frames also bind the logical target, claimed sender, clock window, nonce, and request id.
+- Every manifest, request, and response is authenticated for its group and endpoint instance.
+  Frames also bind the logical target, claimed sender, clock window, nonce, and request id.
 - The shared group MAC proves possession of the bearer invite, not a separate cryptographic identity for each peer.
 - A trusted invite holder can claim another session id, so session and endpoint labels are collaboration hints rather than a separate authorization boundary.
-- Launch kickoffs additionally require a random capability shared only through the parent-to-child launch envelope; it is not published through peer discovery or persisted with delivered messages.
+- Launch kickoffs also require a random capability shared only through the parent-to-child launch envelope.
+  It is not published through peer discovery or persisted with delivered messages.
 - Two simultaneously live endpoints claiming one session id are omitted from discovery and rejected as an explicit identity conflict.
 - Bearer invites are shown only on the explicit invite screen or direct join input.
 - Pi Fleet does not retain invites as durable settings or group state, but a recipient can copy and reuse one until every holder discards it or moves to a new group.
 - Invites are not placed in tool output, status, notifications, custom renderers, or model context.
 - Tmux receives launch values through per-pane `-e` arguments and Pi Fleet never publishes them to the tmux global environment.
-- Zellij receives only a launcher path, while launch values briefly exist in a private `0700` launcher that unlinks itself before starting Pi so Zellij command metadata cannot retain them.
+- Zellij receives only a launcher path.
+  Launch values briefly exist in a private `0700` launcher that unlinks itself before starting Pi, so Zellij command metadata cannot retain them.
 - Peer names, paths, messages, model ids, and errors are treated as untrusted terminal text and sanitized only at display boundaries.
 - A same-user process or another privileged Pi extension is outside the security boundary and may inspect process arguments, private runtime files, memory, or environment.
-- Pi Fleet provides explicit group separation, not a sandbox against the operating-system user.
+- Pi Fleet separates groups but does not sandbox them from the operating-system user.
 
 ## 🚧 Limitations
 
@@ -256,7 +262,8 @@ Enabling them permits trusted invite holders to start paid model turns that may 
 - One request uses one short-lived socket connection; there is no persistent multiplexed channel or delivery stream.
 - Server connections use an absolute request deadline rather than an activity-reset timeout, and at most eight message deliveries run concurrently.
 - Per-sender and endpoint-wide rate limits are fixed windows, so a busy response can require waiting before retrying.
-- Old orphan temporary files, private launchers, and sockets are removed after a grace period, while empty private group directories may remain to avoid cross-process startup races.
+- Old orphan temporary files, private launchers, and sockets are removed after a grace period.
+  Empty private group directories may remain to avoid cross-process startup races.
 - No tab, window, resize, focus-navigation, or general layout manager.
 - Multiple Pi sessions can still race while editing the same workspace.
 

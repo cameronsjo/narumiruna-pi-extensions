@@ -2,29 +2,27 @@
 
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-subagents)](https://www.npmjs.com/package/@narumitw/pi-subagents) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-Pi Subagents starts Pi subagent jobs and lets each child ask the main agent necessary questions through an authenticated loopback broker.
+Pi Subagents runs Pi jobs in separate child processes and lets each child ask the main agent necessary questions through an authenticated loopback broker.
 
-A bundled `using-pi-subagents` skill owns delegation strategy, least-privilege tool selection, parallel-work guidance, timeout selection, question handling, result review, and writer safety.
+The bundled `using-pi-subagents` skill explains when to delegate, how to limit child capabilities, and how to verify results safely.
 
 ## ✨ Features
 
-- Starts one isolated Pi child process per job.
-- Lets each task define the child's specialization and each tool list define its capabilities.
-- Defaults child work tools to `read`, `grep`, `find`, and `ls`.
-- Inherits the main agent's effective model and defaults to its thinking level.
-- Gives every child fixed `subagent_ask` and `subagent_wait` communication tools.
-- Lets the main agent answer a pending child question with `subagent_reply`.
-- Interrupts a parent job wait when a question needs a main-agent response without cancelling the job.
-- Publishes one guarded asynchronous completion and releases child resources at terminal state.
-- Shows each active job's state, elapsed time, timeout, and selected work tools above the editor.
-- Exposes privacy-filtered job metadata without leaking task text, output, prompts, selected tools, or broker credentials.
-- Cancels active session-owned work and closes the loopback broker during replacement, reload, or shutdown.
+- Runs each job in an isolated Pi child process and returns its job ID immediately.
+- Uses the task to define the child's specialization and the tool list to limit its capabilities.
+- Defaults work tools to `read`, `grep`, `find`, and `ls`.
+- Inherits the main agent's effective model and uses its thinking level by default.
+- Gives every child fixed `subagent_ask` and `subagent_wait` tools for necessary questions.
+- Lets the main agent answer with `subagent_reply` without cancelling the job.
+- Publishes one asynchronous terminal completion and shows active-job progress above the editor.
+- Exposes privacy-filtered metadata without task text, output, prompts, selected tools, or broker credentials.
+- Cancels session-owned work and closes the broker during replacement, reload, or shutdown.
 
 ## 📦 Install
 
-The version 3 runtime is not published to npm yet.
+The version 3 runtime documented here is not yet published to npm.
 
-The npm package remains on the legacy 2.x runtime and does not provide the tools documented below.
+The npm package still contains the legacy 2.x runtime and does not provide the tools below.
 
 Install the repository source as one Pi package:
 
@@ -63,23 +61,19 @@ Review the source before installing or invoking the extension.
 
 Ask Pi to use the bundled `using-pi-subagents` skill when deciding whether to delegate, or invoke `/skill:using-pi-subagents` directly.
 
-Start one subagent job with `subagent_spawn`.
+Call `subagent_spawn` with a self-contained task and only the work tools that task needs.
 
-The tool returns a `jobId` immediately.
+The call returns a `jobId` immediately, and the job continues in the background.
 
-The job runs in the background while the main agent continues useful work until a completion arrives or the result is required.
+Continue useful main-agent work until the result is required or a completion arrives.
 
-Completion messages follow Pi's global tool-output expansion state and `app.tools.expand` binding (`Ctrl+O` by default).
+If `subagent_wait` returns `reason: "subagent_message"`, answer the visible question with `subagent_reply` and wait for the job again only when needed.
 
-If `subagent_wait` reports `reason: "subagent_message"`, answer the visible question with `subagent_reply`, then wait for the job again when needed.
+Completion messages follow Pi's global tool-output expansion state and the `app.tools.expand` binding (`Ctrl+O` by default).
 
-In TUI mode, an above-editor widget shows one compact line for each queued or running job.
+In TUI mode, the above-editor widget shows each queued or running job's ID, state, elapsed time, timeout, and selected work tools.
 
-Each line includes the job ID, current state, elapsed execution time, configured timeout or `no timeout`, and selected work tools.
-
-The fixed `subagent_ask` and child `subagent_wait` communication tools are omitted from the widget because every child receives them.
-
-The widget disappears when no jobs remain active and is cleared during session replacement, reload, or shutdown.
+The widget omits the fixed communication tools, disappears when no jobs remain active, and clears when the session ends.
 
 ## 🛠️ Tools
 
@@ -120,9 +114,9 @@ See [`docs/tools.md`](./docs/tools.md) for the concise schema reference.
 
 ## ⚙️ Job configuration
 
-The task defines the child's role, objective, scope, constraints, and expected result.
+The task should state the child's role, objective, scope, constraints, and expected result.
 
-The optional `tools` list defines what the child can do.
+The optional `tools` list limits what the child can do.
 
 Accepted names are `read`, `bash`, `powershell`, `edit`, `write`, `grep`, `find`, and `ls`.
 
@@ -144,9 +138,9 @@ Omitting `thinkingLevel` captures the main agent's effective level when `subagen
 
 The child inherits the main agent's effective provider and model when `subagent_spawn` executes.
 
-Spawn rejects providers registered by a parent extension because children disable unrelated extensions.
+Spawn rejects providers registered by a parent extension because child processes disable unrelated extensions.
 
-Spawn also rejects process-local runtime API keys such as a parent-only `--api-key` value.
+Spawn also rejects process-local runtime API keys, including a parent-only `--api-key` value.
 
 Use stored or environment credentials that child processes can read.
 
@@ -164,7 +158,9 @@ The child bridge reads and closes that descriptor before model tool execution.
 
 Each child communication tool call uses one request-scoped connection, while a response wait uses an abortable long poll.
 
-The first accepted `subagent_reply` wins, and repeated replies acknowledge the existing answer without replacing it.
+The first accepted `subagent_reply` wins.
+
+Repeated replies acknowledge the existing answer without replacing it.
 
 A child may retry `subagent_wait` after a wait timeout because the underlying request remains active.
 
@@ -180,7 +176,9 @@ Session replacement and shutdown cancel active work, suppress stale completion d
 
 ## 🔀 Migrating from 2.x
 
-Version 3.0 replaces the previous orchestration runtime and does not migrate its settings, persisted jobs, retained conversations, or recovery state.
+Version 3.0 replaces the previous orchestration runtime.
+
+It does not migrate legacy settings, persisted jobs, retained conversations, or recovery state.
 
 Finish or record any required work before upgrading, then start a fresh Pi session so stored calls do not request removed tool names.
 
@@ -202,9 +200,9 @@ Describe the child's specialization in `task` and grant only the required work t
 
 The selected work tools run in the current working directory.
 
-The default list is read-only by capability because it contains no shell or file-mutation tool.
+The default list contains no shell or file-mutation tool.
 
-This default is not a filesystem sandbox because the allowed read tools can inspect files available to the user account.
+It is not a filesystem sandbox because its read tools can inspect files available to the user account.
 
 Selecting `bash`, `powershell`, `edit`, or `write` permits workspace mutation with the Pi process environment and user permissions.
 
@@ -230,7 +228,7 @@ Parallel writers require disjoint ownership or workspace isolation outside this 
 
 ## 🚧 Limitations
 
-The extension does not load arbitrary extension tools or parent-registered model providers into child processes.
+The extension does not load arbitrary extension tools or parent-registered model providers in child processes.
 
 Process-local runtime API keys are not forwarded to children.
 

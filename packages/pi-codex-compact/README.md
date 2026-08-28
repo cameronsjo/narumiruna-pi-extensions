@@ -2,11 +2,10 @@
 
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-codex-compact)](https://www.npmjs.com/package/@narumitw/pi-codex-compact) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-Use Codex Remote Compaction V2 in Pi instead of generating a local plaintext summary for models that use the `openai-codex-responses` API.
+Use Codex Remote Compaction V2 in Pi for models that use the `openai-codex-responses` API.
+The extension stores an opaque server-generated checkpoint and replays it in later compatible requests instead of generating a local plaintext summary.
 
-The extension requests and stores an opaque server-generated checkpoint, then safely replays it in later Codex Responses requests.
-
-Pi still decides when compaction runs and retains its normal `/compact`, threshold, overflow, and session-publication behavior.
+Pi still decides when compaction runs and keeps its normal `/compact`, threshold, overflow, and session-publication behavior.
 
 ## ✨ Features
 
@@ -16,7 +15,7 @@ Pi still decides when compaction runs and retains its normal `/compact`, thresho
 - Replays the latest checkpoint while preserving newer conversation and extension context.
 - Supports repeated compaction by carrying the previous checkpoint into the next request.
 - Falls back to Pi's native plaintext compaction on non-cancellation failures.
-- Provides `/codex-compact` for route status, settings, and manual compaction.
+- Provides `/codex-compact` for effective-route status, settings, and manual compaction.
 
 ## 📦 Install
 
@@ -39,9 +38,12 @@ npm --workspace @narumitw/pi-codex-compact run build
 pi -e ./packages/pi-codex-compact
 ```
 
-The package declares `dist/index.ts`, so an unbuilt local checkout must be built before Pi loads the package directory.
-Loading the package enables Remote V2 with safe defaults.
-Avoid loading a global npm installation and the local workspace at the same time.
+The package declares `dist/index.ts`, so build a local checkout before loading its package directory.
+Loading the package enables Remote V2 with the documented defaults.
+Do not load a global npm installation and the local workspace at the same time.
+
+Pi extensions run with your user permissions.
+Review third-party extension source before installing it.
 
 ## 🚀 Quick start
 
@@ -60,7 +62,7 @@ When the active model uses another API, compaction remains entirely Pi-native.
 /codex-compact
 ```
 
-In TUI mode, the root menu shows whether Remote V2 is enabled, the active model, and whether a manual compact will use **Codex Remote V2** or **Pi native**.
+In TUI mode, the menu shows whether Remote V2 is enabled, the active model, and whether manual compaction will use **Codex Remote V2** or **Pi native**.
 It contains:
 
 ```text
@@ -110,8 +112,8 @@ Settings reload on every `session_start`, including `/reload`, resume, and fork.
 Menu writes apply immediately, preserve unknown JSON fields, serialize within the current Pi process, and use a final conflict check plus same-directory atomic rename.
 On Unix, temporary files use mode `0600`.
 
-Malformed, invalid, oversized, or symlinked settings files are never overwritten.
-Safe defaults stay active, and the menu provides read-only repair guidance until the file is fixed and Pi is reloaded.
+Malformed, invalid, oversized, or symlinked settings files remain unchanged.
+Defaults stay active, and the menu remains read-only until the file is fixed and Pi is reloaded.
 Separate Pi processes do not share a mutation lock; a detected concurrent edit is rejected so the user can reopen Settings and retry.
 
 ### Relationship to Codex configuration
@@ -183,6 +185,40 @@ These hard byte ceilings are intentionally not configurable.
 - Remote failure falls back to Pi's plaintext summary, so a session can contain both remote opaque and native compaction entries over time.
 - Settings concurrency is coordinated only within one Pi process; separate processes rely on the final conflict check.
 
+## 📊 Benchmark
+
+The repository includes a seeded benchmark that compares uncompressed full context, Pi-native plaintext compaction, and this extension's Remote V2 path.
+
+It keeps history length nearly fixed while varying information density across five state categories and ten history epochs.
+
+Benchmark v3 uses repeated artifacts, isolated evaluator probes, seed-level paired statistics, one Pi SDK estimator for dry and live fixtures, and committed protocol manifests for confirmatory candidates.
+
+It never treats nominal Pi 20K and Codex 20K settings as equal information capacity or automatically claims that protocol-conformant evidence was genuinely held out.
+
+Preview its exploratory diagnostic without making a provider request:
+
+```bash
+just benchmark-codex-compact
+```
+
+A live run requires `--live`, review of the request and cost exposure, OpenAI Codex OAuth, and Remote V2 entitlement.
+
+The repository preserves the explicitly labeled v2 matched-tail diagnostic and the v3 calibration evidence, while seeds 301–304 remain consumed and unavailable for future confirmatory protocols.
+
+See the [benchmark guide](https://github.com/narumiruna/pi-extensions/tree/main/packages/pi-codex-compact/benchmark) for manifests, repetitions, commands, privacy, cost semantics, and interpretation limits.
+
+## 🧪 Development
+
+From the repository root:
+
+```bash
+npm --workspace @narumitw/pi-codex-compact run check
+npm test
+just pack codex-compact
+```
+
+See [`docs/implementation-notes/codex-compaction-mechanism.md`](../../docs/implementation-notes/codex-compaction-mechanism.md) for the underlying Codex mechanism research and the extension boundary.
+
 ## 🗂️ Package layout
 
 ```text
@@ -200,40 +236,6 @@ scripts/              Runtime builder
 benchmark/            Three-arm compaction benchmark, self-test, and methodology
 test/                 Protocol, checkpoint, lifecycle, remote, settings, menu, and builder coverage
 ```
-
-## 📊 Benchmark
-
-The repository includes a seeded three-arm benchmark for uncompressed full context, Pi-native plaintext compaction, and this extension's Codex Remote Compaction V2 path.
-
-It holds history length nearly fixed while varying information density across five state categories and ten history epochs.
-
-Benchmark v3 uses repeated artifacts, isolated evaluator probes, seed-level paired statistics, one Pi SDK estimator for dry and live fixtures, and committed protocol manifests for confirmatory candidates.
-
-It never treats nominal Pi 20K and Codex 20K settings as equal information capacity or automatically claims that protocol-conformant evidence was genuinely held out.
-
-Preview its exploratory diagnostic without making a provider request:
-
-```bash
-just benchmark-codex-compact
-```
-
-A live run requires an explicit `--live` flag, reviewed request and cost exposure, OpenAI Codex OAuth, and Remote V2 entitlement.
-
-The repository preserves the explicitly labeled v2 matched-tail diagnostic and the v3 calibration evidence, while seeds 301–304 remain consumed and unavailable for future confirmatory protocols.
-
-See the [benchmark guide](https://github.com/narumiruna/pi-extensions/tree/main/packages/pi-codex-compact/benchmark) for manifests, repetitions, commands, privacy, cost semantics, and interpretation limits.
-
-## 🧪 Development
-
-From the repository root:
-
-```bash
-npm --workspace @narumitw/pi-codex-compact run check
-npm test
-just pack codex-compact
-```
-
-See [`docs/implementation-notes/codex-compaction-mechanism.md`](../../docs/implementation-notes/codex-compaction-mechanism.md) for the underlying Codex mechanism research and the extension boundary.
 
 ## 🔎 Keywords
 

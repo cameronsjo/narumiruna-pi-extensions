@@ -2,28 +2,32 @@
 
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-usage)](https://www.npmjs.com/package/@narumitw/pi-usage) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-Check the limits and usage for the provider account Pi is actually using, toggle Fast mode for supported OpenAI Codex models, and report xAI OAuth subscription usage.
+Inspect usage for Pi's active provider account, query other configured providers, and toggle Fast mode for supported OpenAI Codex models.
 
-The extension reports each provider's native semantics instead of presenting unlike quotas as equivalent.
-xAI reporting defaults On and follows the current official Grok Build implementation.
+The extension keeps each provider's native quota, allowance, and spending semantics instead of treating unlike values as equivalent.
+xAI OAuth subscription reporting defaults to On and follows the reviewed Grok Build contract.
 
 ## ✨ Features
 
-- Shows current-account usage and next actions through `/usage`.
-- Supports OpenAI Codex subscription windows, credits, resets, and model-specific buckets.
-- Supports Kimi For Coding plan windows, resets, and separately labeled booster-wallet currency.
-- Supports GitHub Copilot allowances and OpenRouter per-key limits and spend windows.
-- Supports xAI OAuth subscription allowance and credit reporting.
-- Toggles persistent Codex Fast routing through `/fast` or the contextual usage menu.
+- Shows active-account usage and next actions through `/usage`.
+- Reports OpenAI Codex subscription windows, credits, resets, and model-specific buckets.
+- Reports Kimi For Coding plan windows, resets, and separately labeled booster-wallet currency.
+- Reports GitHub Copilot allowances and OpenRouter per-key limits and spending windows.
+- Reports OpenCode Go plan windows and Z.AI Coding Plan quotas.
+- Reports xAI OAuth subscription allowances and credits when enabled.
+- Toggles persistent Codex Fast routing through `/fast` or the usage menu.
 - Redeems eligible Codex resets only after fresh account matching and explicit confirmation.
-- Refreshes one or all configured providers with bounded concurrency and partial-result preservation.
-- Keeps statusline and cache data scoped to the current provider and runtime account.
+- Refreshes one or all configured providers with bounded concurrency while preserving partial results.
+- Scopes statusline and cache data to the active provider and runtime account.
 - Resolves credentials through Pi or the process-local OAuth credential-source protocol and validates the effective provider endpoint before sending them.
 
 ## 📦 Install
 
-Requires Pi 0.81.0 or newer so the extension can validate the effective base URL attached to resolved provider auth before sending credentials to an official usage endpoint.
-The v1 credential-source interoperability path is characterized against Pi 0.84.3; other runtimes retain standalone fallback but do not receive the protocol timing guarantee.
+Requires Pi 0.81.0 or newer to validate the effective base URL for resolved provider auth before sending credentials to an official usage endpoint.
+The v1 credential-source path is characterized against Pi 0.84.3; other runtimes keep the standalone fallback without its protocol timing guarantee.
+
+Like every Pi extension, this package runs with Pi's process permissions.
+Review [Security and privacy](#-security-and-privacy) before installation.
 
 ```bash
 pi install npm:@narumitw/pi-usage
@@ -46,18 +50,18 @@ The package declares `dist/index.ts`, so an unbuilt local checkout must run the 
 
 ## 🚀 Quick start
 
-Run `/usage` in TUI or RPC mode to inspect the current provider, refresh usage, or choose another configured provider.
-Use `/fast` separately to toggle Fast mode for a supported current Codex model.
+Run `/usage` in TUI or RPC mode to inspect the active provider, refresh its usage, or choose another configured provider.
+Run `/fast` to toggle Fast mode for a supported active Codex model.
 
 ## 💬 Commands
 
-Run:
+Open the manager with:
 
 ```text
 /usage
 ```
 
-In TUI or RPC mode, the standard menu first queries the current model provider and presents its state with these actions:
+In TUI or RPC mode, the menu first queries the active model provider and then offers these actions:
 
 ```text
 Refresh current usage
@@ -69,13 +73,14 @@ View all configured providers…
 Close
 ```
 
-There are intentionally no `/usage --refresh`, `/usage <provider>`, or `/usage --all` argument paths.
-Cross-provider traffic requires an explicit interactive choice.
-Escape returns from provider selection and closes the root menu.
-Print and JSON modes reject `/usage` observably because they cannot host the interactive flow.
-The cancellable live-query progress view remains extension-owned because it streams provider work and supports in-flight abort rather than presenting a standard menu screen.
+`/usage` accepts no arguments, including `--refresh`, a provider ID, or `--all`.
+Cross-provider requests require an explicit interactive choice.
+Escape returns from provider selection or closes the root menu.
+Print and JSON modes reject `/usage` because they cannot host the interactive flow.
+The extension owns the cancellable live-query progress view because it streams provider work and supports in-flight abort.
 
-For the current OpenAI Codex provider, **Redeem usage limit reset…** checks fresh earned-reset details, lets you select a reset when details are available, and shows the exact reset before asking for confirmation.
+For the current OpenAI Codex provider, **Redeem usage limit reset…** first checks fresh earned-reset details.
+When details are available, you select a reset and review its exact effect before confirmation.
 **No, go back** is the safe default and cancellation before confirmation sends no mutation.
 After confirmation, the reset operation cannot be cancelled from its progress view; session replacement or shutdown still aborts owned work.
 A transport failure offers **Try again** with the same redemption request ID so the backend can treat an uncertain retry idempotently.
@@ -86,16 +91,17 @@ Successful, already-completed, not-needed, and no-credit outcomes are reported s
 Choose **Settings** in `/usage` to edit Codex Fast mode and xAI usage through Pi's settings-list interaction in TUI mode.
 RPC mode reports the active manual settings path instead of opening terminal UI.
 
-Both preferences live in Pi's user agent directory as `pi-usage.json`, normally `~/.pi/agent/pi-usage.json`.
-The file reloads at every session start and is not created until the first successful save.
-Changes save immediately in input order inside one Pi process.
-Unknown JSON fields are preserved, writes use a private temporary file plus rename, and malformed or invalid files remain untouched.
+Both preferences live in `pi-usage.json` under Pi's user agent directory, normally `~/.pi/agent/pi-usage.json`.
+The extension reloads this file at every session start and does not create it until the first successful save.
+Within one Pi process, changes save immediately in invocation order.
+Saves preserve unknown JSON fields and publish through a private temporary file plus rename.
+Malformed or invalid files remain untouched.
 A failed save restores the prior displayed and effective value, while shutdown waits for queued writes.
 Separate Pi processes are not mutually locked.
 
 ### Codex Fast mode
 
-Run bare `/fast` to toggle Fast for the active supported Codex model, or use **Turn Fast mode on/off** in `/usage`.
+Run `/fast` without arguments to toggle Fast for the active supported Codex model, or use **Turn Fast mode on/off** in `/usage`.
 
 Fast is about 1.5× faster and uses more of your plan allowance.
 The `codexFastMode` preference defaults to Off.
@@ -139,7 +145,8 @@ Turning it Off clears xAI cache state and prevents stale in-flight results from 
 The statusline selects a returned bucket that matches the current Codex model when one is available.
 Unlike `pi-codex-usage`, this successor intentionally has no Codex CLI fallback because the CLI may be logged into a different account than Pi's active runtime account.
 
-Reset redemption is available only when Codex is the current provider and Pi's freshly resolved access token exactly matches an OAuth credential from Pi's stored login or a compatible credential source.
+Reset redemption is available only when Codex is the current provider.
+Pi's freshly resolved access token must exactly match an OAuth credential from Pi's stored login or a compatible credential source.
 `pi-usage` forwards only the bearer authorization and matching `chatgpt-account-id` to the official ChatGPT origin.
 API-key credentials, configured-but-not-current Codex accounts, account changes during the flow, and custom/proxy origins fail before mutation.
 Backend-provided titles and descriptions are sanitized for terminal display.
@@ -150,7 +157,8 @@ Opaque credit and account IDs are never shown or persisted by the extension.
 - Provider ID: `kimi-coding`
 - Semantics: Kimi Coding Plan request windows plus a separate Extra Usage booster wallet
 - Source: `GET https://api.kimi.com/coding/v1/usages` using Pi's freshly resolved runtime Bearer credential
-- Displayed data: the weekly plan summary, returned sub-windows such as five-hour or daily limits, used and remaining request percentages, valid reset times, wallet balance, monthly spend, and monthly charge limit
+- Displayed plan data: the weekly summary, returned sub-windows, used and remaining request percentages, and valid reset times
+- Displayed wallet data: balance, monthly spend, and monthly charge limit
 - Statusline examples: `kimi 99% 5h 96% wk` or `kimi 95% 1d`
 
 Both Pi API-key credentials and Pi OAuth credentials are accepted because current Pi resolves each form as Bearer authorization for the same official Kimi inference origin.
@@ -171,7 +179,8 @@ The pinned Kimi managed-usage source at `cd7c97b377a77f7ae1b9d541cafe314e986ec07
 ### GitHub Copilot
 
 - Provider ID: `github-copilot`
-- Semantics: the allowance reported for the active Copilot plan—AI credits for current usage-based billing, premium requests for legacy annual billing, or chat requests for Copilot Free's limited response shape
+- Semantics: the allowance reported for the active Copilot plan
+- Allowance labels: AI credits for usage-based billing, premium requests for legacy annual billing, or chat requests for Copilot Free
 - Source: GitHub's undocumented `GET /copilot_internal/user` endpoint
 - Displayed data: entitlement, remaining allowance, percentage, reset time, plan, and any additional usage beyond the included allowance
 - Statusline examples: `copilot credits 1200/1500 80%`, `copilot 245/300 82%`, or `copilot chat 40/50 80%`
@@ -181,7 +190,8 @@ GitHub's quota endpoint requires the original GitHub OAuth token rather than the
 It uses a candidate only when its short-lived access token exactly matches the freshly resolved active runtime credential.
 Duplicate equivalent candidates are harmless, while conflicting matches fail closed without choosing by extension load order.
 API-key credentials, account mismatches, GitHub Enterprise accounts, and proxy/custom provider origins fail closed.
-The detailed report follows the endpoint's `token_based_billing` marker so AI credits are not mislabeled as legacy premium requests, and it reports overage without treating a negative included balance as a malformed response.
+The detailed report follows the endpoint's `token_based_billing` marker so AI credits are not mislabeled as legacy premium requests.
+It reports overage without treating a negative included balance as malformed.
 
 ### OpenRouter
 
@@ -199,10 +209,13 @@ OpenRouter documents the distinction between credit and rate limits in its [API 
 - Provider ID: `opencode-go`
 - Semantics: OpenCode Zen plan usage windows—rolling, weekly, and monthly
 - Source: `GET https://opencode.ai/zen/go/v1/usage` using Pi's resolved inference API key
-- Displayed data: used percentage and reset time for each window; `rate-limited` windows remain visible at their reported usage, while unknown statuses are reported as unavailable notes
+- Displayed data: used percentage and reset time for each window
+- Status handling: `rate-limited` windows remain visible, while unknown statuses become unavailable notes
 - Statusline examples: `zen 0% r 4% w 2% m`
 
-The fixed endpoint is queried only when the candidate OpenCode Go model and the resolved provider-auth base URL, when present, use the official `https://opencode.ai` origin; other origins fail before sending the credential.
+The fixed endpoint is queried only when the OpenCode Go model uses the official `https://opencode.ai` origin.
+When resolved provider auth includes a base URL, that URL must use the same origin.
+Other origins fail before the credential is sent.
 
 ### xAI consumer subscriptions
 
@@ -210,12 +223,13 @@ The fixed endpoint is queried only when the candidate OpenCode Go model and the 
 - Semantics: consumer subscription allowance and credits, not xAI API-team billing
 - Identity route: `GET https://cli-chat-proxy.grok.com/v1/user?include=subscription`
 - Billing route: `GET https://cli-chat-proxy.grok.com/v1/billing?format=credits`
-- Displayed data: included allowance percentage or legacy monetary limit, weekly or monthly period and reset, on-demand spend and cap, prepaid balance, and a sanitized optional plan tier
+- Displayed data: included allowance or legacy monetary limit, period and reset, on-demand spend and cap, prepaid balance, and a sanitized optional plan tier
 - Statusline: not published; xAI is queried only through an explicit `/usage` action while xAI usage is enabled
 
 The adapter accepts only the official Pi inference origin `https://api.x.ai` and a freshly resolved bearer that exactly matches one complete Pi OAuth credential.
 Pi's reviewed OAuth scope is `openid profile email offline_access grok-cli:access api:access`.
-`XAI_API_KEY`, duplicate or conflicting OAuth candidates, account mismatches, incomplete OAuth records, custom origins, and proxy-resolved origins fail before consumer-proxy access.
+The adapter rejects `XAI_API_KEY`, duplicate or conflicting OAuth candidates, account mismatches, and incomplete OAuth records.
+It also rejects custom or proxy-resolved origins before consumer-proxy access.
 API-key users can review API-team spend through [console.x.ai](https://console.x.ai/) instead.
 The public Management API requires a separate management key and team ID and is intentionally outside this runtime-credential integration.
 
@@ -232,9 +246,11 @@ The implementation contract was verified against these first-party revisions:
 - Grok Build [`UserInfo`](https://github.com/xai-org/grok-build/blob/9684fa3cdbf2995e30ea8b9b637f1db008f144fc/crates/codegen/xai-grok-shell/src/auth/model.rs), [`subscription_check.rs`](https://github.com/xai-org/grok-build/blob/9684fa3cdbf2995e30ea8b9b637f1db008f144fc/crates/codegen/xai-grok-shell/src/agent/subscription_check.rs), [`billing.rs`](https://github.com/xai-org/grok-build/blob/9684fa3cdbf2995e30ea8b9b637f1db008f144fc/crates/codegen/xai-grok-shell/src/extensions/billing.rs), [`auth/config.rs`](https://github.com/xai-org/grok-build/blob/9684fa3cdbf2995e30ea8b9b637f1db008f144fc/crates/codegen/xai-grok-shell/src/auth/config.rs), [`xai-grok-http`](https://github.com/xai-org/grok-build/blob/9684fa3cdbf2995e30ea8b9b637f1db008f144fc/crates/codegen/xai-grok-http/src/lib.rs), and [`xai-grok-version`](https://github.com/xai-org/grok-build/blob/9684fa3cdbf2995e30ea8b9b637f1db008f144fc/crates/codegen/xai-grok-version/Cargo.toml) at `9684fa3`.
 - [xAI Management API team billing boundary at `723dd2a`](https://github.com/xai-org/xai-proto/blob/723dd2aa22d17be35617463837dc47cda008d90e/proto/xai/management_api/v1/billing.proto).
 
-The approved 2026-08-27 disposable-or-maintainer-account protocol smoke used only Pi's OAuth bearer, read no Grok-local files, and received HTTP 200 without redirects from both routes.
+The approved 2026-08-27 protocol smoke used only Pi's OAuth bearer and read no Grok-local files.
+A disposable or maintainer account received HTTP 200 without redirects from both routes.
 The implementation also sends the non-secret client headers present on both routes in current Grok Build source, with `x-userid` added only for billing.
-The sanitized identity shape contained a string `userId` and nullable `subscriptionTier`; the billing shape contained an object `config` with period and distinct on-demand and prepaid wrappers, without retaining field values.
+The sanitized identity shape contained a string `userId` and nullable `subscriptionTier`.
+The billing shape contained a `config` object with period and distinct on-demand and prepaid wrappers, without retaining field values.
 
 Disable `xaiUsage` to stop all xAI consumer usage traffic while preserving other provider behavior.
 
@@ -242,20 +258,23 @@ Disable `xaiUsage` to stop all xAI consumer usage traffic while preserving other
 
 - Provider ID: `zai` and `zai-coding-cn`
 - Semantics: GLM Coding Plan quota windows—the rolling 5-hour and weekly plan-usage windows plus the monthly MCP allowance
-- Source: Z.AI's undocumented `GET {origin}/api/monitor/usage/quota/limit` endpoint, also used by its official coding plugin, with the origin derived from the model base URL (`https://api.z.ai` or `https://open.bigmodel.cn`)
-- Displayed data: explicit used and remaining values, reset times, provider-reported per-tool MCP details, and the reported plan level. Windows that report only a percentage remain percent-based
+- Source: the undocumented `GET {origin}/api/monitor/usage/quota/limit` endpoint also used by Z.AI's official coding plugin
+- Allowed origins: the model base URL must resolve to `https://api.z.ai` or `https://open.bigmodel.cn`
+- Displayed data: explicit used and remaining values, reset times, provider-reported per-tool MCP details, and the reported plan level
+- Percentage-only windows remain percent-based
 - Statusline: publishes remaining plan percentages such as `zai 87% 5h 76% wk`; monthly MCP details remain available through `/usage`
 
 The monitor endpoint is not a published API contract and may return legacy `TOKENS_LIMIT` or newer `CREDIT_LIMIT` window names.
 The extension classifies both forms by the provider's window unit and does not label provider-reported counts as tokens or calls.
-The quota monitor expects the raw API key without a `Bearer` prefix, so the extension strips a `Bearer` prefix from the resolved authorization before sending it to the monitor endpoint.
+The quota monitor expects a raw API key without a `Bearer` prefix.
+The extension removes that prefix from resolved authorization before sending it to the monitor endpoint.
 Fingerprinting and redaction keep using the original resolved credential.
 Only the official `api.z.ai` and `open.bigmodel.cn` origins are queried; other origins fail before sending the credential.
 
 ## 🧭 Current and configured accounts
 
-`Current` means the provider and credential used by Pi's selected model.
-`Configured` means Pi reports runtime auth for another supported provider; it does not mean that provider is active.
+`Current` identifies the provider and credential used by Pi's selected model.
+`Configured` identifies runtime auth for another supported provider, not an active provider.
 
 The extension does not enumerate multiple accounts inside one provider and does not switch accounts.
 Account selection remains owned by Pi or an account-management extension.
@@ -271,7 +290,7 @@ It refreshes every five minutes while the session remains on such a provider and
 xAI is always menu-only and never starts a scheduled status refresh.
 Z.AI statusline usage refreshes every five minutes while the selected model remains on Z.AI.
 
-Manual another-provider and all-provider queries never publish to the statusline.
+Queries for another provider or all providers never publish their results to the statusline.
 `@narumitw/pi-statusline` supplies the default `📊` icon; `pi-usage` publishes text-only values.
 
 ## 🔄 Migrating from pi-codex-usage
@@ -297,10 +316,11 @@ Behavior changes:
 
 Credential candidates are collected synchronously in memory and are not cached, persisted, logged, formatted, or appended to the Pi session.
 The protocol carries no account name or extension identity.
-Only the selected provider's exact runtime match is used, and secrets are sent only to the validated official provider origin.
+Only the selected provider's exact runtime match is used, and secrets are sent only to its validated official origin.
 Pi extensions run with the user's process privileges, so the shared event bus is not a security boundary between installed extensions.
-Install only trusted extensions because any installed extension may already read user files and process memory.
-Protocol v1 interoperability is characterized for the repository's supported Pi runtime; an absent or incompatible peer preserves standalone fallback and fail-closed mismatch behavior.
+Install only trusted extensions because they can read user files and process memory.
+Protocol v1 interoperability is characterized for the repository's supported Pi runtime.
+An absent or incompatible peer preserves standalone fallback and fail-closed mismatch behavior.
 
 ## 🚧 Limitations
 

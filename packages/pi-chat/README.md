@@ -7,34 +7,35 @@
 > Its protocol, identity format, networking behavior, and interaction flow may change between releases.
 > It is not an anonymous or reliable messaging service.
 
-Join ephemeral peer-to-peer chat rooms beside your Pi workflow without putting chat messages into prompts, model context, repositories, or agent output.
+Join ephemeral peer-to-peer chat rooms without leaving Pi.
+Chat messages stay out of prompts, model context, repositories, and agent output.
 
-Pi Chat discovers peers with Hyperswarm and HyperDHT and connects them through encrypted Noise streams.
+Pi Chat uses Hyperswarm and HyperDHT for peer discovery and encrypted Noise streams for direct connections.
 
 ## ✨ Features
 
-- Creates private rooms with bearer invites or joins discoverable public rooms by slug.
-- Shows stable public-key fingerprints beside nicknames so peers can verify identities.
-- Keeps chat in a dedicated composer and visible dock beside the normal Pi editor.
-- Preserves drafts and optionally restores a remembered room and the last selected surface.
-- Signs and relays bounded events over authenticated encrypted peer connections.
-- Stores identity settings privately and cleans up all networking and UI resources on leave or shutdown.
+- Creates private rooms with bearer invites and joins discoverable public rooms by slug.
+- Shows stable public-key fingerprints beside nicknames for identity checks.
+- Keeps chat in a dedicated composer and dock beside the normal Pi editor.
+- Preserves drafts and can restore a remembered room and the last selected surface.
+- Signs and relays bounded events over authenticated, encrypted peer connections.
+- Stores identity settings privately and releases networking and UI resources on leave or shutdown.
 
 ## 📦 Install
 
-Install persistently after the package is published:
+Install persistently:
 
 ```bash
 pi install npm:@narumitw/pi-chat
 ```
 
-Try from npm without installing permanently:
+Run once from npm:
 
 ```bash
 pi -e npm:@narumitw/pi-chat
 ```
 
-Try the extension from a local checkout:
+Build and run a local checkout:
 
 ```bash
 npm --workspace @narumitw/pi-chat run build
@@ -43,16 +44,16 @@ pi --no-extensions --no-skills --no-session -e ./packages/pi-chat
 
 The package declares `dist/index.ts`, so an unbuilt local checkout must be built before Pi loads the package directory.
 
-Load the package only once per Pi process.
-Repeating `-e ./packages/pi-chat` creates duplicate extension instances and suffixed commands such as `/chat:1` and `/chat:2`.
+Load the package only once in each Pi process.
+Repeating `-e ./packages/pi-chat` creates duplicate instances and suffixed commands such as `/chat:1` and `/chat:2`.
 
 Pi extensions execute with your user permissions.
 Review source before installing third-party packages.
 
 ## 🚀 Quick start
 
-Run `/chat`, choose a public or private room, set a nickname, and start chatting.
-Press `Escape` or `Ctrl+C` to return to the Pi editor without leaving the room or losing the chat draft.
+Run `/chat`, choose a public or private room, confirm a nickname, and start chatting.
+Press `Escape` or `Ctrl+C` to return to the Pi editor while staying in the room and keeping the draft.
 
 ## 🧭 Rooms and composer
 
@@ -62,15 +63,16 @@ The `/chat` menu offers these entry actions:
 - **Join public room** accepts a lowercase slug such as `pi-dev`, remembers it after the public-room warning is confirmed, and opens the chat composer.
 - **Join with invite** accepts a private-room invite, then offers **Join and remember**, **Join once**, or **Cancel** before networking starts.
 - **Create private room** generates a random `pichat:v2:…` bearer invite and uses the same explicit persistence choice.
-  Existing `pichat:v1` invite text remains accepted as v2 room input.
+  Existing `pichat:v1` invites remain accepted and map to v2 rooms.
 
 The first join asks for a nickname and joined-room display mode, then previews the generated identity fingerprint and display choice before one atomic save.
 Pi Chat does not read your OS username, Git identity, cwd, repository, or Pi session to fill these values.
 Cancelling creates neither identity settings nor network activity.
 
-A successful remembered join stores the room and `chat` surface atomically.
-On the next Pi start, Pi Chat reconnects and reopens the full composer without another command.
-If you intentionally press Escape or Ctrl+C to return to Pi, it remembers the `pi` surface instead: the next start reconnects in the background and leaves the Pi editor focused.
+A remembered join stores the room and `chat` surface atomically.
+On the next Pi start, Pi Chat reconnects and opens the full composer without another command.
+If you press Escape or Ctrl+C to return to Pi, it remembers the `pi` surface instead.
+The next start then reconnects in the background and keeps the Pi editor focused.
 
 While connected, `/chat` opens the state-aware manager.
 **Open chat in <room>** is selected first, followed by participants, private invite, settings, status, help, and **Leave and forget room** last.
@@ -85,7 +87,7 @@ Inside the dedicated chat composer:
 - `Escape` or `Ctrl+C` returns to Pi/LLM without leaving the room or discarding the chat draft.
 
 The composer retains the draft when no authenticated direct neighbor is available or a relay reaches zero neighbors.
-A successful local message reports how many direct neighbors accepted the first relay; it does not claim room-wide delivery.
+A successful local send reports how many direct neighbors accepted the first relay, not room-wide delivery.
 Signed events may arrive over multiple paths, but each client displays and forwards one `originPublicKey:eventId` only once while it remains in the bounded deduplication window.
 Pi Chat never claims exactly-once delivery, delivery receipts, or offline retry.
 
@@ -218,7 +220,7 @@ Hyperswarm's default DHT depends on public bootstrap infrastructure. “P2P” d
 NAT, UDP blocking, enterprise firewalls, bootstrap availability, peer churn, or a partitioned sparse overlay can prevent connectivity or delivery.
 Pi Chat performs bounded refresh and reconnect work but cannot promise a connection or room-wide delivery.
 
-## 🔒 Privacy, security, and recovery
+## 🔒 Security and privacy
 
 - Noise encrypts direct transport, but DHT infrastructure and direct peers may observe IP addresses, timing, and topic participation metadata.
   Pi Chat does not provide anonymity.
@@ -234,6 +236,8 @@ Pi Chat performs bounded refresh and reconnect work but cannot promise a connect
 - Pi Chat never sends cwd, repository data, Git remotes, Pi sessions, prompts, models, files, or agent output unless a user manually types that information into chat.
 - Chat messages never call Pi message APIs and never enter model context or the main transcript.
 - Deleting `pi-chat.json` loses identity continuity and produces a new fingerprint on the next confirmed join.
+
+### Recovery
 
 If an ordinary join fails, Pi Chat tears down partially opened discovery and sockets and preserves the previous valid settings.
 If startup restore fails, the remembered room is kept and `/chat` shows Retry, Join another room, and Forget recovery actions instead of retrying forever.
@@ -257,10 +261,10 @@ The current experimental release intentionally omits:
 - more than 256 tracked remote participants or 8 direct neighbors per client;
 - automatic transfer of chat content into the Pi editor, transcript, or model context.
 
-The joined room uses a persistent read-only widget while the normal Pi view is active.
-Selecting **Reply in <room>** temporarily opens the full custom chat view instead of a small floating window.
+A joined room uses a persistent read-only widget while the normal Pi view is active.
+Selecting **Reply in <room>** opens the full chat view instead of a small floating window.
 Closing it returns to Pi and the dock without leaving the room.
-The dock and composer reduce message rows before hiding room, connectivity, or input-target status.
+On short terminals, the dock and composer reduce message rows before hiding room, connectivity, or input-target status.
 
 Pi's public extension widget API does not provide generic mouse hit-testing, so the dock is not clickable and Pi Chat registers no global shortcut.
 `/chat` remains the menu-first entrypoint.

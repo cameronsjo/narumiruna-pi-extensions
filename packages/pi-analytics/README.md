@@ -6,16 +6,16 @@
 > This extension is experimental.
 > Its metrics, storage format, and dashboard may change between releases.
 
-See local model, skill, tool, and provider reliability metrics without storing conversation or tool content or sending analytics elsewhere.
+Measure local model, skill, tool, and provider reliability activity without storing conversation or tool content or sending analytics elsewhere.
 
 ## ✨ Features
 
 - Collects content-free metrics automatically after installation.
-- Counts settled response cycles, logical LLM calls, skill activations, tool activity, and observed provider errors.
-- Breaks down tool failures, duration, model attribution, and response-level call distributions.
-- Distinguishes recovered provider errors from terminal failures.
+- Counts settled response cycles, logical LLM calls, skill activations, tool calls, and observed provider errors.
+- Reports tool failures and duration, model attribution, and per-response call distributions.
+- Separates recovered provider errors from terminal failures.
 - Provides Today, rolling 7-day, rolling 30-day, and all-time views through `/analytics`.
-- Stores private versioned JSONL locally, isolates concurrent writers, and never starts an analytics server.
+- Stores private, versioned JSONL locally, isolates concurrent writers, and does not start an analytics server.
 
 ## 📦 Install
 
@@ -40,7 +40,8 @@ pi -e ./packages/pi-analytics
 
 The package declares `dist/index.ts`, so an unbuilt local checkout must run the build before Pi loads the package directory.
 
-The storage implementation uses Node's built-in filesystem APIs and has no native database dependency.
+The extension uses Node's built-in filesystem APIs and has no native database dependency.
+Pi extensions run with the Pi process's user permissions, so install only trusted packages.
 
 ## 🚀 Quick start
 
@@ -65,41 +66,41 @@ Provider errors                     4
 Recovered errors                    3
 ```
 
-Use the menu to change the time range or browse Skills, Tools, Provider reliability, Response cycles, and Data & privacy.
-Only fully settled cycles are included; active work is omitted.
+Use the menu to change the range or inspect Skills, Tools, Provider reliability, Response cycles, and Data & privacy.
+The dashboard includes finalized cycles and omits active work.
 
 ## 📐 Metric definitions
 
 ### Response cycles and LLM calls
 
-A **response cycle** starts when Pi begins agent work and ends at `agent_settled`.
-Automatic retries, overflow-compaction recovery, tool follow-ups, and queued continuations before settlement stay in that cycle.
+A **response cycle** starts when Pi begins agent work and normally ends at `agent_settled`.
+Retries, overflow-compaction recovery, tool follow-ups, and queued continuations before settlement remain in that cycle.
 
 An **LLM call** is one logical provider generation.
-A provider may make several HTTP attempts inside it, so `429 → 429 → 200` is one LLM call, three observed HTTP responses, two provider errors, and a recovered generation.
+A provider can make several HTTP attempts within it, so `429 → 429 → 200` counts as one LLM call, three observed HTTP responses, two provider errors, and one recovered generation.
 
 ### Skills
 
-An activation is **User initiated** when an observed interactive or RPC `/skill:<name>` input is associated with an active or subsequently started response cycle.
+An activation is **User initiated** when an observed interactive or RPC `/skill:<name>` input belongs to an active or subsequently started response cycle.
 This includes skill commands queued while Pi is streaming.
-It is **Model initiated** when the built-in `read` tool successfully loads the exact canonical `SKILL.md` path Pi discovered.
-A skill is counted at most once per response cycle, and explicit user use takes precedence.
+It is **Model initiated** when Pi's built-in `read` tool successfully loads the exact canonical `SKILL.md` path Pi discovered.
+Each skill counts at most once per response cycle, with explicit user use taking precedence.
 
-Pi does not expose a first-class skill-invocation event or a post-chain acceptance event for input observers.
-Non-standard loading such as `bash` plus `cat SKILL.md`, unsuccessful reads, and provider behavior invisible to Pi are not counted.
+Pi does not expose a first-class skill-invocation event or post-chain acceptance event to input observers.
+The extension does not count unsuccessful reads, provider behavior hidden from Pi, or non-standard loading such as `bash` plus `cat SKILL.md`.
 
 ### Tools
 
 A tool call starts at Pi's `tool_execution_start` event and finishes at `tool_execution_end`.
 The extension stores the tool name, model attribution, timing, completion state, and final error flag.
-It cannot reliably distinguish another extension blocking a call from every other tool error, so both appear as errors.
+Pi does not expose enough information to distinguish a call blocked by another extension from other tool errors, so both count as errors.
 
 ### Provider reliability
 
-Pi exposes HTTP responses and final assistant failures, not every provider-SDK transport retry.
-The dashboard therefore labels these values as **observed provider errors**.
-It reports HTTP 429 and 5xx counts; conservative DNS, timeout, connection, TLS, network, and provider categories; recovered errors; and terminal failures.
-Error messages are classified in memory and discarded.
+Pi exposes HTTP responses and final assistant failures, but not every provider-SDK transport retry.
+The dashboard therefore calls these values **observed provider errors**.
+It reports HTTP 429 and 5xx counts, conservative error categories, recovered errors, and terminal failures.
+Raw error messages are classified in memory and discarded.
 
 ## 💬 Commands
 
@@ -108,14 +109,13 @@ Error messages are classified in memory and discarded.
 ```
 
 The command accepts no arguments.
-TUI mode uses the full dashboard; RPC mode adapts the same standard screens to dialogs.
-Print and JSON modes reject the interactive command observably instead of writing ad hoc protocol output.
+TUI mode shows the full dashboard, and RPC mode adapts the same screens to dialogs.
+Print and JSON modes reject the command before reading analytics data.
 
 The root menu contains Change time range, Skills, Tools, Provider reliability, Response cycles, Data & privacy, and Close.
-Skills and Tools are searchable browse views with details and model breakdowns.
-Escape goes Back from nested screens and closes the root.
-Ctrl+C closes the menu.
-Data deletion uses Pi TUI Kit's standalone confirmation: Back keeps the dashboard open, Ctrl+C closes it in TUI mode, and cancellation never clears data.
+Skills and Tools provide searchable details and model breakdowns.
+Escape goes back from nested screens and closes the root, while Ctrl+C closes the menu.
+Deleting data requires confirmation; Back keeps the dashboard open, Ctrl+C closes it in TUI mode, and cancellation leaves data unchanged.
 
 ## 🔒 Security and privacy
 
@@ -138,23 +138,26 @@ Provider-supplied tool-call IDs are replaced with local ordinals before publicat
 
 The extension does **not** store prompts, responses, thinking content, tool arguments or results, raw error messages, HTTP headers, cwd/project/file paths, session names or IDs, or credentials.
 
-Each settled response is one versioned, newline-terminated frame.
+Each finalized response cycle is one versioned, newline-terminated frame.
 Frames larger than 1 MiB are dropped.
-Local writes receive a 500 ms cancellation deadline; Node filesystem cancellation is best-effort, so an operating-system request that has already begun may still finish.
+Local writes receive a 5-second cancellation deadline.
+Node filesystem cancellation is best-effort, so an operating-system request that has begun may still finish.
 The extension reports the first failed or timed-out write and a later recovery without exposing filesystem errors.
 
 `/analytics` streams and validates the active generation, checks cancellation between files and records, and periodically yields to the event loop.
-A crash-truncated final frame is ignored; completed malformed frames and unsupported format versions fail closed without replacing existing files.
+It ignores a crash-truncated final frame.
+Completed malformed frames and unsupported format versions fail closed without replacing existing files.
 
 ### Clear analytics data
 
-Choose **Data & privacy → Clear analytics data…** to atomically publish a fresh active generation.
-Other Pi processes observe that generation before their next write.
-Records racing with Clear may land immediately before or after the generation switch.
+Choose **Data & privacy → Clear analytics data…** to publish a fresh active generation atomically.
+Other Pi processes observe it before their next write.
+A record racing with Clear can land immediately before or after the switch.
 
-The extension then removes the previous generation.
-If another process still has an obsolete file in use, Clear remains logically complete and reports that physical cleanup is incomplete; stop other Pi processes and clear again.
-Clearing files is not a secure-erasure guarantee for underlying storage media.
+The extension then removes obsolete generations.
+If another process still uses an obsolete file, Clear reports incomplete physical cleanup but the logical clear remains complete.
+Stop other Pi processes and clear again to retry cleanup.
+File deletion does not guarantee secure erasure from the storage medium.
 
 ## 🧭 Legacy SQLite data
 
@@ -165,7 +168,7 @@ Versions that used Turso/SQLite stored data in:
 <pi-agent-directory>/pi-analytics.db-wal
 ```
 
-The JSONL version deliberately does not open, import, migrate, delete, or rewrite those files, so startup cannot re-enter the old native database path.
+The JSONL version does not open, import, migrate, delete, or rewrite these files.
 New analytics start empty.
 
 If legacy history matters, stop every old Pi process first and preserve both files together.

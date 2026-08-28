@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-statusline)](https://www.npmjs.com/package/@narumitw/pi-statusline) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-Add an opinionated Powerline-style footer that works without setup and keeps the most useful Pi, workspace, Git, usage, and time context visible as the terminal narrows.
+Add a Powerline-style footer that works without setup and keeps important Pi, workspace, Git, usage, and time context visible as the terminal narrows.
 
 A representative uncolored layout:
 
@@ -20,13 +20,9 @@ A representative uncolored layout:
 - Loads a generated split runtime to reduce Pi package startup work.
 
 > **Need more customization?**
-> See
-> [`pi-starship`](https://github.com/narumiruna/pi-extensions/tree/main/packages/pi-starship) ([npm](https://www.npmjs.com/package/@narumitw/pi-starship)).
-> It uses a
-> [Starship-inspired](https://starship.rs/) TOML format and style syntax for deeper control over layout, modules, and colors.
+> See [`pi-starship`](https://github.com/narumiruna/pi-extensions/tree/main/packages/pi-starship) ([npm](https://www.npmjs.com/package/@narumitw/pi-starship)).
+> It uses [Starship-inspired](https://starship.rs/) TOML and style syntax for deeper control over layout, modules, and colors.
 > Choose `pi-statusline` for practical defaults and quick setup.
->
-> Do not enable both extensions at the same time because both own Pi's footer.
 
 ## 📦 Install
 
@@ -47,9 +43,8 @@ npm --workspace @narumitw/pi-statusline run build
 pi -e ./packages/pi-statusline
 ```
 
-The package declares `dist/index.ts`, so an unbuilt local checkout must run the build before Pi loads the package directory.
-
-For the best result, use a terminal font that includes Powerline glyphs and emoji.
+The package declares `dist/index.ts`, so build an unbuilt local checkout before Pi loads the package directory.
+Install only from sources you trust because Pi extensions run with Pi's permissions.
 
 ## 🚀 Quick start
 
@@ -69,15 +64,14 @@ Help
 | Menu item | What it does |
 | --- | --- |
 | **Appearance** | Preview palettes with Up/Down; Enter applies and Escape cancels |
-| **Information** | Preview and apply a curated set of segments |
+| **Information** | Preview and apply a curated segment set |
 | **Advanced** | Open Custom layout or Edit settings JSON |
 | **Status** | Show the effective source, path, appearance, layout, and diagnostics |
 | **Help** | Show command and schema guidance |
 
 ### Information levels
 
-Selecting a level replaces only the `segments` array.
-Unknown and unrelated JSON fields are preserved.
+Selecting a level replaces only `segments` and preserves unrelated JSON fields.
 
 | Level | Included segments |
 | --- | --- |
@@ -99,10 +93,10 @@ The `tools` segment takes no space while idle.
 | `/statusline help` | Show command and schema guidance |
 
 The direct `settings`, `status`, and `help` routes remain for compatibility.
-The root standard menu is TUI-only; Escape returns from Advanced or closes Main.
-RPC receives observable notifications instead of TUI-only controls.
+The main menu is TUI-only; Escape returns from Advanced or closes the menu.
+RPC receives notifications instead of TUI-only controls.
 Unknown subcommands and trailing arguments are rejected.
-The standard palette picker owns navigation and cleanup while pi-statusline still owns footer previews, settings, and rollback.
+The standard palette picker owns navigation and cleanup; pi-statusline owns footer previews, settings, and rollback.
 The width-aware layout editor and JSON editor remain specialized UI.
 
 ## 📐 Runtime behavior
@@ -155,7 +149,7 @@ The extension uses one user-level file:
 ```
 
 There are no project or environment overrides.
-When the file is absent, pi-statusline uses its built-in defaults without creating the file or parent directory.
+When the file is absent, pi-statusline uses built-in defaults without creating the file or its parent directory.
 The first successful settings save creates a complete editable document atomically.
 Malformed or unreadable settings are never overwritten.
 Settings reload on startup, `/reload`, and session replacement.
@@ -177,8 +171,8 @@ If both files exist, `pi-statusline.json` wins.
 
 All fields are optional in an existing document.
 Missing fields use defaults.
-Unknown fields produce a warning but are preserved by menu saves.
-Invalid recognized values block saving, leaving the previous file and live footer unchanged.
+Menu saves warn about and preserve unknown fields.
+Invalid recognized values block saving and leave the file and live footer unchanged.
 
 A compact customization example:
 
@@ -260,7 +254,8 @@ The direction names the removed portion:
 Truncation runs after the built-in Claude/GPT shortening rules but before the configured model prefix and suffix.
 It changes display only—the provider model ID is untouched.
 Terminal control sequences in model IDs are removed at render time, and unsafe configured symbols are rejected.
-An empty `truncationSymbol` truncates without a marker. pi-statusline treats model IDs as opaque strings and does not parse paths, repositories, GGUF suffixes, or quantization names.
+An empty `truncationSymbol` truncates without a marker.
+pi-statusline treats model IDs as opaque strings and does not parse paths, repositories, GGUF suffixes, or quantization names.
 At very narrow widths, the existing responsive priorities may still omit the model rather than overflow the terminal.
 
 ## 🧩 Advanced layout
@@ -280,7 +275,8 @@ Open **Advanced → Custom layout** when the curated levels are not enough.
 | Ctrl+C | Close the screen immediately, including from Move mode |
 
 The layout displays the effective Back key and keeps Ctrl+C available when Back is remapped.
-Every successful change saves and applies immediately; closing the screen does not roll it back.
+Every successful change saves and applies immediately.
+Closing the screen does not roll it back.
 
 Available data segments:
 
@@ -301,12 +297,11 @@ Manually authored leading/trailing breaks represent empty rows.
 ```
 
 An empty `segments` array hides the main powerline while extension statuses can still render.
-The extension intentionally has no variable or format language; use `pi-starship` when you need one.
 
 ## 🔌 Extension statuses and icons
 
 Other extension statuses appear below the main powerline, wrap to terminal width, and are limited to five items.
-Icons resolve in this order:
+Icons use this order:
 
 1. Exact configured raw key, such as `goal` or `foo:server`.
 2. Longest configured colon wildcard, such as `foo:*` or `foo:server:*`.
@@ -327,11 +322,17 @@ For interoperable extensions, prefer one aggregated key or a stable coexistence 
 <extension-id>:<stable-slot>
 ```
 
-Put transient activity in the value and always clear the same complete key.
+Put transient activity in the value, and clear the exact key that was set.
+
+## 🚧 Limitations
+
+- The footer needs Powerline glyphs and emoji for its intended appearance.
+- Pi does not arbitrate footer ownership, so another footer extension can replace pi-statusline.
+- Custom layouts support ordered segments and line breaks, not a variable or format language.
 
 ## 🛠️ Troubleshooting
 
-- **Powerline symbols look wrong:** use a font with Powerline glyphs; emoji support is also recommended.
+- **Powerline symbols look wrong:** use a font with Powerline glyphs and emoji support.
 - **The footer reports settings warnings:** run `/statusline status`, then `/statusline settings` to fix invalid recognized fields.
 - **The footer appears to be replaced:** disable `pi-starship` or another extension that also calls Pi's `setFooter()`.
 - **A custom segment disappears on a narrow terminal:** check the responsive priority above or add an explicit `line_break`.

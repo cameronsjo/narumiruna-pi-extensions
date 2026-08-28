@@ -2,9 +2,8 @@
 
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-lsp)](https://www.npmjs.com/package/@narumitw/pi-lsp) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-Give Pi targeted Language Server Protocol diagnostics and source fixes without running a full-project check for every intermediate edit.
-
-Configure any language server by command and file extension instead of using hard-coded language families.
+Give Pi targeted Language Server Protocol diagnostics and source fixes during an edit.
+Configure language servers by command and file extension instead of relying on hard-coded language families.
 
 ## ✨ Features
 
@@ -13,37 +12,6 @@ Configure any language server by command and file extension instead of using har
 - Exposes `lsp_diagnostics` for exact ranges and `lsp_fix` for supported source actions.
 - Supports workspace roots, bounded discovery, per-call server overrides, and preview-or-write edits.
 - Starts servers only for tool calls, shuts them down afterward, and shows activity only while they run.
-
-## 🎯 When to use pi-lsp
-
-Use pi-lsp when an LSP can answer a targeted question about the files being edited faster than the project's authoritative validation commands.
-It is most useful when:
-
-- a full-project lint or typecheck is slow, but only a few files need intermediate feedback;
-- structured diagnostics with exact ranges and severity are easier to act on than CLI output;
-- a language server provides a useful source action such as `source.fixAll` or `source.organizeImports`;
-- a multi-language repository benefits from one configurable interface for targeted diagnostics.
-
-For most repositories, first document the authoritative format, lint, typecheck, build, and test commands in `AGENTS.md`, then enforce them with pre-commit hooks or CI where appropriate.
-If those commands are already fast and reliable, pi-lsp may add little value.
-
-A practical workflow is:
-
-1. Use `lsp_diagnostics` during an edit only when targeted feedback is useful.
-2. Optionally use `lsp_fix` for a supported server-provided source action.
-3. Before considering the task complete, run the repository's authoritative validation commands.
-4. Treat pre-commit hooks and CI as the final enforcement layer.
-
-### Current limitations
-
-- Diagnostics are not continuously injected into the conversation; the agent must call `lsp_diagnostics`.
-- Language servers start and stop for each tool call, so pi-lsp does not retain an editor-like incremental session.
-- The current tools expose diagnostics and source code actions, not symbol navigation, references, or semantic rename.
-- A clean LSP result does not replace the project's formatter, linter, type checker, build, or tests.
-- This project has not yet demonstrated through benchmarks that LSP improves agent task success, latency, or tool usage.
-
-This outcome-first framing is informed by [Eric Traut's comment on LSP integration for coding agents](https://github.com/openai/codex/issues/8745#issuecomment-3713058579).
-The comment explains that the protocol was not designed specifically for coding agents and that repository-native checks may already provide much of the desired verification value.
 
 ## 📦 Install
 
@@ -64,20 +32,44 @@ npm --workspace @narumitw/pi-lsp run build
 pi -e ./packages/pi-lsp
 ```
 
-The package declares `dist/index.ts`, so an unbuilt local checkout must run the build before Pi loads the package directory.
+The package declares `dist/index.ts`, so Pi cannot load an unbuilt local checkout.
+Pi extensions run with your user permissions.
+Review extension source before installing it.
 
 ## 🚀 Quick start
 
-Install at least one supported language server on `PATH`, then run `/lsp` to inspect command availability.
+Install at least one language server from the built-in catalog on `PATH`, then run `/lsp` to check command availability.
 The agent can call `lsp_diagnostics` for targeted diagnostics and `lsp_fix` for supported source actions.
+
+## 🎯 When to use pi-lsp
+
+Use pi-lsp when a language server can answer a targeted question about the files being edited faster than the project's authoritative checks.
+It is most useful when:
+
+- a full-project lint or typecheck is slow, but only a few files need intermediate feedback;
+- exact diagnostic ranges and severity are easier to act on than CLI output;
+- a server provides a useful source action such as `source.fixAll` or `source.organizeImports`;
+- a multi-language repository benefits from one configurable diagnostics interface.
+
+First document the repository's authoritative format, lint, typecheck, build, and test commands in `AGENTS.md`.
+Use pi-lsp for intermediate feedback, then run those authoritative commands before declaring the task complete.
+If the repository checks are already fast and reliable, pi-lsp may add little value.
+
+A practical workflow is:
+
+1. Call `lsp_diagnostics` when targeted feedback is useful.
+2. Optionally call `lsp_fix` for a server-supported source action.
+3. Run the repository's authoritative validation commands before completion.
+4. Use pre-commit hooks and CI as the final enforcement layer.
 
 ## ⚙️ Settings
 
-If no config is provided, pi-lsp ships a broad catalog of direct-command defaults.
-Servers are started only when matching files are requested. pi-lsp does not download language servers, so install the commands you need and make them available on `PATH`.
-During no-config diagnostics, unavailable default commands are filtered before workspace discovery.
-If none can run, diagnostics completes successfully and reports the skipped servers.
-Explicitly selected or custom-configured missing commands still report an error.
+Without a config file, pi-lsp uses the built-in direct-command catalog below.
+pi-lsp does not download language servers, so install the commands you need and put them on `PATH`.
+A server starts only when a tool call requests a matching file.
+With the built-in catalog, diagnostics skips unavailable default commands before workspace discovery.
+If no default command can run, diagnostics succeeds and reports the skipped servers.
+An explicitly selected or custom-configured missing command still reports an error.
 
 | Language or format | Default server | Startup command | Extensions |
 | --- | --- | --- | --- |
@@ -119,18 +111,20 @@ go install golang.org/x/tools/gopls@latest
 
 Ensure the Go install directory (`$GOBIN` or `$(go env GOPATH)/bin`) is also on `PATH`.
 
-Custom config is resolved in this order:
+pi-lsp resolves configuration in this order:
 
 1. `<workspace>/.pi/pi-lsp.json`, only when Pi trusts the current project
 2. `~/.pi/agent/pi-lsp.json`
 3. the built-in server catalog
 
-An untrusted project's canonical and legacy files are ignored.
-A `root` passed to an LSP tool selects files and the server working directory; it does not grant that directory authority to provide project settings.
+pi-lsp ignores both project files when Pi does not trust the project.
+A tool's `root` selects files and the server working directory; it does not authorize that directory's project settings.
 Project settings always come from the trusted Pi session workspace.
 
-Compatibility: user-scoped `lsp.json` and trusted project-scoped `.pi/lsp.json` remain readable with a warning and are never modified automatically; rename them to their canonical `pi-lsp.json` names.
-New paths take precedence when both names exist.
+For compatibility, pi-lsp still reads user-scoped `lsp.json` and trusted project-scoped `.pi/lsp.json` with a warning.
+It never modifies legacy files automatically.
+Rename them to their canonical `pi-lsp.json` names.
+Canonical paths take precedence when both names exist.
 
 pi-lsp-specific environment settings have been removed.
 Move their values into canonical JSON:
@@ -141,9 +135,9 @@ Move their values into canonical JSON:
 | `PI_LSP_CONFIG=/path/to/file.json` | Move or copy that configuration to one of the canonical paths above |
 | `PI_<SERVER>_LSP_COMMAND` | Set the server's `command` to an argv array, with one string per executable or argument |
 
-`servers[].env` remains supported because it configures the launched LSP child process rather than pi-lsp itself.
+`servers[].env` remains supported because it configures the launched language-server process, not pi-lsp.
 
-Providing custom config replaces the default server map.
+Any custom config replaces the entire built-in server map.
 The following `pi-lsp.json` example intentionally keeps five selected servers:
 
 ```json
@@ -292,7 +286,26 @@ Parameters:
 /lsp
 ```
 
-Shows configured LSP commands and whether each command is available on `PATH`.
+In TUI and RPC modes, it shows each configured LSP command and whether it is available on `PATH`.
+For compatibility, `/lsp` ignores command arguments.
+
+## 🔒 Security and privacy
+
+pi-lsp starts configured language-server commands with your user permissions.
+User config is trusted input, and project config is used only when Pi trusts the current project.
+Review every configured command, argument, environment value, and initialization option before using it.
+A server process inherits Pi's environment and receives any `servers[].env` overrides.
+
+## 🚧 Limitations
+
+- Diagnostics are not injected continuously; the agent must call `lsp_diagnostics`.
+- Language servers start and stop for each tool call, so pi-lsp does not keep an editor-like incremental session.
+- The tools provide diagnostics and source code actions, not symbol navigation, references, or semantic rename.
+- A clean LSP result does not replace the repository's formatter, linter, type checker, build, or tests.
+- This project has not demonstrated through benchmarks that LSP improves agent task success, latency, or tool use.
+
+This guidance is informed by [Eric Traut's comment on LSP integration for coding agents](https://github.com/openai/codex/issues/8745#issuecomment-3713058579).
+The comment notes that repository-native checks may already provide much of the useful verification.
 
 ## 🗂️ Package layout
 
@@ -312,6 +325,7 @@ packages/pi-lsp/
 │   ├── runner.ts
 │   ├── text-edits.ts
 │   └── types.ts
+├── test/
 ├── README.md
 ├── LICENSE
 ├── tsconfig.json

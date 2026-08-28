@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-ticker)](https://www.npmjs.com/package/@narumitw/pi-ticker) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-Show configurable Yahoo Finance market quotes in a width-aware widget above Pi's editor.
+Pi Ticker shows configurable Yahoo Finance quotes in a width-aware widget above Pi's editor.
 
 ## ✨ Features
 
@@ -11,7 +11,7 @@ Show configurable Yahoo Finance market quotes in a width-aware widget above Pi's
 - Packs complete ticker entries into rows that fit the current terminal width.
 - Provides searchable TUI and RPC menus for adding, removing, and reordering symbols.
 - Persists widget visibility and the ordered symbol list in user settings.
-- Refreshes every 30 seconds while enabled and marks the last successful quote stale after a partial failure.
+- Refreshes every 30 seconds while enabled, keeps successful results, and marks failed symbols' previous quotes stale.
 - Cancels polling, in-flight requests, and active menus during reload, session replacement, and shutdown.
 
 ## 📦 Install
@@ -43,7 +43,7 @@ Extensions run with Pi's permissions, so install only trusted packages.
 
 ## 🚀 Quick start
 
-Run Pi in TUI mode and open the ticker manager:
+Open the ticker manager in TUI mode:
 
 ```text
 /ticker
@@ -57,26 +57,28 @@ The widget appears after the settings save and the first quote request completes
 
 `/ticker` opens **Manage tickers** in TUI and RPC modes.
 
-TUI mode keeps search, symbol removal, direct add, widget visibility, and refresh actions on one screen.
+In TUI mode, one screen provides search, symbol removal, direct add, widget visibility, and refresh actions.
 
 The configured confirm binding or Space activates the focused row.
 
-An unmatched valid search changes the add row to **Add SYMBOL** so the symbol can be added directly.
+When a valid search has no match, the add row changes to **Add SYMBOL** for direct addition.
 
 `Shift+Up` and `Shift+Down` reorder the focused ticker when the search field is empty and those keys do not conflict with configured standard bindings.
 
 RPC mode exposes portable dialogs for choosing and moving a ticker.
 
-Every accepted change saves immediately, and a failed save restores the previous displayed and effective value.
+Each accepted change saves immediately.
 
-Removing the final ticker hides the widget and stops polling.
+If a save fails, the manager restores the previous displayed and effective value.
+
+Removing the final symbol hides the widget and stops polling.
 
 Escape closes transient TUI flows, and `Ctrl+C` remains a hard-close path.
 
 ## 💬 Commands
 
 - `/ticker` opens the ticker manager.
-- `/ticker <SYMBOL ...>` replaces the ordered symbol list and refreshes quotes.
+- `/ticker <SYMBOL ...>` replaces the complete ordered symbol list and refreshes quotes.
 - `/ticker refresh` refreshes quotes immediately when the widget is enabled.
 - `/ticker help` shows direct-command usage.
 - `/ticker reset` reports that no default symbol list exists and leaves settings unchanged.
@@ -105,7 +107,7 @@ The extension does not read project settings or extension-specific environment-v
 
 A missing file uses an empty symbol list, keeps the widget enabled, and does not create the file, its parent directory, or a polling task.
 
-The file must contain a JSON object with these optional fields:
+The settings file must contain a JSON object with these optional fields:
 
 | Field | Accepted values | Default | Behavior |
 | --- | --- | --- | --- |
@@ -127,7 +129,9 @@ Example:
 
 Unknown JSON fields are preserved during saves.
 
-Malformed or invalid settings are reported, ignored at runtime, and never overwritten by the extension.
+Malformed or invalid settings use runtime defaults and leave the file unchanged.
+
+Pi shows a warning when UI is available.
 
 Writes are ordered within one Pi process and published through a temporary file plus atomic rename.
 
@@ -139,13 +143,13 @@ Settings reload on startup and `/reload`.
 
 ## 🔒 Security and privacy
 
-The extension requests public chart metadata from Yahoo Finance over HTTPS without an API key.
+The extension requests public quote metadata from Yahoo Finance over HTTPS without an API key.
 
 Requested ticker symbols and the host network address are visible to Yahoo Finance.
 
 The user settings file contains only ticker symbols and widget visibility; it stores no credential or secret.
 
-Ticker symbols and quote data are shown locally and are not added to model context by this extension.
+The extension displays ticker symbols and quote data locally without adding them to model context.
 
 ## 🚧 Limitations
 
@@ -155,7 +159,7 @@ Quotes may be delayed and are not suitable for trading decisions.
 
 Each request times out after 10 seconds, and one symbol failure does not discard successful symbols.
 
-The polling queue is owned by one Pi session and is not shared across Pi processes.
+Each Pi session owns its polling queue, and separate Pi processes do not share one.
 
 ## 🗂️ Package layout
 
@@ -185,5 +189,4 @@ Pi extension, market quotes, stock ticker, Yahoo Finance, editor widget, termina
 
 ## 📄 License
 
-MIT.
-See [`LICENSE`](./LICENSE).
+[MIT](./LICENSE)

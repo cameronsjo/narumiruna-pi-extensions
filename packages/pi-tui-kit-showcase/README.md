@@ -6,30 +6,31 @@
 > Pi TUI Kit Showcase is experimental and private.
 > It is a local maintainer demo, not a published extension.
 
-Preview the public `@narumitw/pi-tui-kit` screens and standalone interactions in one local interactive demo.
+This local maintainer demo previews the public `@narumitw/pi-tui-kit` screens and standalone interactions in one menu.
 
-The showcase uses only in-memory state and stores no settings.
+All demo state stays in memory, and the showcase writes no settings.
 
 ## ✨ Features
 
-- Demonstrates action, detail, browse, choice, settings, input, review, and multi-select screens.
-- Demonstrates standalone questionnaire, task, confirmation, and live-choice interactions from the same menu.
-- Covers disabled rows, busy labels, search, exact documents, adaptive review, bulk actions, and row descriptions.
-- Shows the shared top and bottom horizontal rules across every standard screen at normal terminal heights.
-- Keeps all effects in memory inside the demo process.
+- Includes action, detail, browse, choice, settings, input, review, and multi-select screens.
+- Includes standalone questionnaire, task, confirmation, and live-choice interactions.
+- Demonstrates disabled rows, busy labels, search, exact documents, adaptive review, bulk actions, and row descriptions.
+- Shows the shared top and bottom rules on every standard screen at normal terminal heights.
+- Keeps every demo effect in memory.
 - Loads the Kit runtime only after `/tui-kit-showcase` runs.
 
 ## 📦 Install
 
 This package is private and is not meant for npm publication.
 
-Load it from a local checkout:
+Build Kit, then load only this extension from a local checkout:
 
 ```bash
+npm run build --workspace @narumitw/pi-tui-kit
 pi --no-extensions --no-skills --no-session -e ./packages/pi-tui-kit-showcase
 ```
 
-The repository shortcut builds Kit first and then loads only this showcase extension:
+The repository shortcut runs the same build before opening the showcase:
 
 ```bash
 just showcase-tui-kit
@@ -43,21 +44,21 @@ Run this command in Pi TUI mode:
 /tui-kit-showcase
 ```
 
-Choose any row to inspect a presentation pattern.
+Choose a row to inspect its screen or interaction pattern.
 
-The standalone questionnaire, task, confirmation, and live-choice rows close the menu, show the standalone interaction, then reopen the menu when the interaction finishes.
+Questionnaire, task, confirmation, and live-choice rows temporarily close the menu and reopen it after the interaction finishes.
 
 RPC mode reports that the showcase requires TUI mode.
 
-Print and JSON modes reject the command without writing ad hoc output.
+Print and JSON modes reject the command without ad hoc output.
 
 ## ⚙️ Settings
 
 The showcase has no extension-owned settings file.
 
-The **Settings screen** row edits in-memory demo values only.
+The **Settings screen** row changes only in-memory demo values.
 
-Those values reset when the command starts again or the session owner is replaced.
+Those values reset when the command runs again or Pi replaces the session owner.
 
 ## 💬 Commands
 
@@ -67,7 +68,7 @@ Opens the showcase menu in TUI mode.
 
 The command accepts no arguments.
 
-Unknown arguments are rejected with usage text.
+Any argument is rejected with `Usage: /tui-kit-showcase`.
 
 ## 🗂️ Package layout
 

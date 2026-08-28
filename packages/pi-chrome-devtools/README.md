@@ -2,56 +2,62 @@
 
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-chrome-devtools)](https://www.npmjs.com/package/@narumitw/pi-chrome-devtools) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-Let Pi inspect browser tabs, navigate pages, evaluate JavaScript, and capture screenshots through native Chrome DevTools Protocol tools.
+Inspect browser tabs, navigate pages, evaluate JavaScript, and capture screenshots from Pi through the Chrome DevTools Protocol.
 
-Use it for web debugging, UI validation, and browser-assisted investigation without running an MCP server.
+Use these native Pi tools for web debugging, UI validation, and browser-assisted investigation without an MCP server.
 
-The design is inspired by [`chrome-devtools-mcp`](https://github.com/ChromeDevTools/chrome-devtools-mcp), not guaranteed to be compatible with it.
+The design is inspired by [`chrome-devtools-mcp`](https://github.com/ChromeDevTools/chrome-devtools-mcp), but compatibility is not guaranteed.
 
 ## ✨ Features
 
 - Lists and selects inspectable pages, navigates URLs, evaluates JavaScript, and captures PNG screenshots.
-- Reuses an existing CDP endpoint or lazily launches an isolated Chromium-family browser.
-- Recovers from stale page selections and reports actionable browser startup or endpoint errors.
+- Reuses an existing CDP endpoint or launches an isolated Chromium-family browser on first use.
+- Recovers from stale page selections and explains browser startup or endpoint failures.
 - Loads explicitly approved unpacked extensions only in an extension-owned Chrome for Testing or Chromium process.
-- Uses native deferred browser tools when supported and eager exposure otherwise, with availability, setup, status, and help through `/chrome-devtools`.
+- Uses native deferred browser tools when supported and exposes allowed tools eagerly otherwise.
+- Provides availability controls, setup guidance, status, and help through `/chrome-devtools`.
 - Shows compact expandable results and activity only while browser tools are running.
 - Persists reviewed tool availability while keeping browser connection settings machine-owned.
 - Offers opt-in experimental WebMCP discovery and invocation through two fixed gateway tools without dynamically registering page-provided definitions.
 
 ## 📦 Install
 
+Install persistently:
+
 ```bash
 pi install npm:@narumitw/pi-chrome-devtools
 ```
 
-Try without installing permanently:
+Run once from npm:
 
 ```bash
 pi -e npm:@narumitw/pi-chrome-devtools
 ```
 
-Build and try this package locally from the repository root:
+Build and run a local checkout from the repository root:
 
 ```bash
 npm --workspace @narumitw/pi-chrome-devtools run build
 pi -e ./packages/pi-chrome-devtools
 ```
 
-The package declares `dist/index.ts`, so an unbuilt local checkout must run the build before Pi loads the package directory.
+The package declares `dist/index.ts`, so build a local checkout before loading its package directory.
+
+Pi extensions run with your user permissions.
+Review third-party extension source before installing it.
 
 ## 🚀 Quick start
 
-Start Pi and ask the agent to load the Chrome DevTools capability needed for the task.
-The extension first tries `http://127.0.0.1:9222` and otherwise launches an isolated local Chromium-family browser by default.
-Run `/chrome-devtools` to review browser status, settings, help, and available tools.
-Experimental WebMCP remains disabled until the user explicitly enables it.
+Start Pi and ask the agent to load the browser capability needed for the task.
+By default, the extension tries `http://127.0.0.1:9222` and launches an isolated local Chromium-family browser if that endpoint is unavailable.
+Run `/chrome-devtools` to review status, settings, help, and available tools.
+WebMCP remains disabled until you explicitly enable it.
 
 ## 🌐 Browser setup
 
 Without unpacked extensions, the extension first tries `browser.endpoint`, defaulting to `http://127.0.0.1:9222`.
 If that endpoint is unavailable and `browser.autoLaunch` is `true`, it lazily launches an extension-owned browser with an isolated temporary profile and retries the CDP request.
-Existing endpoints are reused and never terminated by the extension.
+The extension reuses existing endpoints and never terminates them.
 
 Configure the canonical user file at `${PI_CODING_AGENT_DIR:-~/.pi/agent}/pi-chrome-devtools.json`:
 
@@ -67,7 +73,7 @@ Configure the canonical user file at `${PI_CODING_AGENT_DIR:-~/.pi/agent}/pi-chr
 
 `browser.endpoint` must be an HTTP origin with an explicit port and no credentials, path, query, or fragment.
 Omitting it keeps attach-first behavior on `127.0.0.1:9222` and lets a managed launch use Chrome's dynamic DevTools port mode (`--remote-debugging-port=0`).
-Explicitly saving an endpoint pins managed launches to that port.
+Saving an explicit endpoint pins managed launches to that port.
 `browser.autoLaunch` defaults to `true`.
 `browser.executablePath` is optional and must be an absolute path; when absent, normal browser discovery applies.
 
@@ -144,7 +150,7 @@ Enable WebMCP only in the canonical user settings file:
 
 A project `pi-chrome-devtools.json` cannot enable WebMCP or weaken confirmation policy.
 The settings menu labels WebMCP as experimental, persists the user-owned boolean atomically, and aborts active WebMCP work before disablement or browser replacement.
-The two gateway tools remain unavailable while the gate is disabled even if an older `tools` array contains their names.
+The two gateway tools remain unavailable while WebMCP is disabled, even if an older `tools` array contains their names.
 After enabling the gate, choose whether each gateway is available through `/chrome-devtools tools` or the main menu.
 
 WebMCP requires a Chrome build whose `/json/protocol` exposes the experimental `WebMCP` domain.
@@ -199,9 +205,9 @@ It never closes user-started browsers or remote endpoints.
 
 ### Tool exposure
 
-All eight tools are registered: one loader, five stable DevTools capabilities, and two fixed experimental WebMCP gateways.
+The extension registers eight tools: one loader, five stable DevTools capabilities, and two fixed experimental WebMCP gateways.
 
-On a model/provider with native deferred-tool support, only `chrome_devtools_load` starts active for this extension.
+With native deferred-tool support, only `chrome_devtools_load` starts active.
 
 The loader accepts a task-oriented `query`, matches it against the five stable capabilities plus enabled WebMCP gateways, and adds matching available tools without removing any active Pi tool.
 
@@ -220,7 +226,7 @@ After a session enters eager exposure, it stays eager across later model switche
 The capability tools omit active-only prompt snippets so native deferred loading does not rebuild the system-prompt prefix.
 
 The saved `tools` array controls which capabilities the extension may expose.
-The `webmcp.enabled` gate is applied before that catalog, so persisted WebMCP names cannot bypass a disabled gate.
+The `webmcp.enabled` gate takes precedence, so persisted WebMCP names cannot bypass a disabled gate.
 Page-provided tool definitions appear only in list results and never alter Pi's provider-visible tool definitions.
 
 An empty array leaves the loader active but makes every browser capability unavailable.
@@ -258,7 +264,7 @@ If the model cannot inspect the inline image, ask it to read the saved path, for
 ```
 
 Opens a menu that shows the tool catalog size, whether that catalog is saved, the configured endpoint, the observed managed-browser state, and any settings or launch warning before you choose an action.
-The five actions stay on one level:
+The menu keeps five actions on one level:
 
 - **Choose available browser tools…** — stage any combination of the five stable capabilities and, when enabled, the two experimental WebMCP gateways, then review the exact available/unavailable result before selecting **Apply tool changes**.
 - **Make all browser tools available…** or **Make all browser tools unavailable…** — preview the context-appropriate bulk change before applying it.
@@ -298,7 +304,7 @@ Compatibility aliases remain available: `toggle` and `select` mean `tools`, `on`
 - `disable` makes all capability tools unavailable and saves the empty catalog; `off` is a compatibility alias.
   The slash command and `chrome_devtools_load` remain available.
 
-The menu, `settings`, `tools`, `help`, `quickstart`, and `status` require TUI or RPC mode so their result is observable.
+The menu, `settings`, `tools`, `help`, `quickstart`, and `status` require TUI or RPC mode.
 TUI uses keyboard navigation and injected Pi keybindings; RPC receives equivalent standard dialogs.
 In print and JSON modes, interactive and informational routes reject explicitly instead of silently opening unavailable UI.
 The immediate `enable`/`disable` routes remain available for deterministic non-interactive use.
@@ -327,6 +333,18 @@ A legacy-only file remains readable with a warning and is never modified automat
 The first subsequent settings save writes the canonical file.
 If both files exist, `pi-chrome-devtools.json` wins and the legacy file is ignored.
 The legacy filename is deprecated and will be removed in a future major release.
+
+## 🔒 Security and privacy
+
+A CDP connection can inspect and change browser content, execute JavaScript, and access the selected browser profile's authenticated pages.
+Connect only to trusted endpoints and profiles.
+
+The extension never closes an external browser.
+It closes only managed browser processes that it started and removes their temporary profiles on a best-effort basis.
+
+Unpacked extensions run privileged browser code and are loaded only into an isolated managed browser after explicit configuration.
+WebMCP page tools use the visible page's authentication and require confirmation before every call.
+Screenshot output is restricted to the current working directory or OS temporary directory as described above.
 
 ## 🧠 Use cases
 

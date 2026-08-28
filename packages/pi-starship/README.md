@@ -2,9 +2,8 @@
 
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-starship)](https://www.npmjs.com/package/@narumitw/pi-starship) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-Build a deeply customizable Pi footer with Starship-style TOML, native Pi modules, conditional formats, palettes, and responsive multiline layout.
-
-No `starship` executable or shell prompt is required because this extension parses and renders the footer itself.
+Build a customizable Pi footer with Starship-style TOML, native Pi modules, conditional formats, palettes, and responsive multiline layout.
+The extension parses and renders the footer itself, so it does not need the `starship` executable or a shell prompt.
 
 > **Different package:** The unscoped npm package `pi-starship` delegates to the Starship binary.
 > This package is `@narumitw/pi-starship` and renders Pi-specific modules natively.
@@ -38,14 +37,34 @@ npm --workspace @narumitw/pi-starship run build
 pi -e ./packages/pi-starship
 ```
 
-The package declares `dist/index.ts`, so an unbuilt local checkout must run the build before Pi loads the package directory.
-
-Do not enable this together with `@narumitw/pi-statusline`: both own Pi's footer, and Pi does not arbitrate that conflict.
+The package declares `dist/index.ts`, so build an unbuilt local checkout before Pi loads the package directory.
+Install only from sources you trust because Pi extensions run with Pi's permissions.
+Do not enable this with `@narumitw/pi-statusline`: both own Pi's footer, and Pi does not arbitrate that conflict.
 
 ## 🚀 Quick start
 
 Start Pi with the extension to use the built-in footer without creating a settings file.
 Run `/starship` to inspect the footer, choose a preset, or customize the configuration.
+
+## 💬 Commands
+
+| Command | Purpose |
+| --- | --- |
+| `/starship` | Open the current-state menu in TUI mode; show help in RPC |
+| `/starship settings` | Edit, preview, and confirm TOML in TUI; show the file path in RPC |
+| `/starship status` | Show the configuration source, path, and diagnostics in TUI or RPC |
+| `/starship help` | Show command and configuration help in TUI or RPC |
+
+The main menu keeps seven actions on one level: **Customize footer**, **Presets**, **Explain footer**, **Modules**, **Configuration**, **Help**, and **Restore built-in…**.
+It shows the current source and configuration health.
+Presets, Explain, Modules, and Configuration are menu-only; they do not add textual subcommands.
+Restore is unavailable when there is no document to replace.
+
+The TOML editor, live footer previews, Explain view, module inspector, and configuration reviews use specialized TUI screens.
+Their content and key hints adapt to terminal width and Pi's configured keybindings.
+Escape returns to the previous screen, while Ctrl+C closes the workflow.
+Direct routes reject trailing arguments.
+Print and JSON modes produce no ad hoc output, and footer lifecycle work runs only in TUI mode.
 
 ## ⚙️ Settings
 
@@ -55,7 +74,7 @@ The only configuration source is:
 <getAgentDir()>/pi-starship.toml
 ```
 
-When this file is absent, the extension uses its readable palette-free default without creating the file or parent directory.
+When this file is absent, the extension uses its palette-free default without creating the file or its parent directory.
 The built-in root is the explicit sequence `$brand$model$thinking$directory` `$git_branch$git_status$activity$context$time`; it does not start the opt-in GitHub PR query.
 The first successful settings save creates the file atomically.
 Existing malformed documents are never overwritten.
@@ -69,24 +88,23 @@ Open the interactive menu in TUI mode:
 ```
 
 Choose **Customize footer** to edit the TOML.
-Closing the editor validates the draft and opens an adaptive, scrollable preview whose **Apply changes…**, **Continue editing**, and **Discard draft** actions remain reachable in short or narrow terminals.
-Saving happens only after a separate confirmation.
-Confirmed changes are atomically saved and applied immediately.
-Manual TOML edits load on the next `session_start`, including `/reload` and session replacement.
-Editor cancellation, preview cancellation, component disposal, invalid drafts, write failures, and runtime application failures preserve the previous file and effective footer.
+Closing the editor validates the draft and opens a scrollable preview with **Apply changes…**, **Continue editing**, and **Discard draft**.
+Saving requires separate confirmation, then atomically updates the file and active footer.
+Manual TOML edits load at the next `session_start`, including `/reload` and session replacement.
+Cancellation, disposal, invalid drafts, write failures, and runtime application failures preserve the previous file and footer.
 
 The shallow main menu also exposes **Presets**, **Explain footer**, **Modules**, **Configuration**, **Help**, and **Restore built-in…**.
 Explain footer uses the current immutable runtime snapshot to list each currently showing non-empty module once with its rendered value and description; it starts no new collection work.
 Modules opens a bounded searchable inspector for every registered module.
 Its textual states distinguish **Showing**, **Empty**, **Disabled**, **Not in format**, and **Unavailable** only when the current footer cannot provide an inspection snapshot.
 Module detail shows the current preview when available, description, root reference and reachability, format variables, style fields, display rules, and the known reason for absent output.
-Both views are read-only and never create or update the settings document.
+Both views are read-only and do not create or update the settings document.
 
 Configuration contains **Overview**, **Effective configuration**, **Settings document**, and **Reload from disk** on one nested level.
 Overview combines state, source, path, health, and bounded diagnostics.
 Effective configuration shows deterministic catalog-ordered public TOML from the normalized state currently in use; comments, unknown fields, parser ASTs, and private runtime selectors are excluded.
 Settings document shows the exact loaded UTF-8 text through a terminal-safe, cell-aware read-only review without changing the raw payload.
-A healthy missing file is shown as **Built-in defaults**, an exact bundled document is shown as its named preset, and **Built-in fallback** is reserved for read or parse errors.
+A missing file is **Built-in defaults**, an exact bundled document uses its preset name, and read or parse errors are **Built-in fallback**.
 Reload from disk reads only after the explicit action, validates and previews the current external state from the existing runtime snapshot, and asks for separate confirmation before changing the active session.
 A deleted document is a valid previewable transition to built-in defaults and creates no file.
 An unchanged document is a no-op, while read or parse failure, cancellation, disposal, external changes after preview, session replacement, shutdown, or runtime apply failure preserves the prior effective footer and every file byte.
@@ -116,16 +134,15 @@ Colors, separators, typography, and layout follow the named Starship preset; mod
 | **Pure Preset** | Clean two-line workspace and session context | Standard Unicode |
 | **Tokyo Night** | Connected cool blue Tokyo Night blocks | Nerd Font |
 
-The preset cursor is a live footer preview.
-Opening the picker and moving with Up/Down, Page Up/Down, Home, or End temporarily renders the selected preset in the actual footer without writing settings or starting new collectors.
-Press Enter to start the named preset's replacement confirmation, or press `e` to customize the selected complete TOML document before its normal editor preview and confirmation.
-Escape returns to the main menu, while Ctrl+C closes the complete workflow; both restore the previously effective footer.
+Moving through the preset picker temporarily renders the selected preset in the footer without writing settings or starting collectors.
+Press Enter to confirm replacement, or press `e` to edit the selected complete TOML document before preview and confirmation.
+Escape returns to the main menu, while Ctrl+C closes the workflow; both restore the active footer.
 
 Presets are complete documents, not overlays.
-Applying one replaces `pi-starship.toml`, including custom settings, unknown fields, and comments, only after a separate confirmation; no post-success backup is kept.
-Cursor movement, confirmation cancellation, disposal, validation failure, write failure, and runtime-apply failure retain the previous valid document and effective footer.
-Exact unedited matches are shown as **Currently applied** and cannot be redundantly selected; editing any byte makes the document custom again.
-**Restore built-in…** remains the deterministic recovery path.
+After confirmation, applying one replaces all of `pi-starship.toml`, including custom settings, unknown fields, and comments; no backup is kept.
+Cancellation, disposal, validation failure, write failure, and runtime-apply failure preserve the previous document and footer.
+An exact match is **Currently applied** and cannot be selected again; editing any byte makes it custom.
+Use **Restore built-in…** for deterministic recovery.
 
 The bundled presets use only pi-starship's local Pi and Git snapshot modules.
 They do not enable the GitHub PR query, cloud/deployment readers, or optional command-backed workspace collectors.
@@ -210,8 +227,9 @@ Icon matching uses the exact key, the longest `:*` wildcard, a leading status em
 An empty configured icon suppresses only the icon.
 `foo:*` matches `foo:server` but not `foo`, `foobar`, or `foo/server`.
 
-Pi does not expose which package owns a status, so exact raw keys are the reliable third-party contract. pi-starship does not inspect installed packages, infer package aliases, assign icons to known extensions, or bridge compatibility keys.
-Extension authors may adopt `<extension-id>` or `<extension-id>:<stable-slot>` for interoperability, but pi-starship does not require that convention.
+Pi does not expose status ownership, so exact raw keys are the reliable third-party contract.
+pi-starship does not inspect installed packages, infer aliases, assign known-extension icons, or bridge compatibility keys.
+Extension authors may use `<extension-id>` or `<extension-id>:<stable-slot>` for interoperability, but pi-starship does not require it.
 
 **Icon migration:** configurations that relied on package-ID aliases, built-in known-extension icons, or compatibility mappings must use an exact raw status key, an explicit namespace wildcard, a leading emoji in the status value, or `fallback`.
 
@@ -263,7 +281,7 @@ Invalid literal style expressions warn and render unstyled.
 An invalid root format falls back to the built-in root format; an invalid module format or catalog-owned style field falls back only at that field's module scope.
 `/starship status` reports warnings.
 
-The background-free direct defaults are: `brand = "bold white"`, `provider`/`model` = `"bold blue"`, `thinking`/`git_branch`/`turn` = `"bold purple"`, `directory`/`git_worktree` = `"cyan bold"`, `github_pr = "bold blue"`, `git_commit = "green bold"`, `git_state`/`activity`/`time` = `"bold yellow"`, `git_status = "red bold"`, `tokens = "bold cyan"`, `cache = "bold green"`, `extension_status = "dimmed white"`, `direnv = "bold bright-yellow"`, and `fill = "bold black"`.
+The background-free defaults are: `brand = "bold white"`, `provider`/`model` = `"bold blue"`, `thinking`/`git_branch`/`turn` = `"bold purple"`, `directory`/`git_worktree` = `"cyan bold"`, `github_pr = "bold blue"`, `git_commit = "green bold"`, `git_state`/`activity`/`time` = `"bold yellow"`, `git_status = "red bold"`, `tokens = "bold cyan"`, `cache = "bold green"`, `extension_status = "dimmed white"`, `direnv = "bold bright-yellow"`, and `fill = "bold black"`.
 Context, cost, Git metrics, and username use the state/multi-style defaults below.
 
 ### Thinking level styles
@@ -390,7 +408,6 @@ There is no hidden compatibility overlay or automatic migration.
   The module name remains `context`, not `context_usage`.
 - Subscription-backed OAuth models and `kimi-coding` set cost `$subscription` to `(sub)`.
   The dollar value is usage cost, not proof of an amount billed under a subscription.
-- Pi's public extension API does not expose the current auto-compaction toggle, so pi-starship cannot reliably provide the native `(auto)` marker.
 
 ### Directory, Git, and environment contraction
 
@@ -454,7 +471,7 @@ An exact alias is selected before the built-in Claude/GPT shortening rules, then
 `truncation_length` counts model grapheme clusters retained before the symbol; `0` disables truncation and is the default.
 The direction names the removed portion: `start` retains the suffix, `end` retains the prefix and is the default, and `middle` retains both ends.
 When no alias matches, truncation runs after the built-in Claude/GPT shortening rules.
-It always changes display only—the provider model ID is untouched.
+Truncation changes display only; the provider model ID is untouched.
 Terminal control sequences in model IDs and truncation symbols are removed at render time.
 An empty symbol truncates without a marker.
 
@@ -478,6 +495,8 @@ In a linked worktree it defaults to the top-level directory name; use `$path` wh
 `git_commit`, `git_state`, and `git_metrics` are intentionally not present in the built-in root format.
 Add their variables to `format` to opt in; also set `[git_metrics].disabled = false`, matching Starship's opt-in metrics default.
 `$tag` resolves only an exact tag on HEAD and is queried only when the configured `git_commit` format references it.
+
+## 🔒 Security and privacy
 
 ### 🔎 Native GitHub pull requests
 
@@ -559,7 +578,7 @@ Branch changes clear the old PR before querying the new branch.
 Closed and merged PRs remain visible for 24 hours, then expire without waiting for the next refresh.
 Missing `gh`, missing authentication, no current PR, timeout, malformed or oversized output, and network failures all render an empty module without exposing raw errors or credentials.
 
-The query sends the repository/current-branch context through authenticated `gh` to the GitHub host configured by the repository.
+The query sends the repository and current branch through authenticated `gh` to the repository's configured GitHub host.
 It requests only the fields above—never comments, review bodies, inline comments, or review threads.
 Footer rendering and previews read only the immutable cached snapshot and perform no network or subprocess work.
 
@@ -604,8 +623,8 @@ Names and paths are control-sanitized and bounded before publication.
 ### 🚢 Deployment and cloud context
 
 These modules read inert local metadata only.
-They do **not** contact Docker, a Kubernetes cluster, a Terraform/OpenTofu backend, a cloud API, an OAuth flow, a credential helper, or a metadata service.
-The deployment/cloud safety review retained opt-in root behavior: context labels may be sensitive and there is no usage evidence justifying more default footer density.
+They do **not** contact Docker, Kubernetes, Terraform/OpenTofu backends, cloud APIs, OAuth flows, credential helpers, or metadata services.
+They remain opt-in because context labels may be sensitive.
 
 - `docker_context`: `DOCKER_CONTEXT`, then `DOCKER_CONFIG/config.json` or `~/.docker/config.json`.
   The `default` context is suppressed.
@@ -640,6 +659,8 @@ Negated username detection names are rejected.
 Ordinary local hostname/username sessions stay empty.
 All identity labels are bounded and stripped of C0/C1 controls, ANSI, newlines, and OSC control bytes.
 
+## 📐 Layout and lifecycle
+
 ### ↔️ Fill layout
 
 Add `${fill}` between left and right root content (braces disambiguate adjacent text):
@@ -673,48 +694,23 @@ Bounded local filesystem operations may finish, but stale generations cannot pub
 Execution identity is retained rather than re-read by the periodic fallback.
 Render and live preview consume snapshots synchronously and perform zero reads or commands.
 
-Missing, unreadable, malformed, oversized, timed-out, or unavailable sources fail to empty values.
-Workspace/Git readers cap direct files at 64 KiB, use one bounded current-directory listing, never recurse, and make no network calls.
+Missing, unreadable, malformed, oversized, timed-out, or unavailable sources produce empty values.
+Workspace and Git readers cap direct files at 64 KiB, use one bounded current-directory listing, never recurse, and make no network calls.
 The native GitHub PR query is the documented network exception.
-Package's explicitly documented Cargo lookup is the only ancestor walk and is capped at eight parents.
+The Cargo package lookup is the only ancestor walk and stops after eight parents.
 
-## 💬 Commands
+## 🚧 Limitations
 
-| Command | Purpose |
-| --- | --- |
-| `/starship` | Open the current-state menu in TUI mode; retain help behavior outside TUI |
-| `/starship settings` | Open the compatible direct edit → preview → confirm flow (TUI only) |
-| `/starship status` | Show config source/path and diagnostics |
-| `/starship help` | Show command and configuration help |
-
-The standard main menu keeps seven goals on one level: **Customize footer**, **Presets**, **Explain footer**, **Modules**, **Configuration**, **Help**, and **Restore built-in…**.
-It shows whether the footer uses built-in defaults, a saved built-in document, a named preset, a custom document, or an error-driven fallback, together with the current health.
-Presets, Explain, Modules, and the nested Configuration capabilities are menu-only paths; they do not add textual subcommands or change RPC, print, or JSON protocols.
-Restore remains last and unavailable when there is no document to replace.
-
-The TOML editor, adaptive live footer previews, Explain view, searchable module inspector, and Configuration document reviews remain specialized extension UI.
-Their hints follow Pi's injected keybindings; list, detail, and exact-document content stay bounded across terminal resize.
-Escape returns from detail or to the main menu, while Ctrl+C closes the whole workflow.
-
-The direct routes accept no trailing arguments.
-Status and help remain safe in TUI, RPC, JSON, and print modes.
-RPC receives notifications but never opens custom terminal UI; print and JSON modes produce no ad hoc output.
-Footer/timer/Git lifecycle work starts only in TUI mode.
-
-## 📐 Scope
-
-The formatter, style concepts, and selected contextual modules are Starship-inspired, while Pi owns the lifecycle, snapshots, privacy boundary, and footer layout.
-This extension does not load `starship.toml`, claim complete module/config compatibility, invoke the Starship binary, run custom shell modules, or expose unrestricted `env_var` behavior.
-JVM/.NET, other long-tail languages, alternative VCS, system-monitor, and additional DevOps modules remain demand-gated; the first-wave review found no issue/discussion evidence for a coherent follow-up batch, so no second wave is added.
-
-Pi-native model, context, cache, cost, Git metrics, and activity remain owned by the existing modules.
-The lifecycle design rejects provider-specific duplicates and ambiguous `turn_duration`/`last_result` modules until separately approved semantics exist.
+- The formatter and modules are Starship-inspired, not fully compatible with Starship.
+- The extension does not load `starship.toml`, invoke the Starship binary, run custom shell modules, or provide unrestricted `env_var` behavior.
+- JVM/.NET, other long-tail languages, alternative version-control systems, system monitoring, and additional DevOps modules are not implemented.
+- Pi does not expose the auto-compaction toggle, so the footer cannot reliably show Pi's native `(auto)` marker.
 
 ## ➕ Adding a module
 
 Create `src/modules/<name>.ts` with its format variables, defaults, and runtime value resolver, then register it in display order in `src/modules/catalog.ts`.
 Configuration names, validation variables, defaults, and `$all` ordering are derived from that catalog.
-Add the module to the built-in root format when it should be visible by default, then document and test its user-facing values.
+Add the module to the built-in root format only when it should be visible by default, then document and test its user-facing values.
 
 Keep `extension_status` last in the catalog so arbitrary third-party statuses follow native module output.
 

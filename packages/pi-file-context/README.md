@@ -4,16 +4,16 @@
 [![Pi Extension](https://img.shields.io/badge/Pi-extension-blue)](https://github.com/earendil-works/pi)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Browse project files inside Pi, select exact lines or Git changes, and review every snapshot before it is attached to the next prompt.
+Browse project files in Pi, select exact lines or Git changes, and review each snapshot before attaching it to the next prompt.
 
 ## ✨ Features
 
 - Opens from `/file-context` or a configurable shortcut that defaults to `Ctrl+Shift+X`.
-- Browses discovered project folders hierarchically, searches file names or contents globally, and previews bounded text with line numbers.
+- Browses project folders, searches file names or contents globally, and previews bounded text with line numbers.
 - Adds whole-file references, exact line ranges, changed hunks, revisions, or Git diffs without using the clipboard.
 - Opens the current worktree file in Pi's configured external editor from the preview and reloads it after editing.
 - Shows Git state, blame, bounded file history, provenance, and a deterministic token estimate before attachment.
-- Reviews and removes exact queued snapshots before the next prompt.
+- Reviews and removes queued snapshots before the next prompt.
 - Preserves selection order, supports repeated browsing, skips common generated directories, and never follows symlinks during discovery.
 
 ## 📦 Install
@@ -24,26 +24,29 @@ Install persistently from npm:
 pi install npm:@narumitw/pi-file-context
 ```
 
-Try from npm without installing permanently:
+Run once from npm:
 
 ```bash
 pi -e npm:@narumitw/pi-file-context
 ```
 
-Build and try the local working tree from this repository checkout:
+Build and run the local working tree:
 
 ```bash
 npm --workspace @narumitw/pi-file-context run build
 pi -e ./packages/pi-file-context
 ```
 
-The package declares `dist/index.ts`, so an unbuilt local checkout must run the build before Pi loads the package directory.
+The package declares `dist/index.ts`, so build a local checkout before loading its package directory.
+
+Pi extensions run with your user permissions.
+Review third-party extension source before installing it.
 
 ## 🚀 Quick start
 
 1. Press `Ctrl+Shift+X` or run `/file-context browse`.
-2. Find a file, use the visible preview hints to edit or select exact lines or Git changes, and press `Enter` to attach the snapshot.
-3. Review queued snapshots from `/file-context`, write the request, and submit normally.
+2. Find a file, select exact lines or Git changes, and press `Enter` to queue the snapshot.
+3. Run `/file-context` to review the queue, then write and submit the request normally.
 
 ## 🧭 Browser workflow
 
@@ -93,14 +96,14 @@ Non-Git quotes retain the original `path` and `lines` attributes exactly.
 Git-backed quotes add ordered optional provenance: the repository HEAD at selection time, branch, file status, selected revision or baseline, tracked blob when available, source kind (`worktree`, `revision`, or `git_diff`), and SHA-256 of the exact attached text.
 HEAD alone does not identify uncommitted content; `content_sha256` identifies the actual snapshot.
 
-Token counts are deterministic byte-based estimates (`ceil(UTF-8 bytes / 4)`), not provider billing guarantees.
+Token counts use the deterministic estimate `ceil(UTF-8 bytes / 4)` and do not predict provider billing.
 Diff context is never attached automatically.
 
 ## ⚙️ Settings
 
 File Context reads optional user settings from `~/.pi/agent/pi-file-context.json`, or the equivalent file under Pi's configured agent directory.
 
-The file is not created when defaults are used.
+Using the defaults does not create the file.
 
 Open `/file-context`, choose **Settings**, then choose **Open shortcut** to change or disable it.
 The Settings action is unavailable while context snippets are selected because applying the shortcut reloads Pi and would otherwise discard those in-memory selections.
@@ -112,7 +115,8 @@ A successful menu save reloads Pi automatically so the new shortcut becomes acti
 }
 ```
 
-Set `openShortcut` to any valid Pi key identifier, or set it to `null` to disable the direct browser shortcut and use `/file-context browse`.
+Set `openShortcut` to a valid Pi key identifier.
+Set it to `null` to disable the shortcut and use `/file-context browse`.
 External editing uses Pi's own `app.editor.external` keybinding and `externalEditor` setting rather than a File Context setting.
 Customize those through Pi's `keybindings.json` and `settings.json`; File Context reads the effective values and does not register a competing external-editor shortcut.
 Use an editor wait option such as `code --wait` when the editor command would otherwise return before editing finishes.
@@ -135,11 +139,11 @@ Explicit `F8` and `Ctrl+Alt+F` values remain supported, but the default is now `
 | --- | --- | --- |
 | `/file-context` | TUI only | Open the Add, Review, Settings, Status, and Help menu. |
 | `/file-context browse` | TUI only | Scan and open the file explorer directly. |
-| `/file-context remove` | TUI only | Open selected-context review directly for compatibility. |
+| `/file-context remove` | TUI only | Open selected-context review directly through the compatibility route. |
 
 Unknown and trailing arguments are rejected.
-RPC receives an observable warning.
-JSON and print modes do not enter interactive UI.
+RPC reports that File Context requires the interactive TUI.
+Print and JSON modes reject the command before opening interactive UI.
 
 ## 🔒 Security and privacy
 
@@ -205,6 +209,7 @@ test/file-context-search.test.ts  File-name ranking, typo tolerance, and query-b
 test/file-context-folder-browser.test.ts  Folder hierarchy, navigation, keybinding, and terminal-safety tests
 test/file-context.test.ts       Filesystem, prompt, lifecycle, shortcut, and explorer tests
 test/file-context-selection.test.ts  Add-and-continue, capacity, and progressive-help tests
+test/file-context-lifecycle.test.ts  Session replacement and shutdown disposal tests
 test/file-context-menu.test.ts  Menu, shortcut settings, exact review, removal, and rendering tests
 test/file-context-command-menu.test.ts  Command routes, loading, and direct browser compatibility tests
 test/pending-quotes.test.ts     Exact selected-context removal, cancellation, and stale-flow tests

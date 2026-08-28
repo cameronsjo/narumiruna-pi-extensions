@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-firecrawl)](https://www.npmjs.com/package/@narumitw/pi-firecrawl) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-Give Pi on-demand [Firecrawl](https://www.firecrawl.dev/) tools for web search, scraping, crawling, URL discovery, and retrieval-friendly content extraction.
+Add on-demand [Firecrawl](https://www.firecrawl.dev/) tools to Pi for web search, scraping, crawling, URL discovery, and content extraction.
 
 ## ✨ Features
 
@@ -10,35 +10,40 @@ Give Pi on-demand [Firecrawl](https://www.firecrawl.dev/) tools for web search, 
 - Starts crawl jobs, checks their status, and retrieves completed crawl data.
 - Discovers site URLs and searches the web with optional result-page scraping.
 - Loads only the Firecrawl capabilities needed for the task and manages availability through `/firecrawl`.
-- Supports custom Firecrawl endpoints and shows activity only while a tool is running.
+- Supports custom Firecrawl endpoints and shows status only while a tool is running.
 - Bounds model-visible output while preserving oversized responses in private temporary files.
 - Reads the API key from the environment and never logs, displays, or stores it.
 
 ## 📦 Install
 
+Install persistently:
+
 ```bash
 pi install npm:@narumitw/pi-firecrawl
 ```
 
-Try without installing permanently:
+Run once from npm:
 
 ```bash
 FIRECRAWL_API_KEY=fc-... pi -e npm:@narumitw/pi-firecrawl
 ```
 
-Build and try this package locally from the repository root:
+Build and run a local checkout from the repository root:
 
 ```bash
 npm --workspace @narumitw/pi-firecrawl run build
 FIRECRAWL_API_KEY=fc-... pi -e ./packages/pi-firecrawl
 ```
 
-The package declares `dist/index.ts`, so an unbuilt local checkout must run the build before Pi loads the package directory.
+The package declares `dist/index.ts`, so build a local checkout before loading its package directory.
+
+Pi extensions run with your user permissions.
+Review third-party extension source before installing it.
 
 ## 🚀 Quick start
 
 Set `FIRECRAWL_API_KEY`, start Pi with the extension, and ask the agent to load the Firecrawl capability needed for the task.
-Use `/firecrawl` to review configuration and control which capability tools may be loaded.
+Run `/firecrawl` to review configuration and choose which capabilities the loader may expose.
 
 ## ⚙️ Settings
 
@@ -55,7 +60,28 @@ export FIRECRAWL_API_URL=https://api.firecrawl.dev/v1
 ```
 
 `FIRECRAWL_BASE_URL` is also accepted for compatibility.
-The extension never logs or displays the API key.
+The API key remains in the environment and is sent only as a bearer credential to the configured Firecrawl endpoint.
+
+Available capability names are saved to:
+
+```text
+${PI_CODING_AGENT_DIR:-~/.pi/agent}/pi-firecrawl.json
+```
+
+A missing or invalid file leaves the current Firecrawl availability policy unchanged.
+An unsaved catalog remains stable across runtime reloads.
+A valid catalog is restored on startup and `/reload`, with native deferred or eager exposure chosen from model and provider support.
+The first successful availability change creates a missing file.
+Within one Pi process, saves run in invocation order, reread the latest valid document, and preserve unknown fields.
+Malformed JSON or invalid recognized fields block saves without replacing the file.
+A failed save restores the previous availability and loaded capabilities while preserving other extensions' active tools.
+The file stores only tool names and a timestamp, never `FIRECRAWL_API_KEY`, request headers, or other secrets.
+
+Older versions used `pi-firecrawl-settings.json`.
+A legacy-only file remains readable with a warning and is never modified automatically; rename it to `pi-firecrawl.json`.
+The next settings save writes the canonical file.
+If both files exist, `pi-firecrawl.json` wins and the legacy file is ignored.
+The legacy filename is deprecated and will be removed in a future major release.
 
 ## 🛠️ Tools
 
@@ -68,9 +94,9 @@ The extension never logs or displays the API key.
 
 ### Tool exposure
 
-All six tools are registered.
+The extension registers six tools: one loader and five API capabilities.
 
-On a model/provider with native deferred-tool support, only `firecrawl_load` starts active for this extension.
+With native deferred-tool support, only `firecrawl_load` starts active.
 
 The loader accepts a task-oriented `query`, filters to capabilities allowed by settings, and adds up to three matching tools by default without removing any active Pi tool.
 
@@ -78,7 +104,7 @@ Set `limit` from 1 to 5 to change the maximum number loaded by one call.
 
 A general website-crawl query can load both `firecrawl_crawl` and `firecrawl_crawl_status`, while a status-specific query loads the status capability.
 
-Loaded capability tools remain active for the session unless the user makes them unavailable through `/firecrawl`.
+Loaded capability tools remain active for the current session until you make them unavailable through `/firecrawl`.
 
 On reload, resume, or fork, capabilities recorded by `firecrawl_load` on the active branch are restored when the current catalog still allows them.
 
@@ -104,7 +130,6 @@ Every API capability fails with a clear configuration error when `FIRECRAWL_API_
 
 Tool output is limited to 50 KB or 2,000 lines, whichever is reached first.
 When a response is truncated, the result reports the original and displayed sizes and the path to a complete temporary JSON file.
-These files use private permissions, remain available for the current session, and are removed during session shutdown or reload.
 Tool-result metadata contains only size and artifact information rather than a duplicate of the raw Firecrawl response.
 Oversized Firecrawl error bodies are bounded in the same way.
 
@@ -139,9 +164,9 @@ Direct subcommands are also available:
 - `disable` makes all five API capabilities unavailable and unloads affected active definitions.
   The slash command and `firecrawl_load` remain available.
 
-The menu, `tools`, `help`, `config`, `quickstart`, and `status` routes require TUI or RPC mode so their results are observable.
+The menu, `tools`, `help`, `config`, `quickstart`, and `status` routes require TUI or RPC mode.
 
-Print and JSON modes reject those routes and unknown commands explicitly instead of entering unavailable UI or silently notifying a no-op channel.
+Print and JSON modes reject those routes and unknown commands before entering interactive UI.
 
 The deterministic `enable` and `disable` routes remain available in every mode.
 
@@ -149,25 +174,13 @@ Tool-selector toggles save immediately in user action order.
 
 Done, Escape, or cancellation closes the selector without undoing changes that were already saved.
 
-The available capability names are saved to:
+## 🔒 Security and privacy
 
-```text
-${PI_CODING_AGENT_DIR:-~/.pi/agent}/pi-firecrawl.json
-```
+Firecrawl API tools send requested URLs, options, and related data to the configured API endpoint.
+Review the endpoint's privacy policy before sending private or authenticated URLs.
 
-When the file is missing or invalid, the extension preserves Pi's current Firecrawl availability policy instead of replacing it.
-An unsaved catalog remains stable across runtime reloads.
-A valid saved catalog is restored on Pi startup and `/reload`, with capability definitions exposed natively deferred or eagerly according to model/provider support.
-A missing file is created by the first successful availability change.
-Within one Pi process, catalog saves run in invocation order, reread the latest valid document, and preserve unknown fields.
-Malformed JSON or invalid recognized fields block the save without replacement; a failed save restores both the prior availability and loaded capability state while preserving other extensions' active tools.
-The settings file stores only tool names and a timestamp; it never stores `FIRECRAWL_API_KEY`, request headers, or other secrets.
-
-Compatibility: older versions used `pi-firecrawl-settings.json`.
-A legacy-only file remains readable with a warning and is never modified automatically; rename it to `pi-firecrawl.json`.
-The first subsequent settings save writes the canonical file.
-If both files exist, `pi-firecrawl.json` wins and the legacy file is ignored.
-The legacy filename is deprecated and will be removed in a future major release.
+`FIRECRAWL_API_KEY` is sent as a bearer credential but is never logged, displayed, or stored by the extension.
+Truncated response artifacts use private temporary files, remain available only for the current session, and are removed on shutdown or reload.
 
 ## 🧪 Examples
 
