@@ -43,6 +43,8 @@ function provider(id: AccountProviderAdapter["id"]): AccountProviderAdapter {
 		"github-copilot": "GitHub Copilot",
 		"kimi-coding": "Kimi For Coding",
 		"openai-codex": "OpenAI Codex",
+		openrouter: "OpenRouter",
+		radius: "Radius",
 		xai: "xAI",
 	};
 	return {

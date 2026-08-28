@@ -21,6 +21,7 @@ import {
 	createBuiltinProviderAdapters,
 	createOAuthInteraction,
 	loginWithOAuthUI,
+	resolveProviderOAuth,
 } from "../src/oauth.js";
 import { OAUTH_CREDENTIAL_SOURCE_CHANNEL } from "../src/oauth-credential-source.js";
 import { RuntimeAuthCoordinator } from "../src/runtime-auth.js";
@@ -52,6 +53,8 @@ function fakeProvider(
 		"github-copilot": "GitHub Copilot",
 		"kimi-coding": "Kimi For Coding",
 		"openai-codex": "OpenAI Codex",
+		openrouter: "OpenRouter",
+		radius: "Radius",
 		xai: "xAI",
 	};
 	return {
@@ -59,6 +62,7 @@ function fakeProvider(
 		displayName: displayNames[id],
 		requiresApiKeyBridge: options.requiresApiKeyBridge ?? id === "openai-codex",
 		runtimeAuthMode: id === "kimi-coding" ? "authorization-header" : "api-key",
+		refreshModelCatalogAfterAuth: id === "radius",
 		oauth: {
 			async login() {
 				return credential(
@@ -92,8 +96,11 @@ function runtimeHarness(mock: ReturnType<typeof createMockPi>) {
 		{ provider: "github-copilot", id: "allowed", baseUrl: "https://default.copilot" },
 		{ provider: "github-copilot", id: "blocked", baseUrl: "https://default.copilot" },
 		{ provider: "kimi-coding", id: "k3", baseUrl: "https://api.kimi.com/coding" },
+		{ provider: "openrouter", id: "openrouter-model", baseUrl: "https://openrouter.ai/api/v1" },
+		{ provider: "radius", id: "radius-model", baseUrl: "https://radius.pi.dev" },
 		{ provider: "xai", id: "grok-4.3", baseUrl: "https://api.x.ai/v1" },
 	];
+	const refreshCalls: Array<{ providers?: readonly string[]; allowNetwork?: boolean }> = [];
 	const runtime = {
 		async setRuntimeApiKey(provider: string, key: string) {
 			keys.set(provider, key);
@@ -132,8 +139,16 @@ function runtimeHarness(mock: ReturnType<typeof createMockPi>) {
 				| undefined;
 			return { ok: true as const, apiKey: keys.get(model.provider), headers: config?.headers };
 		},
+		async refresh(options: {
+			providers?: readonly string[];
+			allowNetwork?: boolean;
+			signal?: AbortSignal;
+		}) {
+			refreshCalls.push(options);
+			return { aborted: options.signal?.aborted ?? false, errors: new Map<string, Error>() };
+		},
 	};
-	return { keys, registry, runtime };
+	return { keys, models, refreshCalls, registry, runtime };
 }
 
 function collectCredentialOffers(
@@ -216,13 +231,33 @@ test("built-in provider adapters preserve each provider's complete OAuth auth sh
 	assert.deepEqual(await byId.get("kimi-coding")?.oauth.toAuth(base), {
 		headers: { Authorization: "Bearer access-contract" },
 	});
+	assert.deepEqual(await byId.get("openrouter")?.oauth.toAuth(base), {
+		apiKey: "access-contract",
+	});
+	assert.deepEqual(await byId.get("radius")?.oauth.toAuth(base), {
+		apiKey: "access-contract",
+	});
+	assert.equal(byId.get("radius")?.refreshModelCatalogAfterAuth, true);
 	assert.deepEqual([...byId.keys()].sort(), [
 		"anthropic",
 		"github-copilot",
 		"kimi-coding",
 		"openai-codex",
+		"openrouter",
+		"radius",
 		"xai",
 	]);
+	const radius = byId.get("radius");
+	assert.ok(radius);
+	const activeRadiusOAuth = fakeProvider("radius").oauth;
+	assert.equal(
+		resolveProviderOAuth(radius, {
+			modelRegistry: {
+				getProvider: () => ({ auth: { oauth: activeRadiusOAuth } }),
+			} as never,
+		}),
+		activeRadiusOAuth,
+	);
 });
 
 test("OAuth interaction preserves provider prompts, cancellation, and notifications", async () => {
@@ -493,6 +528,8 @@ test("accounts menu summarizes all supported providers and prioritizes current p
 			fakeProvider("anthropic"),
 			fakeProvider("github-copilot"),
 			fakeProvider("kimi-coding"),
+			fakeProvider("openrouter"),
+			fakeProvider("radius"),
 			fakeProvider("xai"),
 		],
 	});
@@ -509,6 +546,8 @@ test("accounts menu summarizes all supported providers and prioritizes current p
 	assert.match(selectCalls[0]?.title ?? "", /OpenAI Codex: default/);
 	assert.match(selectCalls[0]?.title ?? "", /GitHub Copilot: default/);
 	assert.match(selectCalls[0]?.title ?? "", /Kimi For Coding: default/);
+	assert.match(selectCalls[0]?.title ?? "", /OpenRouter: default/);
+	assert.match(selectCalls[0]?.title ?? "", /Radius: default/);
 	assert.match(selectCalls[0]?.title ?? "", /xAI: default/);
 	assert.deepEqual(selectCalls[0]?.options, [
 		"Switch Anthropic account",
@@ -647,6 +686,111 @@ test("provider accounts activate independently and default clears only one provi
 	assert.match(notifications.at(-1)?.message ?? "", /default Pi Anthropic login/);
 });
 
+test("session replacement prevents a stale switch menu from mutating accounts", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: {
+			anthropic: {
+				active: "work",
+				accounts: { personal: credential("personal"), work: credential("work") },
+			},
+		},
+	});
+	const originalUpdate = store.updateProvider.bind(store);
+	let markUpdateStarted!: () => void;
+	const updateStarted = new Promise<void>((resolve) => {
+		markUpdateStarted = resolve;
+	});
+	let releaseUpdate!: () => void;
+	const updateReleased = new Promise<void>((resolve) => {
+		releaseUpdate = resolve;
+	});
+	store.updateProvider = async (providerId, mutator) => {
+		markUpdateStarted();
+		await updateReleased;
+		return originalUpdate(providerId, mutator);
+	};
+	const mock = createMockPi();
+	accountsExtension(mock.pi, {
+		store,
+		providers: [
+			fakeProvider("openai-codex"),
+			fakeProvider("anthropic"),
+			fakeProvider("github-copilot"),
+		],
+	});
+	const { keys, registry } = runtimeHarness(mock);
+	const oldContext = createInteractiveAccountContext(
+		{ model: { provider: "anthropic", id: "claude" }, modelRegistry: registry },
+		{ selections: ["Switch Anthropic account", "personal"] },
+	).ctx;
+	const newContext = createMockContext({
+		model: { provider: "anthropic", id: "claude" },
+		modelRegistry: registry,
+	}).ctx;
+
+	const stale = mock.commands.get("accounts")?.handler("ignored", oldContext);
+	await updateStarted;
+	await mock.events.get("session_start")?.[0]?.({}, newContext);
+	releaseUpdate();
+	await stale;
+	assert.equal((await store.readProviderAsync("anthropic")).active, "work");
+	assert.equal(keys.get("anthropic"), "access-work");
+});
+
+test("session replacement prevents a stale remove menu from deleting accounts", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: {
+			anthropic: { active: "work", accounts: { work: credential("work") } },
+		},
+	});
+	const originalUpdate = store.updateProvider.bind(store);
+	let markUpdateStarted!: () => void;
+	const updateStarted = new Promise<void>((resolve) => {
+		markUpdateStarted = resolve;
+	});
+	let releaseUpdate!: () => void;
+	const updateReleased = new Promise<void>((resolve) => {
+		releaseUpdate = resolve;
+	});
+	store.updateProvider = async (providerId, mutator) => {
+		markUpdateStarted();
+		await updateReleased;
+		return originalUpdate(providerId, mutator);
+	};
+	const mock = createMockPi();
+	accountsExtension(mock.pi, {
+		store,
+		providers: [
+			fakeProvider("openai-codex"),
+			fakeProvider("anthropic"),
+			fakeProvider("github-copilot"),
+		],
+	});
+	const { keys, registry } = runtimeHarness(mock);
+	const oldContext = createInteractiveAccountContext(
+		{ model: { provider: "anthropic", id: "claude" }, modelRegistry: registry },
+		{ selections: ["Remove account", "Anthropic · work"], confirms: [true] },
+	).ctx;
+	const newContext = createMockContext({
+		model: { provider: "anthropic", id: "claude" },
+		modelRegistry: registry,
+	}).ctx;
+
+	const stale = mock.commands.get("accounts")?.handler("ignored", oldContext);
+	await updateStarted;
+	await mock.events.get("session_start")?.[0]?.({}, newContext);
+	releaseUpdate();
+	await stale;
+	const state = await store.readProviderAsync("anthropic");
+	assert.equal(state.active, "work");
+	assert.equal(state.accounts.work?.access, "access-work");
+	assert.equal(keys.get("anthropic"), "access-work");
+});
+
 test("default Codex auth does not invalidate connections on first observation", async () => {
 	const invalidations: Array<string | undefined> = [];
 	const codex = fakeProvider("openai-codex");
@@ -779,7 +923,7 @@ test("an obsolete invalidation failure cannot fail closed a newer successful syn
 	});
 	store.readProviderAsync = async (providerId) => {
 		reads += 1;
-		if (reads === 4) {
+		if (reads === 5) {
 			signalObsoleteRead?.();
 			await obsoleteReadBlocked;
 		}
@@ -867,17 +1011,22 @@ test("generic login stores the full provider-owned credential and activates it",
 	assert.equal(keys.get("github-copilot"), "access-login-github-copilot");
 });
 
-test("xAI and Kimi login routes store and activate named OAuth accounts", async () => {
-	for (const providerId of ["xai", "kimi-coding"] as const) {
+test("xAI, Kimi, OpenRouter, and Radius login routes activate named OAuth accounts", async () => {
+	for (const providerId of ["xai", "kimi-coding", "openrouter", "radius"] as const) {
 		const store = new AccountStore(new InMemoryAccountStorageBackend());
 		const provider = fakeProvider(providerId);
 		const mock = createMockPi();
 		accountsExtension(mock.pi, { store, providers: [provider] });
-		const { registry, keys } = runtimeHarness(mock);
-		const modelId = providerId === "xai" ? "grok-4.3" : "k3";
+		const { registry, keys, refreshCalls } = runtimeHarness(mock);
+		const modelIds = {
+			"kimi-coding": "k3",
+			openrouter: "openrouter-model",
+			radius: "radius-model",
+			xai: "grok-4.3",
+		};
 		const { ctx } = createInteractiveAccountContext(
 			{
-				model: { provider: providerId, id: modelId },
+				model: { provider: providerId, id: modelIds[providerId] },
 				modelRegistry: registry,
 			},
 			{ selections: ["Login new account", provider.displayName], inputs: ["work"] },
@@ -889,8 +1038,9 @@ test("xAI and Kimi login routes store and activate named OAuth accounts", async 
 		assert.equal(state.accounts.work?.access, `access-login-${providerId}`);
 		assert.equal(
 			keys.get(providerId),
-			providerId === "xai" ? "access-login-xai" : "pi-accounts-header-auth",
+			providerId === "kimi-coding" ? "pi-accounts-header-auth" : `access-login-${providerId}`,
 		);
+		assert.equal(refreshCalls.length, providerId === "radius" ? 1 : 0);
 	}
 });
 
@@ -1273,8 +1423,478 @@ test("xAI named OAuth applies its access token and restores default auth", async
 	assert.equal(keys.has("xai"), false);
 });
 
-test("xAI and Kimi refresh expiring named credentials before activation", async () => {
-	for (const providerId of ["xai", "kimi-coding"] as const) {
+test("OpenRouter named OAuth applies its access token and restores default auth", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: {
+			openrouter: {
+				active: "work",
+				accounts: { work: credential("openrouter", { refresh: "" }) },
+			},
+		},
+	});
+	const mock = createMockPi();
+	const { keys, refreshCalls, registry } = runtimeHarness(mock);
+	const sessionManager = {};
+	const { ctx } = createMockContext({
+		model: { provider: "openrouter", id: "openrouter-model" },
+		modelRegistry: registry,
+		sessionManager,
+	});
+	const coordinator = new RuntimeAuthCoordinator(mock.pi, fakeProvider("openrouter"));
+
+	const active = await coordinator.ensureActive(ctx, store);
+	assert.deepEqual(active, {
+		status: "active",
+		providerId: "openrouter",
+		accountName: "work",
+	});
+	coordinator.publishCredentialOffer(ctx, active, "work:access-openrouter");
+	const offers: StoredOAuthCredential[] = [];
+	coordinator.offerCredential({
+		session: sessionManager,
+		provider: "openrouter",
+		offer: (candidate: StoredOAuthCredential) => offers.push(candidate),
+	});
+	assert.equal(offers[0]?.refresh, "");
+	assert.equal(keys.get("openrouter"), "access-openrouter");
+	assert.deepEqual(refreshCalls, []);
+
+	await store.updateProvider("openrouter", (state) => ({ ...state, active: undefined }));
+	assert.deepEqual(await coordinator.ensureActive(ctx, store), {
+		status: "inactive",
+		providerId: "openrouter",
+	});
+	assert.equal(keys.has("openrouter"), false);
+	assert.deepEqual(refreshCalls, []);
+});
+
+test("OpenRouter activation observes an already cancelled menu operation", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: {
+			openrouter: { active: "work", accounts: { work: credential("openrouter") } },
+		},
+	});
+	const mock = createMockPi();
+	const { keys, registry } = runtimeHarness(mock);
+	const { ctx } = createMockContext({ modelRegistry: registry });
+	const coordinator = new RuntimeAuthCoordinator(mock.pi, fakeProvider("openrouter"));
+	const owner = new AbortController();
+	owner.abort(new DOMException("Menu cancelled", "AbortError"));
+
+	assert.equal(
+		(await coordinator.ensureActive(ctx, store, Date.now(), owner.signal)).status,
+		"error",
+	);
+	assert.equal(keys.get("openrouter"), FAIL_CLOSED_API_KEY);
+});
+
+test("Radius resolves OAuth from Pi's active gateway provider", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: { radius: { active: "work", accounts: { work: credential("radius") } } },
+	});
+	const radius = createBuiltinProviderAdapters().find((provider) => provider.id === "radius");
+	assert.ok(radius);
+	const activeOAuth = fakeProvider("radius").oauth;
+	activeOAuth.toAuth = async (current) => ({ apiKey: `gateway:${current.access}` });
+	const mock = createMockPi();
+	const { keys, registry } = runtimeHarness(mock);
+	const modelRegistry = {
+		...registry,
+		getProvider: () => ({ auth: { oauth: activeOAuth } }),
+	};
+	const { ctx } = createMockContext({ modelRegistry });
+	const coordinator = new RuntimeAuthCoordinator(mock.pi, radius);
+
+	assert.equal((await coordinator.ensureActive(ctx, store)).status, "active");
+	assert.equal(keys.get("radius"), "gateway:access-radius");
+});
+
+test("Radius refreshes its dynamic catalog for named and restored default auth", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: { radius: { active: "work", accounts: { work: credential("radius") } } },
+	});
+	const mock = createMockPi();
+	const { keys, models, registry } = runtimeHarness(mock);
+	const refreshKeys: Array<string | undefined> = [];
+	registry.refresh = async (options) => {
+		refreshKeys.push(keys.get("radius"));
+		assert.deepEqual(options.providers, ["radius"]);
+		assert.equal(options.allowNetwork, true);
+		assert.equal(options.signal?.aborted, false);
+		models.splice(
+			models.findIndex((model) => model.provider === "radius"),
+			1,
+			{
+				provider: "radius",
+				id: keys.has("radius") ? "named-radius-model" : "default-radius-model",
+				baseUrl: "https://radius.pi.dev",
+			},
+		);
+		return { aborted: false, errors: new Map<string, Error>() };
+	};
+	const { ctx } = createMockContext({ modelRegistry: registry });
+	const coordinator = new RuntimeAuthCoordinator(mock.pi, fakeProvider("radius"));
+
+	assert.deepEqual(await coordinator.ensureActive(ctx, store), {
+		status: "active",
+		providerId: "radius",
+		accountName: "work",
+	});
+	assert.equal(keys.get("radius"), "access-radius");
+	assert.equal(
+		models.some((model) => model.id === "named-radius-model"),
+		true,
+	);
+	assert.equal((await coordinator.ensureActive(ctx, store)).status, "active");
+	assert.deepEqual(refreshKeys, ["access-radius"]);
+
+	await store.updateProvider("radius", (state) => ({ ...state, active: undefined }));
+	assert.deepEqual(await coordinator.ensureActive(ctx, store), {
+		status: "inactive",
+		providerId: "radius",
+	});
+	assert.equal(keys.has("radius"), false);
+	assert.equal(
+		models.some((model) => model.id === "default-radius-model"),
+		true,
+	);
+	assert.deepEqual(refreshKeys, ["access-radius", undefined]);
+});
+
+test("Radius rebinds a retained selected model to its refreshed endpoint", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: { radius: { active: "work", accounts: { work: credential("radius") } } },
+	});
+	const mock = createMockPi();
+	const { models, registry } = runtimeHarness(mock);
+	const selected = registry.find("radius", "radius-model");
+	assert.ok(selected);
+	registry.refresh = async () => {
+		const radius = models.find((model) => model.provider === "radius");
+		assert.ok(radius);
+		radius.baseUrl = "https://account.radius.example";
+		return { aborted: false, errors: new Map<string, Error>() };
+	};
+	const { ctx } = createMockContext({ model: selected, modelRegistry: registry });
+	const coordinator = new RuntimeAuthCoordinator(mock.pi, fakeProvider("radius"));
+
+	assert.equal((await coordinator.ensureActive(ctx, store)).status, "active");
+	assert.equal(mock.setModels.length, 1);
+	assert.equal(
+		(mock.setModels[0] as { baseUrl?: string }).baseUrl,
+		"https://account.radius.example",
+	);
+});
+
+test("Radius fails closed when the selected model disappears from the refreshed catalog", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: { radius: { active: "work", accounts: { work: credential("radius") } } },
+	});
+	const mock = createMockPi();
+	const { keys, models, registry } = runtimeHarness(mock);
+	const selected = registry.find("radius", "radius-model");
+	assert.ok(selected);
+	registry.refresh = async () => {
+		models.splice(
+			models.findIndex((model) => model.provider === "radius"),
+			1,
+		);
+		return { aborted: false, errors: new Map<string, Error>() };
+	};
+	const { ctx } = createMockContext({ model: selected, modelRegistry: registry });
+	const coordinator = new RuntimeAuthCoordinator(mock.pi, fakeProvider("radius"));
+
+	const result = await coordinator.ensureActive(ctx, store);
+	assert.equal(result.status, "error");
+	if (result.status === "error") assert.match(result.message, /model radius-model is unavailable/);
+	assert.equal(keys.get("radius"), FAIL_CLOSED_API_KEY);
+});
+
+test("Radius catalog refresh errors fail closed", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: { radius: { active: "work", accounts: { work: credential("radius") } } },
+	});
+	const mock = createMockPi();
+	const { keys, registry } = runtimeHarness(mock);
+	registry.refresh = async () => ({
+		aborted: false,
+		errors: new Map([["radius", new Error("catalog unavailable")]]),
+	});
+	const { ctx } = createMockContext({ modelRegistry: registry });
+	const coordinator = new RuntimeAuthCoordinator(mock.pi, fakeProvider("radius"));
+
+	const result = await coordinator.ensureActive(ctx, store);
+	assert.equal(result.status, "error");
+	if (result.status === "error") assert.match(result.message, /catalog unavailable/);
+	assert.equal(keys.get("radius"), FAIL_CLOSED_API_KEY);
+});
+
+test("a newer Radius account operation aborts stale catalog refresh work", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: { radius: { active: "work", accounts: { work: credential("radius-old") } } },
+	});
+	const mock = createMockPi();
+	const { keys, registry } = runtimeHarness(mock);
+	let firstSignal: AbortSignal | undefined;
+	let markFirstStarted!: () => void;
+	const firstStarted = new Promise<void>((resolve) => {
+		markFirstStarted = resolve;
+	});
+	let refreshes = 0;
+	registry.refresh = async (options) => {
+		refreshes += 1;
+		if (refreshes === 1) {
+			firstSignal = options.signal;
+			markFirstStarted();
+			await new Promise<void>((resolve) => {
+				if (options.signal?.aborted) resolve();
+				else options.signal?.addEventListener("abort", () => resolve(), { once: true });
+			});
+		}
+		return { aborted: options.signal?.aborted ?? false, errors: new Map<string, Error>() };
+	};
+	const { ctx } = createMockContext({ modelRegistry: registry });
+	const coordinator = new RuntimeAuthCoordinator(mock.pi, fakeProvider("radius"));
+
+	const stale = coordinator.ensureActive(ctx, store);
+	await firstStarted;
+	await store.updateProvider("radius", (state) => ({
+		...state,
+		accounts: { work: credential("radius-new") },
+	}));
+	const current = await coordinator.ensureActive(ctx, store);
+	assert.deepEqual(current, {
+		status: "active",
+		providerId: "radius",
+		accountName: "work",
+	});
+	assert.deepEqual(await stale, { status: "inactive", providerId: "radius" });
+	assert.equal(firstSignal?.aborted, true);
+	assert.equal(keys.get("radius"), "access-radius-new");
+});
+
+test("stale Radius default restoration cannot fail close a newer named activation", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: {
+			radius: {
+				active: "alpha",
+				accounts: { alpha: credential("radius-alpha"), beta: credential("radius-beta") },
+			},
+		},
+	});
+	const mock = createMockPi();
+	const { keys, registry } = runtimeHarness(mock);
+	let markDefaultStarted!: () => void;
+	const defaultStarted = new Promise<void>((resolve) => {
+		markDefaultStarted = resolve;
+	});
+	let refreshes = 0;
+	registry.refresh = async (options) => {
+		refreshes += 1;
+		if (refreshes === 2) {
+			markDefaultStarted();
+			await new Promise<void>((resolve) => {
+				if (options.signal?.aborted) resolve();
+				else options.signal?.addEventListener("abort", () => resolve(), { once: true });
+			});
+		}
+		return { aborted: options.signal?.aborted ?? false, errors: new Map<string, Error>() };
+	};
+	const { ctx } = createMockContext({ modelRegistry: registry });
+	const coordinator = new RuntimeAuthCoordinator(mock.pi, fakeProvider("radius"));
+	assert.equal((await coordinator.ensureActive(ctx, store)).status, "active");
+
+	await store.updateProvider("radius", (state) => ({ ...state, active: undefined }));
+	const staleDefault = coordinator.ensureActive(ctx, store);
+	await defaultStarted;
+	await store.updateProvider("radius", (state) => ({ ...state, active: "beta" }));
+	const current = await coordinator.ensureActive(ctx, store);
+
+	assert.equal(current.status, "active");
+	assert.deepEqual(await staleDefault, { status: "inactive", providerId: "radius" });
+	assert.equal(keys.get("radius"), "access-radius-beta");
+	assert.equal(refreshes, 3);
+});
+
+test("Radius retries when account selection changes during catalog publication", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: {
+			radius: {
+				active: "alpha",
+				accounts: { alpha: credential("radius-alpha"), beta: credential("radius-beta") },
+			},
+		},
+	});
+	const mock = createMockPi();
+	const { keys, registry } = runtimeHarness(mock);
+	let refreshes = 0;
+	registry.refresh = async () => {
+		refreshes += 1;
+		if (refreshes === 1) {
+			await store.updateProvider("radius", (state) => ({ ...state, active: "beta" }));
+		}
+		return { aborted: false, errors: new Map<string, Error>() };
+	};
+	const { ctx } = createMockContext({ modelRegistry: registry });
+	const coordinator = new RuntimeAuthCoordinator(mock.pi, fakeProvider("radius"));
+
+	assert.deepEqual(await coordinator.ensureActive(ctx, store), {
+		status: "active",
+		providerId: "radius",
+		accountName: "beta",
+	});
+	assert.equal(keys.get("radius"), "access-radius-beta");
+	assert.equal(refreshes, 2);
+});
+
+test("Radius menu cancellation aborts post-login catalog work and fails closed", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: { radius: { active: "work", accounts: { work: credential("radius") } } },
+	});
+	const mock = createMockPi();
+	const { keys, registry } = runtimeHarness(mock);
+	let markRefreshStarted!: () => void;
+	const refreshStarted = new Promise<void>((resolve) => {
+		markRefreshStarted = resolve;
+	});
+	registry.refresh = async (options) => {
+		markRefreshStarted();
+		await new Promise<void>((resolve) => {
+			if (options.signal?.aborted) resolve();
+			else options.signal?.addEventListener("abort", () => resolve(), { once: true });
+		});
+		return { aborted: options.signal?.aborted ?? false, errors: new Map<string, Error>() };
+	};
+	const { ctx } = createMockContext({ modelRegistry: registry });
+	const coordinator = new RuntimeAuthCoordinator(mock.pi, fakeProvider("radius"));
+	const owner = new AbortController();
+
+	const activation = coordinator.ensureActive(ctx, store, Date.now(), owner.signal);
+	await refreshStarted;
+	owner.abort(new DOMException("Menu cancelled", "AbortError"));
+	assert.equal((await activation).status, "error");
+	assert.equal(keys.get("radius"), FAIL_CLOSED_API_KEY);
+});
+
+test("Radius session replacement aborts the stale catalog refresh", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: { radius: { active: "work", accounts: { work: credential("radius") } } },
+	});
+	const mock = createMockPi();
+	accountsExtension(mock.pi, { store, providers: [fakeProvider("radius")] });
+	const { keys, registry } = runtimeHarness(mock);
+	let firstSignal: AbortSignal | undefined;
+	let markFirstStarted!: () => void;
+	const firstStarted = new Promise<void>((resolve) => {
+		markFirstStarted = resolve;
+	});
+	let refreshes = 0;
+	registry.refresh = async (options) => {
+		refreshes += 1;
+		if (refreshes === 1) {
+			firstSignal = options.signal;
+			markFirstStarted();
+			await new Promise<void>((resolve) => {
+				if (options.signal?.aborted) resolve();
+				else options.signal?.addEventListener("abort", () => resolve(), { once: true });
+			});
+		}
+		return { aborted: options.signal?.aborted ?? false, errors: new Map<string, Error>() };
+	};
+	const oldContext = createMockContext({ modelRegistry: registry, sessionManager: {} }).ctx;
+	const newContext = createMockContext({ modelRegistry: registry, sessionManager: {} }).ctx;
+
+	const oldStart = mock.events.get("session_start")?.[0]?.({}, oldContext);
+	await firstStarted;
+	await mock.events.get("session_start")?.[0]?.({}, newContext);
+	await oldStart;
+	assert.equal(firstSignal?.aborted, true);
+	assert.equal(refreshes, 2);
+	assert.equal(keys.get("radius"), "access-radius");
+});
+
+test("Radius session shutdown aborts a pending catalog refresh and removes runtime auth", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: { radius: { active: "work", accounts: { work: credential("radius") } } },
+	});
+	const mock = createMockPi();
+	accountsExtension(mock.pi, { store, providers: [fakeProvider("radius")] });
+	const { keys, registry } = runtimeHarness(mock);
+	let refreshSignal: AbortSignal | undefined;
+	let markRefreshStarted!: () => void;
+	const refreshStarted = new Promise<void>((resolve) => {
+		markRefreshStarted = resolve;
+	});
+	registry.refresh = async (options) => {
+		refreshSignal = options.signal;
+		markRefreshStarted();
+		await new Promise<void>((resolve) => {
+			if (options.signal?.aborted) resolve();
+			else options.signal?.addEventListener("abort", () => resolve(), { once: true });
+		});
+		return { aborted: options.signal?.aborted ?? false, errors: new Map<string, Error>() };
+	};
+	const { ctx } = createMockContext({ modelRegistry: registry });
+
+	const start = mock.events.get("session_start")?.[0]?.({}, ctx);
+	await refreshStarted;
+	await mock.events.get("session_shutdown")?.[0]?.({}, ctx);
+	await start;
+	assert.equal(refreshSignal?.aborted, true);
+	assert.equal(keys.has("radius"), false);
+});
+
+test("Radius session shutdown restores the default catalog after clearing named auth", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: { radius: { active: "work", accounts: { work: credential("radius") } } },
+	});
+	const mock = createMockPi();
+	accountsExtension(mock.pi, { store, providers: [fakeProvider("radius")] });
+	const { keys, registry } = runtimeHarness(mock);
+	const refreshKeys: Array<string | undefined> = [];
+	registry.refresh = async () => {
+		refreshKeys.push(keys.get("radius"));
+		return { aborted: false, errors: new Map<string, Error>() };
+	};
+	const { ctx } = createMockContext({ modelRegistry: registry });
+
+	await mock.events.get("session_start")?.[0]?.({}, ctx);
+	assert.equal(keys.get("radius"), "access-radius");
+	await mock.events.get("session_shutdown")?.[0]?.({}, ctx);
+	assert.equal(keys.has("radius"), false);
+	assert.deepEqual(refreshKeys, ["access-radius", undefined]);
+});
+
+test("new provider adapters refresh expiring named credentials before activation", async () => {
+	for (const providerId of ["xai", "kimi-coding", "openrouter", "radius"] as const) {
 		const store = new AccountStore(new InMemoryAccountStorageBackend());
 		await store.write({
 			version: 1,
@@ -1297,7 +1917,7 @@ test("xAI and Kimi refresh expiring named credentials before activation", async 
 		);
 		assert.equal(
 			keys.get(providerId),
-			providerId === "xai" ? "access-xai-refreshed" : "pi-accounts-header-auth",
+			providerId === "kimi-coding" ? "pi-accounts-header-auth" : `access-${providerId}-refreshed`,
 		);
 	}
 });

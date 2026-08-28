@@ -41,7 +41,7 @@ export function cloneOAuthCredential(credential: OAuthCredential): OAuthCredenti
 		if (!clone || typeof clone !== "object" || Array.isArray(clone)) return undefined;
 		if (clone.type !== "oauth") return undefined;
 		if (typeof clone.access !== "string" || !clone.access) return undefined;
-		if (typeof clone.refresh !== "string" || !clone.refresh) return undefined;
+		if (typeof clone.refresh !== "string") return undefined;
 		if (typeof clone.expires !== "number" || !Number.isFinite(clone.expires)) return undefined;
 		return clone;
 	} catch {

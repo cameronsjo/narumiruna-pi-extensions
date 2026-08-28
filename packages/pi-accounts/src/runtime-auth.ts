@@ -1,11 +1,16 @@
 import type { ModelAuth, OAuthCredential, ProviderHeaders } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { AccountProviderAdapter, AccountProviderId } from "./oauth.js";
+import {
+	type AccountProviderAdapter,
+	type AccountProviderId,
+	resolveProviderOAuth,
+} from "./oauth.js";
 import { cloneOAuthCredential, parseCredentialRequest } from "./oauth-credential-source.js";
 
 export const RUNTIME_FAIL_CLOSED_API_KEY = "pi-accounts-auth-failed";
 const RUNTIME_HEADER_AUTH_SELECTOR = "pi-accounts-header-auth";
 const REFRESH_SKEW_MS = 5 * 60 * 1000;
+const SHUTDOWN_CATALOG_REFRESH_TIMEOUT_MS = 3_000;
 
 type RuntimeAuthStorage = {
 	setRuntimeApiKey(provider: string, apiKey: string): void | Promise<void>;
@@ -62,11 +67,12 @@ export class RuntimeAuthCoordinator {
 	private readonly overlay: RuntimeProviderOverlay;
 	private availableModelIds: ReadonlySet<string> | undefined;
 	private refreshController = new AbortController();
+	private catalogAuthIdentity: string | undefined;
 	private pendingCredentialOffer: PendingCredentialOffer | undefined;
 	private activeCredentialOffer: ActiveCredentialOffer | undefined;
 
 	constructor(
-		pi: ExtensionAPI,
+		private readonly pi: ExtensionAPI,
 		readonly provider: AccountProviderAdapter,
 		private readonly failClosedApiKey = RUNTIME_FAIL_CLOSED_API_KEY,
 	) {
@@ -78,14 +84,20 @@ export class RuntimeAuthCoordinator {
 		ctx: ExtensionContext,
 		store: RuntimeAccountStore,
 		now = Date.now(),
+		ownerSignal?: AbortSignal,
 	): Promise<EnsureActiveProviderAuthResult> {
 		this.clearCredentialOffer();
 		const operation = this.overlay.beginOperation();
 		const runtimeOverride = this.controller.begin(ctx);
-		const refreshSignal = this.refreshController.signal;
+		const operationSignal = this.beginRefreshOperation();
+		const refreshSignal = ownerSignal
+			? AbortSignal.any([operationSignal, ownerSignal])
+			: operationSignal;
 		let state: ProviderAccountState;
 		try {
+			refreshSignal.throwIfAborted();
 			state = await store.readProviderAsync(this.provider.id);
+			refreshSignal.throwIfAborted();
 		} catch (error) {
 			return this.failClosed(ctx, operation, runtimeOverride, "unknown", error);
 		}
@@ -93,10 +105,12 @@ export class RuntimeAuthCoordinator {
 		if (!active) {
 			this.availableModelIds = undefined;
 			try {
-				await this.controller.clear(ctx);
-				this.overlay.remove(ctx, operation);
+				await this.restoreDefault(ctx, operation, refreshSignal);
 				return { status: "inactive", providerId: this.provider.id };
 			} catch (error) {
+				if (!this.overlay.isCurrent(operation)) {
+					return { status: "inactive", providerId: this.provider.id };
+				}
 				return this.failClosed(
 					ctx,
 					this.overlay.beginOperation(),
@@ -122,12 +136,24 @@ export class RuntimeAuthCoordinator {
 				if (!this.overlay.isCurrent(operation)) {
 					return { status: "inactive", providerId: this.provider.id };
 				}
-				return this.ensureActive(ctx, store, now);
+				return this.ensureActive(ctx, store, now, ownerSignal);
 			}
 			this.availableModelIds = undefined;
-			await this.controller.clear(ctx);
-			this.overlay.remove(ctx, operation);
-			return { status: "inactive", providerId: this.provider.id };
+			try {
+				await this.restoreDefault(ctx, operation, refreshSignal);
+				return { status: "inactive", providerId: this.provider.id };
+			} catch (error) {
+				if (!this.overlay.isCurrent(operation)) {
+					return { status: "inactive", providerId: this.provider.id };
+				}
+				return this.failClosed(
+					ctx,
+					this.overlay.beginOperation(),
+					this.controller.begin(ctx),
+					"unknown",
+					error,
+				);
+			}
 		}
 
 		if (credential.expires <= now + REFRESH_SKEW_MS) {
@@ -141,7 +167,10 @@ export class RuntimeAuthCoordinator {
 					if (latestCredential.expires > now + REFRESH_SKEW_MS) return latest;
 					try {
 						refreshSignal.throwIfAborted();
-						const refreshed = await this.provider.oauth.refresh(latestCredential, refreshSignal);
+						const refreshed = await resolveProviderOAuth(this.provider, ctx).refresh(
+							latestCredential,
+							refreshSignal,
+						);
 						refreshSignal.throwIfAborted();
 						credential = refreshed;
 						return {
@@ -161,7 +190,7 @@ export class RuntimeAuthCoordinator {
 				if (!this.overlay.isCurrent(operation)) {
 					return { status: "inactive", providerId: this.provider.id };
 				}
-				return this.ensureActive(ctx, store, now);
+				return this.ensureActive(ctx, store, now, ownerSignal);
 			}
 			if (refreshError !== undefined) {
 				const selection = await this.activeCredentialMatches(store, active, credential);
@@ -179,7 +208,7 @@ export class RuntimeAuthCoordinator {
 					if (!this.overlay.isCurrent(operation)) {
 						return { status: "inactive", providerId: this.provider.id };
 					}
-					return this.ensureActive(ctx, store, now);
+					return this.ensureActive(ctx, store, now, ownerSignal);
 				}
 				return this.failClosed(ctx, operation, runtimeOverride, active, refreshError, credential);
 			}
@@ -188,7 +217,7 @@ export class RuntimeAuthCoordinator {
 		let auth: ModelAuth;
 		let runtimeApiKey: string;
 		try {
-			auth = await this.provider.oauth.toAuth(credential);
+			auth = await resolveProviderOAuth(this.provider, ctx).toAuth(credential);
 			runtimeApiKey = validateModelAuth(auth, this.provider);
 		} catch (error) {
 			const selection = await this.activeCredentialMatches(store, active, credential);
@@ -206,7 +235,7 @@ export class RuntimeAuthCoordinator {
 				if (!this.overlay.isCurrent(operation)) {
 					return { status: "inactive", providerId: this.provider.id };
 				}
-				return this.ensureActive(ctx, store, now);
+				return this.ensureActive(ctx, store, now, ownerSignal);
 			}
 			return this.failClosed(ctx, operation, runtimeOverride, active, error, credential);
 		}
@@ -219,11 +248,12 @@ export class RuntimeAuthCoordinator {
 			if (!this.overlay.isCurrent(operation)) {
 				return { status: "inactive", providerId: this.provider.id };
 			}
-			return this.ensureActive(ctx, store, now);
+			return this.ensureActive(ctx, store, now, ownerSignal);
 		}
 
 		try {
-			const availableModelIds = readAvailableModelIds(credential);
+			refreshSignal.throwIfAborted();
+			let availableModelIds = readAvailableModelIds(credential);
 			if (!this.overlay.apply(ctx, operation, auth, availableModelIds)) {
 				return { status: "inactive", providerId: this.provider.id };
 			}
@@ -232,7 +262,30 @@ export class RuntimeAuthCoordinator {
 			if (applied === "unavailable") {
 				throw new Error(`Pi did not retain the runtime ${this.provider.displayName} credential.`);
 			}
+			refreshSignal.throwIfAborted();
+			const catalogModelIds = await this.refreshModelCatalog(
+				ctx,
+				refreshSignal,
+				`account:${credential.access}`,
+			);
+			if (catalogModelIds) availableModelIds = catalogModelIds;
+			await this.rebindRefreshedModel(ctx, operation);
+			if (!this.overlay.isCurrent(operation)) {
+				return { status: "inactive", providerId: this.provider.id };
+			}
+			const refreshedSelection = await this.activeCredentialMatches(store, active, credential);
+			if (refreshedSelection.error !== undefined) {
+				throw refreshedSelection.error;
+			}
+			if (!refreshedSelection.matches) {
+				if (!this.overlay.isCurrent(operation)) {
+					return { status: "inactive", providerId: this.provider.id };
+				}
+				return this.ensureActive(ctx, store, now, ownerSignal);
+			}
+			refreshSignal.throwIfAborted();
 			await this.verifyOverlay(ctx, auth, availableModelIds);
+			refreshSignal.throwIfAborted();
 			if (!this.overlay.isCurrent(operation)) {
 				return { status: "inactive", providerId: this.provider.id };
 			}
@@ -296,6 +349,69 @@ export class RuntimeAuthCoordinator {
 		this.activeCredentialOffer = undefined;
 	}
 
+	private beginRefreshOperation(): AbortSignal {
+		this.refreshController.abort(new DOMException("Account operation superseded", "AbortError"));
+		this.refreshController = new AbortController();
+		return this.refreshController.signal;
+	}
+
+	private async restoreDefault(
+		ctx: ExtensionContext,
+		operation: number,
+		signal: AbortSignal,
+	): Promise<void> {
+		signal.throwIfAborted();
+		await this.controller.clear(ctx);
+		signal.throwIfAborted();
+		if (this.catalogAuthIdentity !== undefined) {
+			await this.refreshModelCatalog(ctx, signal, "default");
+			await this.rebindRefreshedModel(ctx, operation);
+		}
+		if (!this.overlay.isCurrent(operation)) return;
+		this.overlay.remove(ctx, operation);
+	}
+
+	private async refreshModelCatalog(
+		ctx: ExtensionContext,
+		signal: AbortSignal,
+		authIdentity: string,
+	): Promise<string[] | undefined> {
+		if (!this.provider.refreshModelCatalogAfterAuth) return undefined;
+		if (this.catalogAuthIdentity !== authIdentity) {
+			const result = await ctx.modelRegistry.refresh({
+				allowNetwork: true,
+				providers: [this.provider.id],
+				signal,
+			});
+			signal.throwIfAborted();
+			const error = result.errors.get(this.provider.id);
+			if (error) throw error;
+			if (result.aborted) {
+				throw new Error(`${this.provider.displayName} model catalog refresh was aborted.`);
+			}
+			this.catalogAuthIdentity = authIdentity;
+		}
+		return readProviderModels(ctx, this.provider.id).map((model) => model.id);
+	}
+
+	private async rebindRefreshedModel(ctx: ExtensionContext, operation: number): Promise<void> {
+		if (!this.provider.refreshModelCatalogAfterAuth || ctx.model?.provider !== this.provider.id)
+			return;
+		const refreshed = ctx.modelRegistry.find(this.provider.id, ctx.model.id);
+		if (!refreshed) {
+			throw new Error(
+				`${this.provider.displayName} model ${ctx.model.id} is unavailable after catalog refresh.`,
+			);
+		}
+		if (sameModelDefinition(ctx.model, refreshed)) return;
+		if (!(await this.pi.setModel(refreshed))) {
+			throw new Error(
+				`Pi could not select the refreshed ${this.provider.displayName} model ${refreshed.id}.`,
+			);
+		}
+		if (!this.overlay.isCurrent(operation)) return;
+	}
+
 	async forceFailClosed(
 		ctx: ExtensionContext,
 		accountName: string,
@@ -312,20 +428,35 @@ export class RuntimeAuthCoordinator {
 		);
 	}
 
-	invalidate(ctx: ExtensionContext): void {
+	invalidate(ctx: ExtensionContext, resetCatalogIdentity = true): void {
 		this.clearCredentialOffer();
+		if (resetCatalogIdentity) this.catalogAuthIdentity = undefined;
 		this.overlay.beginOperation();
 		this.controller.invalidate(ctx);
 		this.refreshController.abort(new DOMException("Account refresh invalidated", "AbortError"));
 		this.refreshController = new AbortController();
 	}
 
-	async clear(ctx: ExtensionContext): Promise<void> {
+	async clear(ctx: ExtensionContext, restoreDefaultCatalog = false): Promise<void> {
 		this.clearCredentialOffer();
 		const operation = this.overlay.beginOperation();
 		this.availableModelIds = undefined;
 		await this.controller.clear(ctx);
-		this.overlay.remove(ctx, operation);
+		try {
+			if (restoreDefaultCatalog && this.catalogAuthIdentity !== undefined) {
+				await this.refreshModelCatalog(
+					ctx,
+					AbortSignal.any([
+						this.refreshController.signal,
+						AbortSignal.timeout(SHUTDOWN_CATALOG_REFRESH_TIMEOUT_MS),
+					]),
+					"default",
+				);
+			}
+		} finally {
+			this.overlay.remove(ctx, operation);
+			if (!restoreDefaultCatalog) this.catalogAuthIdentity = undefined;
+		}
 	}
 
 	private async failClosed(
@@ -623,6 +754,15 @@ class RuntimeApiKeyController {
 			this.states.set(target, state);
 		}
 		return state;
+	}
+}
+
+function sameModelDefinition(left: unknown, right: unknown): boolean {
+	if (left === right) return true;
+	try {
+		return JSON.stringify(left) === JSON.stringify(right);
+	} catch {
+		return false;
 	}
 }
 

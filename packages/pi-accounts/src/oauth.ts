@@ -8,6 +8,7 @@ import {
 } from "@earendil-works/pi-ai";
 import {
 	type ExtensionCommandContext,
+	type ExtensionContext,
 	ExtensionSelectorComponent,
 	LoginDialogComponent,
 } from "@earendil-works/pi-coding-agent";
@@ -17,6 +18,8 @@ export const SUPPORTED_PROVIDER_IDS = [
 	"github-copilot",
 	"kimi-coding",
 	"openai-codex",
+	"openrouter",
+	"radius",
 	"xai",
 ] as const;
 
@@ -30,6 +33,8 @@ export type AccountProviderAdapter = {
 	oauth: ProviderOwnedOAuth;
 	requiresApiKeyBridge: boolean;
 	runtimeAuthMode: "api-key" | "authorization-header";
+	refreshModelCatalogAfterAuth?: boolean;
+	resolveOAuth?: (ctx: Pick<ExtensionContext, "modelRegistry">) => ProviderOwnedOAuth;
 	defaultModelId?: string;
 	invalidateConnections?: (sessionId?: string) => unknown | Promise<unknown>;
 };
@@ -85,6 +90,26 @@ export function createBuiltinProviderAdapters(
 			oauth: createLazyProviderOwnedOAuth("kimi-coding", loader),
 		},
 		{
+			id: "openrouter",
+			displayName: "OpenRouter",
+			requiresApiKeyBridge: false,
+			runtimeAuthMode: "api-key",
+			oauth: createLazyProviderOwnedOAuth("openrouter", loader),
+		},
+		{
+			id: "radius",
+			displayName: "Radius",
+			requiresApiKeyBridge: false,
+			runtimeAuthMode: "api-key",
+			refreshModelCatalogAfterAuth: true,
+			resolveOAuth: (ctx) => {
+				const oauth = ctx.modelRegistry.getProvider("radius")?.auth.oauth;
+				if (!oauth) throw new Error("Pi's active Radius OAuth provider is unavailable.");
+				return oauth;
+			},
+			oauth: createLazyProviderOwnedOAuth("radius", loader),
+		},
+		{
 			id: "xai",
 			displayName: "xAI",
 			requiresApiKeyBridge: false,
@@ -92,6 +117,13 @@ export function createBuiltinProviderAdapters(
 			oauth: createLazyProviderOwnedOAuth("xai", loader),
 		},
 	];
+}
+
+export function resolveProviderOAuth(
+	adapter: AccountProviderAdapter,
+	ctx: Pick<ExtensionContext, "modelRegistry">,
+): ProviderOwnedOAuth {
+	return adapter.resolveOAuth?.(ctx) ?? adapter.oauth;
 }
 
 export function createOAuthInteraction(
@@ -111,11 +143,12 @@ export async function loginWithOAuthUI(
 	adapter: AccountProviderAdapter,
 	signal: AbortSignal,
 ): Promise<OAuthCredential> {
+	const oauth = resolveProviderOAuth(adapter, ctx);
 	if (ctx.mode !== "tui") {
-		return adapter.oauth.login(createOAuthInteraction(ctx, adapter.displayName, signal));
+		return oauth.login(createOAuthInteraction(ctx, adapter.displayName, signal));
 	}
 	const result = await ctx.ui.custom<NativeOAuthLoginResult>((tui, _theme, _keybindings, done) => {
-		const flow = new NativeOAuthLoginFlow(tui, adapter, signal, done);
+		const flow = new NativeOAuthLoginFlow(tui, adapter, oauth, signal, done);
 		flow.start();
 		return flow;
 	});
@@ -145,7 +178,8 @@ class NativeOAuthLoginFlow {
 
 	constructor(
 		private readonly tui: ConstructorParameters<typeof LoginDialogComponent>[0],
-		private readonly adapter: AccountProviderAdapter,
+		adapter: AccountProviderAdapter,
+		private readonly oauth: ProviderOwnedOAuth,
 		ownerSignal: AbortSignal,
 		private readonly done: (result: NativeOAuthLoginResult) => void,
 	) {
@@ -173,7 +207,7 @@ class NativeOAuthLoginFlow {
 			this.finish({ ok: false, error: new Error("Login cancelled") });
 			return;
 		}
-		const login = this.adapter.oauth.login({
+		const login = this.oauth.login({
 			signal: this.signal,
 			prompt: (prompt) => this.prompt(prompt),
 			notify: (event) => this.notify(event),

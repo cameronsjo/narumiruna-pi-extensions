@@ -1,14 +1,14 @@
-# 🔐 pi-accounts — Switch Between Subscription OAuth Accounts
+# 🔐 pi-accounts — Switch Between OAuth Accounts
 
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-accounts)](https://www.npmjs.com/package/@narumitw/pi-accounts) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-Save and switch named OpenAI Codex, Anthropic, GitHub Copilot, Kimi For Coding, and xAI subscription accounts without replacing Pi's built-in provider integrations.
+Save and switch named OpenAI Codex, Anthropic, GitHub Copilot, Kimi For Coding, OpenRouter, Radius, and xAI OAuth accounts without replacing Pi's built-in provider integrations.
 
 Each selection overrides only the chosen provider, and selecting `default` restores Pi's normal authentication without deleting saved accounts.
 
 ## ✨ Features
 
-- Manages named OpenAI Codex, Anthropic Claude Pro/Max, GitHub Copilot, Kimi For Coding, and xAI OAuth accounts through `/accounts`.
+- Manages named OpenAI Codex, Anthropic Claude Pro/Max, GitHub Copilot, Kimi For Coding, OpenRouter, Radius, and xAI OAuth accounts through `/accounts`.
 - Keeps an independent selected account—or Pi's default login—for each provider.
 - Applies provider-specific credentials, endpoints, headers, and model availability through Pi's built-in providers.
 - Refreshes rotating credentials safely and verifies effective runtime authentication before reporting success.
@@ -24,6 +24,8 @@ Each selection overrides only the chosen provider, and selecting `default` resto
 | Anthropic | `anthropic` | Claude Pro/Max OAuth without interfering with Anthropic API-key auth after returning to `default` |
 | GitHub Copilot | `github-copilot` | Individual or Enterprise login, credential-derived API endpoint, and account-specific available models |
 | Kimi For Coding | `kimi-coding` | Kimi Code subscription OAuth with provider-owned Bearer-header authentication |
+| OpenRouter | `openrouter` | OpenRouter OAuth that mints a persistent account API key without managing manually entered API-key profiles |
+| Radius | `radius` | Gateway-bound OAuth with credential-specific dynamic model-catalog refresh and selected-model rebinding |
 | xAI | `xai` | SuperGrok or X Premium OAuth with the native xAI provider and model catalog |
 
 > [!WARNING]
@@ -98,6 +100,8 @@ Active accounts:
   GitHub Copilot: enterprise
   Kimi For Coding: fast
   OpenAI Codex: default
+  OpenRouter: credits
+  Radius: work
   xAI: personal
 
 What do you want to do?
@@ -153,6 +157,15 @@ Kimi's provider-owned OAuth returns an `Authorization: Bearer` header instead of
 The extension applies that header and installs a non-secret runtime selector to displace Pi's default Kimi credential.
 Activation verifies the effective Bearer header and fails closed before a turn if Pi does not retain it.
 
+OpenRouter's provider-owned OAuth returns a persistent API key represented as an OAuth credential with an empty refresh token.
+The extension preserves that exact provider credential and does not treat it as a manually managed API-key profile.
+
+Radius OAuth is bound to the active `radius` provider's configured gateway.
+The extension refreshes Radius's dynamic model catalog when the session or effective named credential changes, rebinds a retained selected model to its refreshed endpoint, and fails closed if the selected model disappears or catalog publication fails.
+Selecting `default` refreshes the Radius catalog against Pi's restored credential after a named account was active.
+Shutdown removes named Radius authentication and makes a bounded attempt to restore the default catalog; Pi's next catalog refresh remains the recovery path if the gateway is unavailable during shutdown.
+Custom gateways configured for the `radius` provider ID are supported, while arbitrary Radius provider aliases are not.
+
 ## 🗄️ Storage and migration
 
 The canonical file is:
@@ -176,8 +189,8 @@ On first load, if `pi-accounts.json` does not exist and released `pi-codex-accou
 
 If both files exist, `pi-accounts.json` is canonical and the legacy file is not imported again.
 The retained legacy refresh token may become stale after `pi-accounts` rotates it, so rollback can require a new Codex login.
-Older `pi-accounts` releases that predate xAI and Kimi support reject files containing those provider sections.
-Back up the file and remove the `xai` and `kimi-coding` sections only after stopping Pi before downgrading.
+Older `pi-accounts` releases that predate these providers reject files containing their provider sections.
+Back up the file and remove the `kimi-coding`, `openrouter`, `radius`, and `xai` sections only after stopping Pi before downgrading.
 
 ### Rollback
 
@@ -191,8 +204,8 @@ It is excluded from active workspace checks, version bumps, and publishing.
 
 ## 🚧 Limitations
 
-- This package manages only subscription OAuth accounts.
-  It does not store or switch API-key profiles.
+- This package manages only provider-owned OAuth accounts.
+  It does not store or switch manually entered API-key profiles.
 - Continue using Pi's `auth.json`, environment variables, or `!command` secret-manager resolution for API keys.
 - It does not rotate accounts automatically, evade quotas, or report usage.
 - It does not support arbitrary custom providers.
@@ -216,7 +229,8 @@ packages/pi-accounts/
 ├── test/
 │   ├── accounts-storage.test.ts
 │   ├── accounts.test.ts
-│   └── build-runtime.test.ts
+│   ├── build-runtime.test.ts
+│   └── radius.test.ts
 ├── README.md
 ├── LICENSE
 ├── tsconfig.json
@@ -235,7 +249,7 @@ The package exposes its Pi extension through `package.json`:
 
 ## 🔎 Keywords
 
-Pi extension, Pi coding agent, OAuth accounts, OpenAI Codex, ChatGPT Plus, ChatGPT Pro, Anthropic, Claude Pro, Claude Max, GitHub Copilot, GitHub Enterprise, Kimi For Coding, Kimi Code, xAI, Grok, SuperGrok, X Premium, subscription account switching.
+Pi extension, Pi coding agent, OAuth accounts, OpenAI Codex, ChatGPT Plus, ChatGPT Pro, Anthropic, Claude Pro, Claude Max, GitHub Copilot, GitHub Enterprise, Kimi For Coding, Kimi Code, OpenRouter, Radius, xAI, Grok, SuperGrok, X Premium, account switching.
 
 ## 📄 License
 
