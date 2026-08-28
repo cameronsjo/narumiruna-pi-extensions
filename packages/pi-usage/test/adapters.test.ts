@@ -348,7 +348,7 @@ test("Codex adapter preserves windows, credits, and model-specific statusline bu
 	const statusNow = 1_000_000;
 	assert.equal(
 		formatUsageStatusline(report, undefined, statusNow),
-		"codex 40% (resets in 2h 30m) 20% (resets in 2d 15m)",
+		"codex 40% ↻ 2h30m 20% ↻ 2d15m",
 	);
 	assert.equal(formatUsageStatusline(report, undefined, statusNow, false), "codex 40% 5h 20% wk");
 	assert.equal(

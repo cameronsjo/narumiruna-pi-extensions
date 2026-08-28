@@ -75,7 +75,7 @@ function memorySettingsRuntime(
 	let state: UsageSettingsState = {
 		kind,
 		path: "/tmp/pi-usage.json",
-		settings: { codexFastMode: false, xaiUsage },
+		settings: { codexFastMode: false, codexStatusResetCountdown: false, xaiUsage },
 		...(kind === "invalid"
 			? { issue: "invalid test settings" }
 			: { document: { codexFastMode: false, xaiUsage } }),
@@ -340,7 +340,7 @@ test("current Codex usage can redeem a selected reset and refresh account state"
 	});
 	assert.equal(new Headers(consume.init?.headers).get("chatgpt-account-id"), "account-123");
 	assert.ok(usageRequests >= 2);
-	assert.equal(statuses.get("usage"), "codex 100% 5h");
+	assert.equal(statuses.get("usage"), "codex 100%");
 	assert.match(titles.at(-1) ?? "", /Usage reset.*0 usage limit resets left/isu);
 });
 
@@ -1336,11 +1336,11 @@ test("a slow command cannot overwrite status after the selected model changes", 
 	Object.assign(ctx, { model: codexModel });
 	mock.events.get("model_select")?.[0]?.({ model: codexModel }, ctx);
 	await settle();
-	assert.equal(statuses.get("usage"), "codex 80% 5h");
+	assert.equal(statuses.get("usage"), "codex 80%");
 
 	resolveSlowFetch(await usageFetch("https://openrouter.ai/api/v1/key"));
 	await commandPromise;
-	assert.equal(statuses.get("usage"), "codex 80% 5h");
+	assert.equal(statuses.get("usage"), "codex 80%");
 });
 
 test("statusline follows runtime auth changes and clears for unsupported selected providers", async (t) => {
@@ -1992,6 +1992,7 @@ test("Ctrl+C hard-cancels Settings before conflicting configurable actions", asy
 	assert.equal(changed, false);
 	assert.deepEqual(settings.state().settings, {
 		codexFastMode: false,
+		codexStatusResetCountdown: false,
 		xaiUsage: false,
 	});
 	assert.equal(applied, 0);

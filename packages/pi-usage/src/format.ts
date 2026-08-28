@@ -368,7 +368,7 @@ function formatCodexStatusline(
 			continue;
 		}
 		const reset = formatResetCountdown(bucket.resetsAt, now);
-		parts.push(`${percent}${reset ? ` (resets in ${reset})` : ""}`);
+		parts.push(`${percent}${reset ? ` ↻ ${reset}` : ""}`);
 	}
 	return parts.length > 1 ? parts.join(" ") : formatCodexCreditsStatus(report);
 }
@@ -484,12 +484,10 @@ function formatResetCountdown(resetsAt: number | undefined, now: number): string
 			hours > 0 ? `${String(hours)}h` : minutes > 0 ? `${String(minutes)}m` : "",
 		]
 			.filter(Boolean)
-			.join(" ");
+			.join("");
 	}
 	if (hours > 0)
-		return [`${String(hours)}h`, minutes > 0 ? `${String(minutes)}m` : ""]
-			.filter(Boolean)
-			.join(" ");
+		return [`${String(hours)}h`, minutes > 0 ? `${String(minutes)}m` : ""].filter(Boolean).join("");
 	return `${String(minutes)}m`;
 }
 
