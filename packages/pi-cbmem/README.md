@@ -1,8 +1,8 @@
 # 🧠 pi-cbmem — Codebase Memory Tools for Pi
 
-[![npm: private](https://img.shields.io/badge/npm-private-lightgrey)](#-install) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
+[![npm](https://img.shields.io/npm/v/@narumitw/pi-cbmem)](https://www.npmjs.com/package/@narumitw/pi-cbmem) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-pi-cbmem is a private package that bundles the local Codebase Memory extension and its knowledge-graph operating skill.
+pi-cbmem bundles the Codebase Memory extension and its knowledge-graph operating skill.
 
 ## ✨ Features
 
@@ -13,15 +13,19 @@ pi-cbmem is a private package that bundles the local Codebase Memory extension a
 
 ## 📦 Install
 
-This package is private and is not published to npm.
-
-Install it from this repository checkout:
+Install persistently from npm:
 
 ```bash
-pi install ./packages/pi-cbmem
+pi install npm:@narumitw/pi-cbmem
 ```
 
-Build and try it without adding a persistent package setting:
+Try from npm without installing permanently:
+
+```bash
+pi -e npm:@narumitw/pi-cbmem
+```
+
+Build and load the package from a repository checkout:
 
 ```bash
 npm --workspace @narumitw/pi-cbmem run build
@@ -109,7 +113,7 @@ packages/pi-cbmem/
 ├── test/
 │   ├── build-runtime.test.ts       # Generated-runtime and Jiti loader coverage
 │   └── cbmem.test.ts               # Tool registration coverage
-├── package.json                    # Private Pi extension and skill declarations
+├── package.json                    # Pi extension and skill declarations
 ├── tsconfig.json
 ├── README.md
 └── LICENSE
