@@ -1,6 +1,6 @@
 ---
 name: using-pi-subagents
-description: Operate pi-subagents background jobs safely, including direct-work decisions, least-privilege tool selection, thinking-level selection, delegation, question replies, parallel starts, timeout selection, waiting, cancellation, result handling, verification, and writer isolation.
+description: Operate pi-subagents jobs safely, including direct-work decisions, least-privilege tool selection, thinking-level selection, delegation, question replies, parallel starts, timeout selection, waiting, cancellation, result handling, verification, and writer isolation.
 license: MIT
 ---
 
@@ -20,7 +20,7 @@ Nested subagents are unsupported.
 
 ## Spawn one least-privilege job
 
-Use `subagent-spawn` for one background job.
+Use `subagent-spawn` for one subagent job.
 
 The task defines the child's specialization, objective, constraints, and expected result.
 

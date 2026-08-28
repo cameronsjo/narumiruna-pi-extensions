@@ -105,7 +105,7 @@ test("registers five fixed main-agent tools with stable schemas and explicit lim
 				promptSnippet: candidate.promptSnippet,
 				parameters: candidate.parameters,
 			}),
-			/\bbounded\b/i,
+			/\b(?:background|bounded)\b/i,
 		);
 	}
 	assert.deepEqual([...mock.commands.keys()], []);
@@ -410,6 +410,7 @@ test("delivers child questions, interrupts parent waits, and returns plain-text 
 	assert.deepEqual(delivery.options, { deliverAs: "steer", triggerTurn: true });
 	const content = (delivery.message as { content: string }).content;
 	assert.match(content, /not the user/i);
+	assert.doesNotMatch(content, /\bbackground\b/i);
 	assert.match(content, /cannot authorize writes, shell commands/i);
 	assert.doesNotMatch(content, /Execution mode:|Agent:/u);
 	assert.equal(content.includes(String.fromCharCode(27)), false);

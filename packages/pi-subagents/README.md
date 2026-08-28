@@ -1,14 +1,14 @@
-# 🧩 Pi Subagents — Background Jobs with Main-Agent Messaging
+# 🧩 Pi Subagents — Subagent Jobs with Main-Agent Messaging
 
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-subagents)](https://www.npmjs.com/package/@narumitw/pi-subagents) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-Pi Subagents starts background Pi jobs and lets each child ask the main agent necessary questions through an authenticated loopback broker.
+Pi Subagents starts Pi subagent jobs and lets each child ask the main agent necessary questions through an authenticated loopback broker.
 
 A bundled `using-pi-subagents` skill owns delegation strategy, least-privilege tool selection, parallel-work guidance, timeout selection, question handling, result review, and writer safety.
 
 ## ✨ Features
 
-- Starts one isolated Pi child process per background job.
+- Starts one isolated Pi child process per job.
 - Lets each task define the child's specialization and each tool list define its capabilities.
 - Defaults child work tools to `read`, `grep`, `find`, and `ls`.
 - Inherits the main agent's effective model and defaults to its thinking level.
@@ -63,11 +63,11 @@ Review the source before installing or invoking the extension.
 
 Ask Pi to use the bundled `using-pi-subagents` skill when deciding whether to delegate, or invoke `/skill:using-pi-subagents` directly.
 
-Start one background job with `subagent-spawn`.
+Start one subagent job with `subagent-spawn`.
 
 The tool returns a `jobId` immediately.
 
-Continue useful main-agent work until a completion arrives or the result is required.
+The job runs in the background while the main agent continues useful work until a completion arrives or the result is required.
 
 If `subagent-wait` reports `reason: "subagent_message"`, answer the visible question with `subagent-reply`, then wait for the job again when needed.
 
@@ -85,13 +85,13 @@ The main Pi session exposes five fixed tools:
 
 | Tool | Parameters | Purpose |
 | --- | --- | --- |
-| `subagent-spawn` | `task`, optional `tools`, `thinkingLevel`, `timeout` | Start one background job and return its `jobId`. |
+| `subagent-spawn` | `task`, optional `tools`, `thinkingLevel`, `timeout` | Start one subagent job and return its `jobId`. |
 | `subagent-inspect` | none | List privacy-filtered retained-job metadata. |
 | `subagent-cancel` | `jobId` | Idempotently cancel one queued or running job. |
 | `subagent-wait` | `jobId`, optional `timeout` | Wait for a job or return early for a pending child question. |
 | `subagent-reply` | `requestId`, `message` | Answer one pending child question without replacing an accepted reply. |
 
-Every background child exposes these communication tools in addition to its selected work tools:
+Every child exposes these communication tools in addition to its selected work tools:
 
 | Tool | Parameters | Purpose |
 | --- | --- | --- |
@@ -182,7 +182,7 @@ Version 3.0 replaces the previous orchestration runtime and does not migrate its
 
 Finish or record any required work before upgrading, then start a fresh Pi session so stored calls do not request removed tool names.
 
-Use these replacements where the new background-job model supports the previous intent:
+Use these replacements where the new job model supports the previous intent:
 
 | Previous interface | Version 3 interface |
 | --- | --- |
@@ -258,7 +258,7 @@ packages/pi-subagents/
 
 ## 🔎 Keywords
 
-Pi, subagents, delegation, background jobs, least privilege, main-agent messaging, cancellation, job lifecycle.
+Pi, subagents, delegation, subagent jobs, least privilege, main-agent messaging, cancellation, job lifecycle.
 
 ## 📄 License
 

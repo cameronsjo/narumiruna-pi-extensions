@@ -57,7 +57,7 @@ test("registers fixed ask and wait schemas and returns plain-text results", asyn
 				promptSnippet: tool.promptSnippet,
 				parameters: tool.parameters,
 			}),
-			/\bbounded\b/i,
+			/\b(?:background|bounded)\b/i,
 		);
 	}
 	assert.equal(
