@@ -62,7 +62,7 @@ const InspectParameters = Type.Object({}, { additionalProperties: false });
 const CancelParameters = Type.Object(
 	{
 		jobId: Type.String({
-			description: "Job ID returned by subagent-spawn.",
+			description: "Job ID returned by subagent_spawn.",
 			maxLength: MAX_IDENTIFIER_LENGTH,
 		}),
 	},
@@ -115,17 +115,17 @@ export function registerSubagentTools(
 	let lifecycle = Promise.resolve();
 
 	pi.registerTool({
-		name: "subagent-spawn",
+		name: "subagent_spawn",
 		label: "Subagent · Spawn",
 		description:
-			"Use subagent-spawn to start one Pi subagent job and return its jobId immediately. The task defines the child's specialization, and the selected tools define its capabilities. The job may ask the main agent questions and publishes one asynchronous completion when terminal.",
-		promptSnippet: "Use subagent-spawn to start one Pi subagent job",
+			"Use subagent_spawn to start one Pi subagent job and return its jobId immediately. The task defines the child's specialization, and the selected tools define its capabilities. The job may ask the main agent questions and publishes one asynchronous completion when terminal.",
+		promptSnippet: "Use subagent_spawn to start one Pi subagent job",
 		parameters: SpawnParameters,
 		prepareArguments: prepareSpawnArguments,
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			throwIfAborted(signal, "Subagent spawn was cancelled");
 			assertNotNested();
-			const task = validateTask(params.task, "subagent-spawn");
+			const task = validateTask(params.task, "subagent_spawn");
 			const tools = resolveTools(params.tools);
 			const model = resolveChildModel(ctx);
 			const thinkingLevel = resolveThinkingLevel(
@@ -147,11 +147,11 @@ export function registerSubagentTools(
 	});
 
 	pi.registerTool({
-		name: "subagent-inspect",
+		name: "subagent_inspect",
 		label: "Subagent · Inspect",
 		description:
-			"Use subagent-inspect to return one privacy-filtered snapshot of retained jobs without exposing task text, complete child output, prompts, selected tools, context, credentials, or broker messages.",
-		promptSnippet: "Use subagent-inspect to inspect retained subagent jobs",
+			"Use subagent_inspect to return one privacy-filtered snapshot of retained jobs without exposing task text, complete child output, prompts, selected tools, context, credentials, or broker messages.",
+		promptSnippet: "Use subagent_inspect to inspect retained subagent jobs",
 		parameters: InspectParameters,
 		async execute(_toolCallId, _params, signal) {
 			throwIfAborted(signal, "Subagent inspection was cancelled");
@@ -161,11 +161,11 @@ export function registerSubagentTools(
 	});
 
 	pi.registerTool({
-		name: "subagent-cancel",
+		name: "subagent_cancel",
 		label: "Subagent · Cancel",
 		description:
-			"Use subagent-cancel to idempotently cancel one queued or running job and release its process, timer, broker credentials, and temporary resources. Terminal jobs remain unchanged.",
-		promptSnippet: "Use subagent-cancel to cancel one active subagent job",
+			"Use subagent_cancel to idempotently cancel one queued or running job and release its process, timer, broker credentials, and temporary resources. Terminal jobs remain unchanged.",
+		promptSnippet: "Use subagent_cancel to cancel one active subagent job",
 		parameters: CancelParameters,
 		async execute(_toolCallId, params, signal) {
 			throwIfAborted(signal, "Subagent cancellation was cancelled");
@@ -174,11 +174,11 @@ export function registerSubagentTools(
 	});
 
 	pi.registerTool({
-		name: "subagent-wait",
+		name: "subagent_wait",
 		label: "Subagent · Wait",
 		description:
-			"Use subagent-wait to wait for one job to become terminal. A pending subagent question interrupts the wait without cancelling the job. A timeout or caller cancellation stops only this wait.",
-		promptSnippet: "Use subagent-wait to wait for one subagent job or incoming question",
+			"Use subagent_wait to wait for one job to become terminal. A pending subagent question interrupts the wait without cancelling the job. A timeout or caller cancellation stops only this wait.",
+		promptSnippet: "Use subagent_wait to wait for one subagent job or incoming question",
 		parameters: WaitParameters,
 		prepareArguments: prepareWaitArguments,
 		async execute(_toolCallId, params, signal) {
@@ -190,11 +190,11 @@ export function registerSubagentTools(
 	});
 
 	pi.registerTool({
-		name: "subagent-reply",
+		name: "subagent_reply",
 		label: "Subagent · Reply",
 		description:
-			"Use subagent-reply with a pending request ID to send one plain-text response to the requesting subagent. The first accepted reply is preserved.",
-		promptSnippet: "Use subagent-reply to answer one pending subagent question",
+			"Use subagent_reply with a pending request ID to send one plain-text response to the requesting subagent. The first accepted reply is preserved.",
+		promptSnippet: "Use subagent_reply to answer one pending subagent question",
 		parameters: ReplyParameters,
 		async execute(_toolCallId, params, signal) {
 			throwIfAborted(signal, "Subagent reply was cancelled");

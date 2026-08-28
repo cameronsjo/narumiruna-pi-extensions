@@ -59,8 +59,8 @@ A successful IPC design may remove:
 Any replacement must preserve:
 
 - A fresh child Pi process with no inherited main-agent conversation history.
-- Fixed `subagent-ask` and child `subagent-wait` tools.
-- Main-agent `subagent-reply` behavior.
+- Fixed `subagent_ask` and child `subagent_wait` tools.
+- Main-agent `subagent_reply` behavior.
 - Plain-text replies.
 - At most four outstanding requests per job.
 - The 50 KiB UTF-8 message limit and 2,000-line reply limit.

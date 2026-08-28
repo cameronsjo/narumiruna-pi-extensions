@@ -46,13 +46,13 @@ test("buildPiArgs isolates the child and preserves selected communication tools"
 	assert.equal(args[args.indexOf("--model") + 1], "test-provider/test-model");
 	assert.equal(args[args.indexOf("--thinking") + 1], "medium");
 	assert.ok(args.includes("--no-approve"));
-	assert.equal(args[args.indexOf("--tools") + 1], "read,grep,find,ls,subagent-ask,subagent-wait");
+	assert.equal(args[args.indexOf("--tools") + 1], "read,grep,find,ls,subagent_ask,subagent_wait");
 	assert.doesNotMatch(args.join(" "), /\bbash\b|\bwrite\b|append-system-prompt/u);
 	assert.equal(args.at(-1), "Task: task");
 
 	const writable = buildPiArgs(
 		childRequest({
-			tools: ["read", "bash", "write", "subagent-ask", "subagent-wait"],
+			tools: ["read", "bash", "write", "subagent_ask", "subagent_wait"],
 			thinkingLevel: "xhigh",
 			projectTrusted: true,
 		}),
@@ -61,11 +61,11 @@ test("buildPiArgs isolates the child and preserves selected communication tools"
 	assert.equal(writable[writable.indexOf("--thinking") + 1], "xhigh");
 	assert.equal(
 		writable[writable.indexOf("--tools") + 1],
-		"read,bash,write,subagent-ask,subagent-wait",
+		"read,bash,write,subagent_ask,subagent_wait",
 	);
 
 	const noWorkTools = buildPiArgs(childRequest({ tools: [] }));
-	assert.equal(noWorkTools[noWorkTools.indexOf("--tools") + 1], "subagent-ask,subagent-wait");
+	assert.equal(noWorkTools[noWorkTools.indexOf("--tools") + 1], "subagent_ask,subagent_wait");
 });
 
 test("runChild classifies completed and partial subprocess output", async () => {

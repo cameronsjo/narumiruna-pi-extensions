@@ -194,7 +194,7 @@ test("Pi's Jiti loader loads the generated extension and child bridge", async ()
 		assert.deepEqual([...(main?.messageRenderers.keys() ?? [])], ["pi-subagents-completion"]);
 		assert.deepEqual(
 			[...(main?.tools.keys() ?? [])],
-			["subagent-spawn", "subagent-inspect", "subagent-cancel", "subagent-wait", "subagent-reply"],
+			["subagent_spawn", "subagent_inspect", "subagent_cancel", "subagent_wait", "subagent_reply"],
 		);
 
 		const childLoader = new DefaultResourceLoader({

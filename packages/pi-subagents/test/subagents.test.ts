@@ -63,7 +63,7 @@ test("registers five fixed main-agent tools with stable schemas and explicit lim
 	const tools = mock.tools as unknown as RegisteredTool[];
 	assert.deepEqual(
 		tools.map((candidate) => candidate.name),
-		["subagent-spawn", "subagent-inspect", "subagent-cancel", "subagent-wait", "subagent-reply"],
+		["subagent_spawn", "subagent_inspect", "subagent_cancel", "subagent_wait", "subagent_reply"],
 	);
 	assert.equal(tools[0]?.parameters.properties?.task?.maxLength, 50 * 1024);
 	assert.equal(tools[0]?.parameters.properties?.tools?.maxItems, 64);
@@ -113,7 +113,7 @@ test("registers five fixed main-agent tools with stable schemas and explicit lim
 	const definitions = JSON.stringify(
 		tools.map(({ name, description, parameters }) => ({ name, description, parameters })),
 	);
-	await tool(mock, "subagent-inspect").execute("inspect", {}, undefined, undefined, context.ctx);
+	await tool(mock, "subagent_inspect").execute("inspect", {}, undefined, undefined, context.ctx);
 	assert.equal(
 		JSON.stringify(
 			tools.map(({ name, description, parameters }) => ({ name, description, parameters })),
@@ -186,14 +186,14 @@ test("spawns jobs with default and explicit tools and thinking levels", async ()
 		{ thinkingLevel: "medium" },
 		{ thinkingLevel: "high" },
 	);
-	const inherited = await tool(mock, "subagent-spawn").execute(
+	const inherited = await tool(mock, "subagent_spawn").execute(
 		"inherited",
 		{ task: "Review one thing", timeout: 1 },
 		undefined,
 		undefined,
 		context.ctx,
 	);
-	const explicit = await tool(mock, "subagent-spawn").execute(
+	const explicit = await tool(mock, "subagent_spawn").execute(
 		"explicit",
 		{
 			task: "Implement one thing",
@@ -249,7 +249,7 @@ test("shows active job timing, timeout, and selected tools above the editor", as
 		{},
 		{ mode: "tui" },
 	);
-	const first = await tool(mock, "subagent-spawn").execute(
+	const first = await tool(mock, "subagent_spawn").execute(
 		"first",
 		{ task: "First", tools: ["read", "edit"], timeout: 120 },
 		undefined,
@@ -315,7 +315,7 @@ test("falls back to the Pi thinking level when context has none", async () => {
 		},
 		{ thinkingLevel: "xhigh" },
 	);
-	const spawned = await tool(mock, "subagent-spawn").execute(
+	const spawned = await tool(mock, "subagent_spawn").execute(
 		"spawn",
 		{ task: "Reason carefully", tools: [] },
 		undefined,
@@ -335,14 +335,14 @@ test("rejects invalid spawn arguments and nesting before child launch", async ()
 			return completed("unexpected");
 		},
 	});
-	const spawn = tool(mock, "subagent-spawn");
+	const spawn = tool(mock, "subagent_spawn");
 	for (const params of [
 		{ task: "bad tools", tools: "read" },
 		{ task: "bad item", tools: [1] },
 		{ task: "too many", tools: Array.from({ length: 65 }, (_, index) => `tool_${index}`) },
 		{ task: "bad name", tools: ["read,bash"] },
 		{ task: "typo", tools: ["baash"] },
-		{ task: "extension tool", tools: ["subagent-spawn"] },
+		{ task: "extension tool", tools: ["subagent_spawn"] },
 		{ task: "bad thinking", thinkingLevel: "turbo" },
 		{ task: "bad timeout", timeout: 0 },
 	]) {
@@ -422,7 +422,7 @@ test("delivers child questions, interrupts parent waits, and returns plain-text 
 	});
 	const spawned = await spawnJob(mock, context, "Need one decision");
 	await Promise.resolve();
-	const parentWait = tool(mock, "subagent-wait").execute(
+	const parentWait = tool(mock, "subagent_wait").execute(
 		"parent-wait",
 		{ jobId: spawned.details.jobId },
 		undefined,
@@ -432,7 +432,7 @@ test("delivers child questions, interrupts parent waits, and returns plain-text 
 	const client = createBrokerClient(request.communication);
 	const questionText = "May I use option A?\u001b[31m";
 	const requestId = await client.ask(questionText, undefined);
-	const inspected = await tool(mock, "subagent-inspect").execute(
+	const inspected = await tool(mock, "subagent_inspect").execute(
 		"inspect-pending",
 		{},
 		undefined,
@@ -464,7 +464,7 @@ test("delivers child questions, interrupts parent waits, and returns plain-text 
 	assert.equal(content.includes(String.fromCharCode(27)), false);
 
 	const childWait = client.wait(requestId, undefined, undefined);
-	const replied = await tool(mock, "subagent-reply").execute(
+	const replied = await tool(mock, "subagent_reply").execute(
 		"reply",
 		{ requestId, message: "Use option A." },
 		undefined,
@@ -475,7 +475,7 @@ test("delivers child questions, interrupts parent waits, and returns plain-text 
 	assert.equal(await childWait, "Use option A.");
 	assert.deepEqual(
 		(
-			await tool(mock, "subagent-reply").execute(
+			await tool(mock, "subagent_reply").execute(
 				"duplicate",
 				{ requestId, message: "Replacement" },
 				undefined,
@@ -608,7 +608,7 @@ test("wait timeout leaves a job active and cancellation rejects stale output", a
 	await Promise.resolve();
 	assert.deepEqual(
 		(
-			await tool(mock, "subagent-wait").execute(
+			await tool(mock, "subagent_wait").execute(
 				"wait",
 				{ jobId, timeout: 0.001 },
 				undefined,
@@ -655,7 +655,7 @@ test("broker startup failure leaves inspect available and prevents child launch"
 				},
 			}),
 	});
-	const inspected = await tool(mock, "subagent-inspect").execute(
+	const inspected = await tool(mock, "subagent_inspect").execute(
 		"inspect",
 		{},
 		undefined,
@@ -759,15 +759,15 @@ function tool(mock: Mock, name: string): RegisteredTool {
 }
 
 function spawnJob(mock: Mock, context: Context, task: string) {
-	return tool(mock, "subagent-spawn").execute("spawn", { task }, undefined, undefined, context.ctx);
+	return tool(mock, "subagent_spawn").execute("spawn", { task }, undefined, undefined, context.ctx);
 }
 
 function waitFor(mock: Mock, context: Context, jobId: string) {
-	return tool(mock, "subagent-wait").execute("wait", { jobId }, undefined, undefined, context.ctx);
+	return tool(mock, "subagent_wait").execute("wait", { jobId }, undefined, undefined, context.ctx);
 }
 
 function cancelJob(mock: Mock, context: Context, jobId: string) {
-	return tool(mock, "subagent-cancel").execute(
+	return tool(mock, "subagent_cancel").execute(
 		"cancel",
 		{ jobId },
 		undefined,

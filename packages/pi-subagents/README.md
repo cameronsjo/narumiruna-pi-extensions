@@ -12,8 +12,8 @@ A bundled `using-pi-subagents` skill owns delegation strategy, least-privilege t
 - Lets each task define the child's specialization and each tool list define its capabilities.
 - Defaults child work tools to `read`, `grep`, `find`, and `ls`.
 - Inherits the main agent's effective model and defaults to its thinking level.
-- Gives every child fixed `subagent-ask` and `subagent-wait` communication tools.
-- Lets the main agent answer a pending child question with `subagent-reply`.
+- Gives every child fixed `subagent_ask` and `subagent_wait` communication tools.
+- Lets the main agent answer a pending child question with `subagent_reply`.
 - Interrupts a parent job wait when a question needs a main-agent response without cancelling the job.
 - Publishes one guarded asynchronous completion and releases child resources at terminal state.
 - Shows each active job's state, elapsed time, timeout, and selected work tools above the editor.
@@ -63,7 +63,7 @@ Review the source before installing or invoking the extension.
 
 Ask Pi to use the bundled `using-pi-subagents` skill when deciding whether to delegate, or invoke `/skill:using-pi-subagents` directly.
 
-Start one subagent job with `subagent-spawn`.
+Start one subagent job with `subagent_spawn`.
 
 The tool returns a `jobId` immediately.
 
@@ -71,13 +71,13 @@ The job runs in the background while the main agent continues useful work until 
 
 Completion messages follow Pi's global tool-output expansion state and `app.tools.expand` binding (`Ctrl+O` by default).
 
-If `subagent-wait` reports `reason: "subagent_message"`, answer the visible question with `subagent-reply`, then wait for the job again when needed.
+If `subagent_wait` reports `reason: "subagent_message"`, answer the visible question with `subagent_reply`, then wait for the job again when needed.
 
 In TUI mode, an above-editor widget shows one compact line for each queued or running job.
 
 Each line includes the job ID, current state, elapsed execution time, configured timeout or `no timeout`, and selected work tools.
 
-The fixed `subagent-ask` and child `subagent-wait` communication tools are omitted from the widget because every child receives them.
+The fixed `subagent_ask` and child `subagent_wait` communication tools are omitted from the widget because every child receives them.
 
 The widget disappears when no jobs remain active and is cleared during session replacement, reload, or shutdown.
 
@@ -87,18 +87,18 @@ The main Pi session exposes five fixed tools:
 
 | Tool | Parameters | Purpose |
 | --- | --- | --- |
-| `subagent-spawn` | `task`, optional `tools`, `thinkingLevel`, `timeout` | Start one subagent job and return its `jobId`. |
-| `subagent-inspect` | none | List privacy-filtered retained-job metadata. |
-| `subagent-cancel` | `jobId` | Idempotently cancel one queued or running job. |
-| `subagent-wait` | `jobId`, optional `timeout` | Wait for a job or return early for a pending child question. |
-| `subagent-reply` | `requestId`, `message` | Answer one pending child question without replacing an accepted reply. |
+| `subagent_spawn` | `task`, optional `tools`, `thinkingLevel`, `timeout` | Start one subagent job and return its `jobId`. |
+| `subagent_inspect` | none | List privacy-filtered retained-job metadata. |
+| `subagent_cancel` | `jobId` | Idempotently cancel one queued or running job. |
+| `subagent_wait` | `jobId`, optional `timeout` | Wait for a job or return early for a pending child question. |
+| `subagent_reply` | `requestId`, `message` | Answer one pending child question without replacing an accepted reply. |
 
 Every child exposes these communication tools in addition to its selected work tools:
 
 | Tool | Parameters | Purpose |
 | --- | --- | --- |
-| `subagent-ask` | `message` | Send one question to the main agent and return a `requestId`. |
-| `subagent-wait` | `requestId`, optional `timeout` | Wait for the main agent's plain-text reply. |
+| `subagent_ask` | `message` | Send one question to the main agent and return a `requestId`. |
+| `subagent_wait` | `requestId`, optional `timeout` | Wait for the main agent's plain-text reply. |
 
 Execution and wait timeouts use seconds, accept finite numbers greater than zero through 2,147,483.647, and have no default.
 
@@ -114,7 +114,7 @@ Each job may have up to four unanswered or not-yet-consumed question requests.
 
 The terminal states are `completed`, `partial`, `failed`, `timed_out`, and `cancelled`.
 
-`subagent-inspect` never returns complete task text, child output, prompts, selected tools, context, credentials, environment variables, questions, replies, or secrets.
+`subagent_inspect` never returns complete task text, child output, prompts, selected tools, context, credentials, environment variables, questions, replies, or secrets.
 
 See [`docs/tools.md`](./docs/tools.md) for the concise schema reference.
 
@@ -132,7 +132,7 @@ Omitting `tools` selects `read`, `grep`, `find`, and `ls`.
 
 Passing an empty list gives the child no work tools.
 
-The runtime always adds `subagent-ask` and child `subagent-wait` and removes duplicate names.
+The runtime always adds `subagent_ask` and child `subagent_wait` and removes duplicate names.
 
 Adding `edit` or `write` lets the child modify files.
 
@@ -140,9 +140,9 @@ Adding `bash` or `powershell` grants unrestricted command execution and can also
 
 The optional `thinkingLevel` accepts `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`.
 
-Omitting `thinkingLevel` captures the main agent's effective level when `subagent-spawn` executes.
+Omitting `thinkingLevel` captures the main agent's effective level when `subagent_spawn` executes.
 
-The child inherits the main agent's effective provider and model when `subagent-spawn` executes.
+The child inherits the main agent's effective provider and model when `subagent_spawn` executes.
 
 Spawn rejects providers registered by a parent extension because children disable unrelated extensions.
 
@@ -164,9 +164,9 @@ The child bridge reads and closes that descriptor before model tool execution.
 
 Each child communication tool call uses one request-scoped connection, while a response wait uses an abortable long poll.
 
-The first accepted `subagent-reply` wins, and repeated replies acknowledge the existing answer without replacing it.
+The first accepted `subagent_reply` wins, and repeated replies acknowledge the existing answer without replacing it.
 
-A child may retry `subagent-wait` after a wait timeout because the underlying request remains active.
+A child may retry `subagent_wait` after a wait timeout because the underlying request remains active.
 
 A new job starts as `queued`, transitions to `running`, and reaches exactly one terminal state.
 
@@ -188,11 +188,11 @@ Use these replacements where the new job model supports the previous intent:
 
 | Previous interface | Version 3 interface |
 | --- | --- |
-| `subagent` or `subagent_spawn` | `subagent-spawn` |
-| `subagent_await` | `subagent-wait` |
-| `subagent_inspect` | `subagent-inspect` |
-| `subagent_manage` cancellation | `subagent-cancel` |
-| Child-to-main questions | Child `subagent-ask` and `subagent-wait`, plus main `subagent-reply` |
+| `subagent` or `subagent_spawn` | `subagent_spawn` |
+| `subagent_await` | `subagent_wait` |
+| `subagent_inspect` | `subagent_inspect` |
+| `subagent_manage` cancellation | `subagent_cancel` |
+| Child-to-main questions | Child `subagent_ask` and `subagent_wait`, plus main `subagent_reply` |
 
 The `/subagents` command, extension settings, `subagent_send`, `subagent_mailbox`, `subagent_consult`, custom agent catalogs, retained follow-ups, advanced orchestration, alternate transports, trust-aware cwd policy, and extension-owned worktrees have no direct replacement.
 
