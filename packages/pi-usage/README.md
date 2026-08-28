@@ -116,6 +116,18 @@ Unsupported models and custom or proxy origins are left unchanged.
 A toggle affects provider requests whose payload hook starts after the save; a request already sent is unchanged.
 Repair or remove an invalid file, then run `/reload` before trying the toggle again.
 
+### Codex statusline reset countdown
+
+The `codexStatusResetCountdown` preference defaults to `true`. It replaces the window labels with the time remaining until each returned limit resets.
+
+Set it to `false` in `pi-usage.json`, then run `/reload`, to restore the legacy `5h` and `wk` labels:
+
+```json
+{
+  "codexStatusResetCountdown": false
+}
+```
+
 ### xAI usage
 
 The `xaiUsage` preference defaults to `true` when the settings file or field is absent.
@@ -141,7 +153,7 @@ Turning it Off clears xAI cache state and prevents stale in-flight results from 
 - Source: the Codex usage and earned-reset endpoints using Pi's resolved runtime authorization
 - Displayed data: returned duration-based windows, resets, credits, earned usage-limit resets, and additional model buckets
 - Reset mutation: `POST /wham/rate-limit-reset-credits/consume` with a unique redemption request ID and, when available, the selected opaque credit ID
-- Statusline examples: `codex 59% 5h 61% wk`, `codex fast 59% 5h`, or `codex spark 100% 5h`
+- Statusline examples: `codex 59% (resets in 2h 30m) 61% (resets in 2d 15m)`, `codex fast 59% (resets in 2h 30m)`, or `codex spark 100% (resets in 2h 30m)`. Set `codexStatusResetCountdown` to `false` for the legacy `5h` and `wk` labels.
 
 The statusline selects a returned bucket that matches the current Codex model when one is available.
 Unlike `pi-codex-usage`, this successor intentionally has no Codex CLI fallback because the CLI may be logged into a different account than Pi's active runtime account.

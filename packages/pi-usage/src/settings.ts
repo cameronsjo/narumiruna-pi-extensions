@@ -9,11 +9,13 @@ export const MAX_USAGE_SETTINGS_BYTES = 64 * 1024;
 
 export interface UsageSettings {
 	codexFastMode: boolean;
+	codexStatusResetCountdown: boolean;
 	xaiUsage: boolean;
 }
 
 export const DEFAULT_USAGE_SETTINGS: Readonly<UsageSettings> = Object.freeze({
 	codexFastMode: false,
+	codexStatusResetCountdown: true,
 	xaiUsage: true,
 });
 
@@ -54,6 +56,12 @@ export function normalizeUsageSettings(value: unknown): UsageSettings | undefine
 	if (Object.hasOwn(value, "codexFastMode") && typeof value.codexFastMode !== "boolean") {
 		return undefined;
 	}
+	if (
+		Object.hasOwn(value, "codexStatusResetCountdown") &&
+		typeof value.codexStatusResetCountdown !== "boolean"
+	) {
+		return undefined;
+	}
 	if (Object.hasOwn(value, "xaiUsage") && typeof value.xaiUsage !== "boolean") {
 		return undefined;
 	}
@@ -62,6 +70,10 @@ export function normalizeUsageSettings(value: unknown): UsageSettings | undefine
 			typeof value.codexFastMode === "boolean"
 				? value.codexFastMode
 				: DEFAULT_USAGE_SETTINGS.codexFastMode,
+		codexStatusResetCountdown:
+			typeof value.codexStatusResetCountdown === "boolean"
+				? value.codexStatusResetCountdown
+				: DEFAULT_USAGE_SETTINGS.codexStatusResetCountdown,
 		xaiUsage:
 			typeof value.xaiUsage === "boolean" ? value.xaiUsage : DEFAULT_USAGE_SETTINGS.xaiUsage,
 	};

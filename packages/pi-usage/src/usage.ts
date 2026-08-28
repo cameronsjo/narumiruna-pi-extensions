@@ -176,7 +176,12 @@ export default function usageExtension(
 			}
 			return;
 		}
-		const rawValue = formatUsageStatusline(outcome.state.report, model);
+		const rawValue = formatUsageStatusline(
+			outcome.state.report,
+			model,
+			Date.now(),
+			settingsRuntime.get().settings.codexStatusResetCountdown,
+		);
 		const value = rawValue ? fastRuntime.decorateStatus(model, rawValue) : undefined;
 		if (!safeSetStatus(ctx, value)) return;
 		if (shouldSchedule && sessionActive) scheduleStatusRefresh(ctx, model);

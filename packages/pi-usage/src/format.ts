@@ -34,8 +34,15 @@ export function formatUsageReport(report: UsageReport, displayState: UsageDispla
 	return lines.join("\n").trimEnd();
 }
 
-export function formatUsageStatusline(report: UsageReport, model?: UsageModel): string | undefined {
-	if (report.providerId === "openai-codex") return formatCodexStatusline(report, model);
+export function formatUsageStatusline(
+	report: UsageReport,
+	model?: UsageModel,
+	now = Date.now(),
+	showCodexResetCountdown = true,
+): string | undefined {
+	if (report.providerId === "openai-codex") {
+		return formatCodexStatusline(report, model, now, showCodexResetCountdown);
+	}
 	if (report.providerId === "deepseek") return formatDeepSeekStatusline(report);
 	if (report.providerId === "github-copilot") return formatGitHubCopilotStatusline(report);
 	if (report.providerId === "openrouter") {
@@ -339,7 +346,12 @@ function formatGenericReport(lines: string[], report: UsageReport): void {
 	}
 }
 
-function formatCodexStatusline(report: UsageReport, model?: UsageModel): string | undefined {
+function formatCodexStatusline(
+	report: UsageReport,
+	model?: UsageModel,
+	now = Date.now(),
+	showResetCountdown = true,
+): string | undefined {
 	const group = selectCodexGroup(report, model);
 	if (!group) return formatCodexCreditsStatus(report);
 	const buckets = report.buckets.filter((bucket) => (bucket.groupId ?? bucket.id) === group);
@@ -349,10 +361,14 @@ function formatCodexStatusline(report: UsageReport, model?: UsageModel): string 
 	];
 	for (const bucket of buckets) {
 		if (bucket.remaining === undefined) continue;
-		const fallback = bucket.id.endsWith(":secondary") ? "weekly" : "5h";
-		parts.push(
-			`${clampPercent(bucket.remaining).toFixed(0)}% ${formatWindowLabel(bucket.windowMinutes, fallback, true)}`,
-		);
+		const percent = `${clampPercent(bucket.remaining).toFixed(0)}%`;
+		if (!showResetCountdown) {
+			const fallback = bucket.id.endsWith(":secondary") ? "weekly" : "5h";
+			parts.push(`${percent} ${formatWindowLabel(bucket.windowMinutes, fallback, true)}`);
+			continue;
+		}
+		const reset = formatResetCountdown(bucket.resetsAt, now);
+		parts.push(`${percent}${reset ? ` (resets in ${reset})` : ""}`);
 	}
 	return parts.length > 1 ? parts.join(" ") : formatCodexCreditsStatus(report);
 }
@@ -453,6 +469,28 @@ function formatWindowLabel(
 	if (minutes % 1_440 === 0) return `${minutes / 1_440}d`;
 	if (minutes % 60 === 0) return `${minutes / 60}h`;
 	return `${minutes}m`;
+}
+
+function formatResetCountdown(resetsAt: number | undefined, now: number): string | undefined {
+	if (resetsAt === undefined || !Number.isFinite(resetsAt) || !Number.isFinite(now))
+		return undefined;
+	const totalMinutes = Math.max(0, Math.ceil((resetsAt * 1_000 - now) / 60_000));
+	const days = Math.floor(totalMinutes / 1_440);
+	const hours = Math.floor((totalMinutes % 1_440) / 60);
+	const minutes = totalMinutes % 60;
+	if (days > 0) {
+		return [
+			`${String(days)}d`,
+			hours > 0 ? `${String(hours)}h` : minutes > 0 ? `${String(minutes)}m` : "",
+		]
+			.filter(Boolean)
+			.join(" ");
+	}
+	if (hours > 0)
+		return [`${String(hours)}h`, minutes > 0 ? `${String(minutes)}m` : ""]
+			.filter(Boolean)
+			.join(" ");
+	return `${String(minutes)}m`;
 }
 
 function formatMetricValue(value: number | string, unit: UsageBucket["unit"] | undefined): string {
