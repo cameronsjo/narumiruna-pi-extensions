@@ -4,6 +4,7 @@ import type { AccountProviderAdapter, AccountProviderId } from "./oauth.js";
 import { cloneOAuthCredential, parseCredentialRequest } from "./oauth-credential-source.js";
 
 export const RUNTIME_FAIL_CLOSED_API_KEY = "pi-accounts-auth-failed";
+const RUNTIME_HEADER_AUTH_SELECTOR = "pi-accounts-header-auth";
 const REFRESH_SKEW_MS = 5 * 60 * 1000;
 
 type RuntimeAuthStorage = {
@@ -185,9 +186,10 @@ export class RuntimeAuthCoordinator {
 		}
 
 		let auth: ModelAuth;
+		let runtimeApiKey: string;
 		try {
 			auth = await this.provider.oauth.toAuth(credential);
-			validateModelAuth(auth, this.provider.displayName);
+			runtimeApiKey = validateModelAuth(auth, this.provider);
 		} catch (error) {
 			const selection = await this.activeCredentialMatches(store, active, credential);
 			if (selection.error !== undefined) {
@@ -225,7 +227,7 @@ export class RuntimeAuthCoordinator {
 			if (!this.overlay.apply(ctx, operation, auth, availableModelIds)) {
 				return { status: "inactive", providerId: this.provider.id };
 			}
-			const applied = await this.controller.apply(ctx, runtimeOverride, auth.apiKey);
+			const applied = await this.controller.apply(ctx, runtimeOverride, runtimeApiKey);
 			if (applied === "stale") return { status: "inactive", providerId: this.provider.id };
 			if (applied === "unavailable") {
 				throw new Error(`Pi did not retain the runtime ${this.provider.displayName} credential.`);
@@ -396,10 +398,10 @@ export class RuntimeAuthCoordinator {
 		}
 		if (auth.headers) {
 			for (const [name, value] of Object.entries(auth.headers)) {
-				if (value !== null && registered?.headers?.[name] !== value) {
+				if (value !== null && readHeader(registered?.headers, name) !== value) {
 					throw new Error(`Pi did not retain the runtime ${this.provider.displayName} headers.`);
 				}
-				if (value === null && registered?.headers && Object.hasOwn(registered.headers, name)) {
+				if (value === null && hasHeader(registered?.headers, name)) {
 					throw new Error(`Pi did not remove the runtime ${this.provider.displayName} header.`);
 				}
 			}
@@ -415,8 +417,11 @@ export class RuntimeAuthCoordinator {
 				throw new Error(`Pi could not resolve the runtime ${this.provider.displayName} headers.`);
 			}
 			for (const [name, value] of Object.entries(auth.headers)) {
-				if (value !== null && resolved?.headers?.[name] !== value) {
+				if (value !== null && readHeader(resolved?.headers, name) !== value) {
 					throw new Error(`Pi did not apply the runtime ${this.provider.displayName} headers.`);
+				}
+				if (value === null && hasHeader(resolved?.headers, name)) {
+					throw new Error(`Pi did not remove the runtime ${this.provider.displayName} header.`);
 				}
 			}
 		}
@@ -647,26 +652,42 @@ function readProviderModels(
 		}));
 }
 
+function readHeader(
+	headers: ProviderHeaders | Record<string, string> | undefined,
+	name: string,
+): string | null | undefined {
+	const expected = name.toLowerCase();
+	for (const [candidate, value] of Object.entries(headers ?? {})) {
+		if (candidate.toLowerCase() === expected) return value;
+	}
+	return undefined;
+}
+
+function hasHeader(
+	headers: ProviderHeaders | Record<string, string> | undefined,
+	name: string,
+): boolean {
+	const expected = name.toLowerCase();
+	return Object.keys(headers ?? {}).some((candidate) => candidate.toLowerCase() === expected);
+}
+
 function mergeConfigHeaders(
 	previous: Record<string, string> | undefined,
 	headers: Record<string, string | null>,
 ): Record<string, string> {
 	const result = { ...(previous ?? {}) };
 	for (const [name, value] of Object.entries(headers)) {
-		if (value === null) delete result[name];
-		else result[name] = value;
+		for (const existing of Object.keys(result)) {
+			if (existing.toLowerCase() === name.toLowerCase()) delete result[existing];
+		}
+		if (value !== null) result[name] = value;
 	}
 	return result;
 }
 
-function validateModelAuth(
-	auth: unknown,
-	providerName: string,
-): asserts auth is ModelAuth & { apiKey: string } {
+function validateModelAuth(auth: unknown, provider: AccountProviderAdapter): string {
+	const providerName = provider.displayName;
 	if (!isRecord(auth)) throw new Error(`${providerName} OAuth returned invalid request auth.`);
-	if (typeof auth.apiKey !== "string" || !auth.apiKey) {
-		throw new Error(`${providerName} OAuth returned no API key.`);
-	}
 	if (auth.baseUrl !== undefined) {
 		if (typeof auth.baseUrl !== "string") {
 			throw new Error(`${providerName} OAuth returned an invalid endpoint.`);
@@ -694,6 +715,26 @@ function validateModelAuth(
 			}
 		}
 	}
+	if (provider.runtimeAuthMode === "api-key") {
+		if (typeof auth.apiKey !== "string" || !auth.apiKey) {
+			throw new Error(`${providerName} OAuth returned no API key.`);
+		}
+		return auth.apiKey;
+	}
+	if (auth.apiKey !== undefined) {
+		throw new Error(`${providerName} OAuth returned unexpected API-key authentication.`);
+	}
+	const authorizationHeaders = isRecord(auth.headers)
+		? Object.entries(auth.headers).filter(([name]) => name.toLowerCase() === "authorization")
+		: [];
+	if (
+		authorizationHeaders.length !== 1 ||
+		typeof authorizationHeaders[0]?.[1] !== "string" ||
+		!/^Bearer\s+\S+$/u.test(authorizationHeaders[0][1])
+	) {
+		throw new Error(`${providerName} OAuth returned no valid Bearer authorization header.`);
+	}
+	return RUNTIME_HEADER_AUTH_SELECTOR;
 }
 
 function readAvailableModelIds(credential: OAuthCredential): string[] | undefined {

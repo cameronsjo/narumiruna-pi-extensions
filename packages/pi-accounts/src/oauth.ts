@@ -12,7 +12,13 @@ import {
 	LoginDialogComponent,
 } from "@earendil-works/pi-coding-agent";
 
-export const SUPPORTED_PROVIDER_IDS = ["anthropic", "github-copilot", "openai-codex"] as const;
+export const SUPPORTED_PROVIDER_IDS = [
+	"anthropic",
+	"github-copilot",
+	"kimi-coding",
+	"openai-codex",
+	"xai",
+] as const;
 
 export type AccountProviderId = (typeof SUPPORTED_PROVIDER_IDS)[number];
 
@@ -23,6 +29,7 @@ export type AccountProviderAdapter = {
 	displayName: string;
 	oauth: ProviderOwnedOAuth;
 	requiresApiKeyBridge: boolean;
+	runtimeAuthMode: "api-key" | "authorization-header";
 	defaultModelId?: string;
 	invalidateConnections?: (sessionId?: string) => unknown | Promise<unknown>;
 };
@@ -51,6 +58,7 @@ export function createBuiltinProviderAdapters(
 			id: "openai-codex",
 			displayName: "OpenAI Codex",
 			requiresApiKeyBridge: true,
+			runtimeAuthMode: "api-key",
 			defaultModelId: "gpt-5.5",
 			invalidateConnections: options.closeCodexWebSockets ?? cleanupSessionResources,
 			oauth: createLazyProviderOwnedOAuth("openai-codex", loader),
@@ -59,13 +67,29 @@ export function createBuiltinProviderAdapters(
 			id: "anthropic",
 			displayName: "Anthropic",
 			requiresApiKeyBridge: false,
+			runtimeAuthMode: "api-key",
 			oauth: createLazyProviderOwnedOAuth("anthropic", loader),
 		},
 		{
 			id: "github-copilot",
 			displayName: "GitHub Copilot",
 			requiresApiKeyBridge: false,
+			runtimeAuthMode: "api-key",
 			oauth: createLazyProviderOwnedOAuth("github-copilot", loader),
+		},
+		{
+			id: "kimi-coding",
+			displayName: "Kimi For Coding",
+			requiresApiKeyBridge: false,
+			runtimeAuthMode: "authorization-header",
+			oauth: createLazyProviderOwnedOAuth("kimi-coding", loader),
+		},
+		{
+			id: "xai",
+			displayName: "xAI",
+			requiresApiKeyBridge: false,
+			runtimeAuthMode: "api-key",
+			oauth: createLazyProviderOwnedOAuth("xai", loader),
 		},
 	];
 }

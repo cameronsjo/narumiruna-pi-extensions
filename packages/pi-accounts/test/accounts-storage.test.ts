@@ -51,6 +51,14 @@ test("provider-scoped storage preserves independent active accounts and OAuth me
 					}),
 				},
 			},
+			"kimi-coding": {
+				active: "fast",
+				accounts: { fast: credential("kimi") },
+			},
+			xai: {
+				active: "grok",
+				accounts: { grok: credential("xai") },
+			},
 		},
 	});
 
@@ -69,6 +77,8 @@ test("provider-scoped storage preserves independent active accounts and OAuth me
 		stored.providers["github-copilot"]?.accounts.personal?.enterpriseUrl,
 		"github.example.com",
 	);
+	assert.equal(stored.providers["kimi-coding"]?.accounts.fast?.access, "access-kimi");
+	assert.equal(stored.providers.xai?.accounts.grok?.access, "access-xai");
 });
 
 test("parsed provider and account maps treat prototype-like names as own properties", () => {

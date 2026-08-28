@@ -61,7 +61,7 @@ export default function accountsExtension(
 		...(dependencies.providers ??
 			createBuiltinProviderAdapters({ closeCodexWebSockets: dependencies.closeCodexWebSockets })),
 	];
-	validateProviderSet(providers);
+	validateProviderSet(providers, dependencies.providers === undefined);
 	const adapters = new Map(providers.map((provider) => [provider.id, provider]));
 	const coordinators = new Map(
 		providers.map((provider) => [provider.id, new RuntimeAuthCoordinator(pi, provider)]),
@@ -425,7 +425,7 @@ async function readProviderMenuStates(
 	adapters: Map<AccountProviderId, AccountProviderAdapter>,
 ): Promise<Map<AccountProviderId, ProviderMenuState>> {
 	const states = new Map<AccountProviderId, ProviderMenuState>();
-	for (const id of SUPPORTED_PROVIDER_IDS) {
+	for (const id of adapters.keys()) {
 		const state = await store.readProviderAsync(id);
 		states.set(id, {
 			id,
@@ -594,8 +594,12 @@ function providerDisplayName(providerId: AccountProviderId): string {
 			return "Anthropic";
 		case "github-copilot":
 			return "GitHub Copilot";
+		case "kimi-coding":
+			return "Kimi For Coding";
 		case "openai-codex":
 			return "OpenAI Codex";
+		case "xai":
+			return "xAI";
 	}
 }
 
@@ -750,12 +754,16 @@ async function removeAccount(
 	ctx.ui.notify(`Removed ${adapter.displayName} account "${parsed.name}".`, "info");
 }
 
-function validateProviderSet(providers: readonly AccountProviderAdapter[]): void {
+function validateProviderSet(
+	providers: readonly AccountProviderAdapter[],
+	requireAll: boolean,
+): void {
 	const ids = new Set<AccountProviderId>();
 	for (const provider of providers) {
 		if (ids.has(provider.id)) throw new Error(`Duplicate account provider: ${provider.id}`);
 		ids.add(provider.id);
 	}
+	if (!requireAll) return;
 	for (const id of SUPPORTED_PROVIDER_IDS) {
 		if (!ids.has(id)) throw new Error(`Missing required account provider: ${id}`);
 	}

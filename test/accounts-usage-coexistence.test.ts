@@ -38,11 +38,18 @@ function credential(suffix: string): StoredOAuthCredential {
 }
 
 function provider(id: AccountProviderAdapter["id"]): AccountProviderAdapter {
+	const displayNames: Record<AccountProviderAdapter["id"], string> = {
+		anthropic: "Anthropic",
+		"github-copilot": "GitHub Copilot",
+		"kimi-coding": "Kimi For Coding",
+		"openai-codex": "OpenAI Codex",
+		xai: "xAI",
+	};
 	return {
 		id,
-		displayName:
-			id === "openai-codex" ? "OpenAI Codex" : id === "anthropic" ? "Anthropic" : "GitHub Copilot",
+		displayName: displayNames[id],
 		requiresApiKeyBridge: id === "openai-codex",
+		runtimeAuthMode: id === "kimi-coding" ? "authorization-header" : "api-key",
 		oauth: {
 			async login() {
 				return credential(id);
@@ -51,7 +58,9 @@ function provider(id: AccountProviderAdapter["id"]): AccountProviderAdapter {
 				return current;
 			},
 			async toAuth(current) {
-				return { apiKey: current.access };
+				return id === "kimi-coding"
+					? { headers: { Authorization: `Bearer ${current.access}` } }
+					: { apiKey: current.access };
 			},
 		},
 	};
