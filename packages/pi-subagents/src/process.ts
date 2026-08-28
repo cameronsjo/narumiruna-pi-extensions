@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
@@ -51,8 +52,11 @@ interface AssistantEvent {
 
 export async function runChild(request: ChildRequest): Promise<ChildResult> {
 	if (request.signal.aborted) return cancelledResult();
+	let promptDirectory: string | undefined;
 	try {
-		const invocation = resolvePiInvocation(buildPiArgs(request));
+		const promptFile = request.agentPrompt ? writeAgentPromptFile(request.agentPrompt) : undefined;
+		promptDirectory = promptFile?.directory;
+		const invocation = resolvePiInvocation(buildPiArgs(request, promptFile?.filePath));
 		return await executeProcess(invocation, request);
 	} catch (error) {
 		if (request.signal.aborted) return cancelledResult();
@@ -63,10 +67,12 @@ export async function runChild(request: ChildRequest): Promise<ChildResult> {
 			limitations: [],
 			truncated: false,
 		};
+	} finally {
+		if (promptDirectory) removeAgentPromptDirectory(promptDirectory);
 	}
 }
 
-export function buildPiArgs(request: ChildRequest): string[] {
+export function buildPiArgs(request: ChildRequest, agentPromptPath?: string): string[] {
 	const args = [
 		"--mode",
 		"json",
@@ -83,7 +89,10 @@ export function buildPiArgs(request: ChildRequest): string[] {
 		request.thinkingLevel,
 		request.projectTrusted ? "--approve" : "--no-approve",
 	];
-	if (request.agentPrompt) args.push("--append-system-prompt", request.agentPrompt);
+	if (request.agentPrompt && !agentPromptPath) {
+		throw new Error("A temporary agent prompt file is required for profiled child execution.");
+	}
+	if (agentPromptPath) args.push("--append-system-prompt", agentPromptPath);
 	const tools = [...new Set([...request.tools, ...CHILD_COMMUNICATION_TOOL_NAMES])];
 	args.push("--tools", tools.join(","));
 	args.push(`Task: ${request.task}`);
@@ -92,6 +101,28 @@ export function buildPiArgs(request: ChildRequest): string[] {
 
 export function childCommunicationBridgePath(): string {
 	return fileURLToPath(new URL("./child-communication-bridge.ts", import.meta.url));
+}
+
+function writeAgentPromptFile(prompt: string): { directory: string; filePath: string } {
+	const directory = fs.mkdtempSync(
+		path.join(os.tmpdir(), `pi-subagents-prompt-${globalThis.process.pid}-`),
+	);
+	const filePath = path.join(directory, "prompt.md");
+	try {
+		fs.writeFileSync(filePath, prompt, { encoding: "utf8", flag: "wx", mode: 0o600 });
+		return { directory, filePath };
+	} catch (error) {
+		removeAgentPromptDirectory(directory);
+		throw error;
+	}
+}
+
+function removeAgentPromptDirectory(directory: string): void {
+	try {
+		fs.rmSync(directory, { recursive: true, force: true });
+	} catch {
+		// Best-effort cleanup must not replace the child result or launch error.
+	}
 }
 
 async function executeProcess(

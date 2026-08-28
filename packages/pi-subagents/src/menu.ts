@@ -1,4 +1,18 @@
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type {
+	ExtensionAPI,
+	ExtensionCommandContext,
+	KeybindingsManager,
+	Theme,
+} from "@earendil-works/pi-coding-agent";
+import {
+	Editor,
+	type EditorTheme,
+	type Focusable,
+	Key,
+	matchesKey,
+	type TUI,
+	truncateToWidth,
+} from "@earendil-works/pi-tui";
 import type { MenuContext } from "@narumitw/pi-tui-kit";
 import {
 	type AgentProfile,
@@ -39,11 +53,12 @@ type Screen =
 	| "main"
 	| "profiles"
 	| "profile"
+	| "profile-settings"
+	| "task"
 	| "create"
 	| "rename"
 	| "timeout"
 	| "tools"
-	| "thinking"
 	| "delete"
 	| "status"
 	| "help"
@@ -53,6 +68,9 @@ type Action =
 	| "open-profile"
 	| "create"
 	| "edit-task"
+	| "open-task"
+	| "open-tools"
+	| "open-timeout"
 	| "rename"
 	| "set-timeout"
 	| "toggle-tool"
@@ -99,7 +117,7 @@ export async function showSubagentsMenu(
 	},
 ): Promise<void> {
 	if (ctx.mode !== "tui") throw new Error("The subagents profile manager requires Pi TUI mode.");
-	const { defineMenu, runMenu } = await import("@narumitw/pi-tui-kit");
+	const { defineMenu, runCustomInteraction, runMenu } = await import("@narumitw/pi-tui-kit");
 	if (!isCurrent(options.owner)) return;
 	let selectedName: string | undefined;
 	const settingsPath = safeLine(options.store.settingsPath);
@@ -178,21 +196,68 @@ export async function showSubagentsMenu(
 						`Task: ${taskSummary(profile.task)}`,
 					],
 					items: [
-						{ id: "task", label: "Task prompt…", action: "edit-task" },
-						{ id: "tools", label: `Tools (${profile.tools.length})`, to: "tools" },
 						{
-							id: "timeout",
-							label: `Timeout (${profile.timeout}s)`,
-							to: "timeout",
-						},
-						{
-							id: "thinking",
-							label: `Thinking level (${profile.thinkingLevel})`,
-							to: "thinking",
+							id: "profile-settings",
+							label: "Profile settings…",
+							description: "Edit task, tools, timeout, and thinking level",
+							to: "profile-settings",
 						},
 						{ id: "rename", label: "Rename…", to: "rename" },
 						{ id: "delete", label: "Delete…", to: "delete" },
 					],
+					hint: "back",
+				};
+			},
+			"profile-settings": ({ state }) => {
+				const profile = selectedProfile(state);
+				if (!selectedName || !profile) return missingProfileScreen();
+				return {
+					// Kit's standard settings screen preserves injected keybindings and search focus.
+					// It also rolls back rejected saves, which the installed Pi SettingsList cannot expose.
+					kind: "settings",
+					title: `Profile settings · ${selectedName}`,
+					lines: ["Changes save immediately. Escape does not roll them back."],
+					items: [
+						{
+							id: "task",
+							label: "Task prompt",
+							description: "Append trusted user instructions to the child system prompt.",
+							currentValue: taskSummary(profile.task),
+							action: "open-task",
+						},
+						{
+							id: "tools",
+							label: "Tools",
+							description: "Choose the default child work capabilities.",
+							currentValue: profile.tools.join(", ") || "none",
+							action: "open-tools",
+						},
+						{
+							id: "timeout",
+							label: "Timeout",
+							description: "Set the default execution deadline in seconds.",
+							currentValue: `${profile.timeout}s`,
+							action: "open-timeout",
+						},
+						{
+							id: "thinking",
+							label: "Thinking level",
+							description: "Set the default child thinking level.",
+							currentValue: profile.thinkingLevel,
+							values: [...SUBAGENT_THINKING_LEVELS],
+							action: "set-thinking",
+						},
+					],
+				};
+			},
+			task: ({ state }) => {
+				const profile = selectedProfile(state);
+				if (!selectedName || !profile) return missingProfileScreen();
+				return {
+					kind: "actions",
+					title: `Task prompt · ${selectedName}`,
+					lines: [`Current: ${taskSummary(profile.task)}`],
+					items: [{ id: "edit-task", label: "Edit task prompt…", action: "edit-task" }],
 					hint: "back",
 				};
 			},
@@ -239,18 +304,6 @@ export async function showSubagentsMenu(
 					viewportSize: 8,
 					hint: "back",
 					doneLabel: "Back",
-				};
-			},
-			thinking: ({ state }) => {
-				const current = selectedProfile(state)?.thinkingLevel;
-				return {
-					kind: "choice",
-					title: `Thinking level · ${selectedName ?? "unknown"}`,
-					items: SUBAGENT_THINKING_LEVELS.map((level) => ({ id: level, label: level })),
-					action: "set-thinking",
-					currentItemId: current,
-					initialItemId: current,
-					hint: "back",
 				};
 			},
 			delete: ({ state }) => {
@@ -329,21 +382,34 @@ export async function showSubagentsMenu(
 				selectedName = name;
 				return { kind: "to", screen: "profile" };
 			},
+			"open-task": () => ({ kind: "to", screen: "task" }),
 			"edit-task": async ({ ctx: actionCtx, signal }) => {
 				const current = requireSelectedProfile(options.store, selectedName);
 				let draft = current.task;
 				while (isCurrent(options.owner) && !signal.aborted) {
-					const edited = await actionCtx.ui.editor(
-						`Task prompt · ${selectedName ?? "unknown"}`,
-						draft,
-					);
-					if (edited === undefined) return { kind: "stay" };
+					const edited = await runCustomInteraction<string | undefined>(actionCtx, {
+						signal,
+						isCurrent: () => isCurrent(options.owner),
+						create: ({ tui, theme, keybindings, complete }) =>
+							new TaskPromptEditor({
+								tui,
+								theme,
+								keybindings,
+								title: `Task prompt · ${selectedName ?? "unknown"}`,
+								draft,
+								onSubmit: complete,
+								onCancel: () => complete(undefined),
+							}),
+					});
+					if (edited.kind === "stale") return { kind: "rejected" };
+					if (edited.kind !== "completed") return { kind: "back" };
+					if (edited.value === undefined) return { kind: "back" };
 					if (signal.aborted || !isCurrent(options.owner)) return { kind: "rejected" };
 					try {
-						options.store.update(requireSelectedName(selectedName), { task: edited });
-						return { kind: "stay" };
+						options.store.update(requireSelectedName(selectedName), { task: edited.value });
+						return { kind: "back" };
 					} catch (error) {
-						draft = edited;
+						draft = edited.value;
 						actionCtx.ui.notify(
 							`Task prompt was not saved: ${safeLine(formatError(error))}`,
 							"error",
@@ -352,6 +418,8 @@ export async function showSubagentsMenu(
 				}
 				return { kind: "rejected" };
 			},
+			"open-tools": () => ({ kind: "to", screen: "tools" }),
+			"open-timeout": () => ({ kind: "to", screen: "timeout" }),
 			rename: ({ value }) => {
 				assertCurrent(options.owner);
 				const currentName = requireSelectedName(selectedName);
@@ -364,7 +432,7 @@ export async function showSubagentsMenu(
 				assertCurrent(options.owner);
 				const timeout = Number(value);
 				options.store.update(requireSelectedName(selectedName), { timeout });
-				return { kind: "to", screen: "profile" };
+				return { kind: "back" };
 			},
 			"toggle-tool": ({ itemId, selected }) => {
 				assertCurrent(options.owner);
@@ -380,15 +448,15 @@ export async function showSubagentsMenu(
 				options.store.update(profileName, { tools });
 				return { kind: "stay" };
 			},
-			"set-thinking": ({ itemId }) => {
+			"set-thinking": ({ value }) => {
 				assertCurrent(options.owner);
-				if (!SUBAGENT_THINKING_LEVELS.includes(itemId as SubagentThinkingLevel)) {
+				if (!SUBAGENT_THINKING_LEVELS.includes(value as SubagentThinkingLevel)) {
 					return { kind: "rejected" };
 				}
 				options.store.update(requireSelectedName(selectedName), {
-					thinkingLevel: itemId as SubagentThinkingLevel,
+					thinkingLevel: value as SubagentThinkingLevel,
 				});
-				return { kind: "to", screen: "profile" };
+				return { kind: "stay" };
 			},
 			delete: ({ state }) => {
 				assertCurrent(options.owner);
@@ -414,6 +482,280 @@ export async function showSubagentsMenu(
 			}
 		},
 	});
+}
+
+interface TaskPromptEditorOptions {
+	tui: TUI;
+	theme: Theme;
+	keybindings: KeybindingsManager;
+	title: string;
+	draft: string;
+	onSubmit(value: string): void;
+	onCancel(): void;
+}
+
+class TaskPromptEditor implements Focusable {
+	private readonly editor: RawPreservingEditor;
+	private finished = false;
+
+	constructor(private readonly options: TaskPromptEditorOptions) {
+		const editorTheme: EditorTheme = {
+			borderColor: (text) => options.theme.fg("accent", text),
+			selectList: {
+				selectedPrefix: (text) => options.theme.fg("accent", text),
+				selectedText: (text) => options.theme.fg("accent", text),
+				description: (text) => options.theme.fg("muted", text),
+				scrollInfo: (text) => options.theme.fg("dim", text),
+				noMatch: (text) => options.theme.fg("warning", text),
+			},
+		};
+		this.editor = new RawPreservingEditor(options.tui, editorTheme);
+		this.editor.setText(options.draft);
+		this.editor.onChange = () => options.tui.requestRender();
+	}
+
+	get focused(): boolean {
+		return this.editor.focused;
+	}
+
+	set focused(value: boolean) {
+		this.editor.focused = value;
+	}
+
+	render(width: number): string[] {
+		const safeWidth = Math.max(1, width);
+		const border = this.options.theme.fg("border", "─".repeat(safeWidth));
+		const title = truncateToWidth(
+			this.options.theme.fg("accent", this.options.theme.bold(safeLine(this.options.title))),
+			safeWidth,
+			"",
+		);
+		const hint = truncateToWidth(
+			this.options.theme.fg("muted", taskEditorHint(this.options.keybindings)),
+			safeWidth,
+			"",
+		);
+		return [border, "", title, "", ...this.editor.render(safeWidth), "", hint, "", border];
+	}
+
+	invalidate(): void {
+		this.editor.invalidate();
+	}
+
+	handleInput(data: string): void {
+		if (this.finished) return;
+		if (matchesKey(data, Key.ctrl("c"))) {
+			this.cancel();
+			return;
+		}
+		if (this.options.keybindings.matches(data, "tui.select.cancel")) {
+			this.cancel();
+			return;
+		}
+		if (this.options.keybindings.matches(data, "tui.input.newLine")) {
+			this.editor.insertTextAtCursor("\n");
+		} else if (this.options.keybindings.matches(data, "tui.input.submit")) {
+			this.finished = true;
+			this.editor.focused = false;
+			this.options.onSubmit(this.editor.getExpandedText());
+		} else {
+			this.editor.handleInput(data);
+		}
+		this.options.tui.requestRender();
+	}
+
+	dispose(): void {
+		this.finished = true;
+		this.editor.focused = false;
+	}
+
+	private cancel(): void {
+		this.finished = true;
+		this.editor.focused = false;
+		this.options.onCancel();
+	}
+}
+
+class RawPreservingEditor implements Focusable {
+	private readonly editor: Editor;
+	private readonly rawByMarker = new Map<string, string>();
+	private markerCodePoint = 0xe000;
+	private pasteBuffer: string | undefined;
+
+	constructor(tui: TUI, theme: EditorTheme) {
+		this.editor = new Editor(tui, theme, { paddingX: 0 });
+		this.editor.disableSubmit = true;
+	}
+
+	get focused(): boolean {
+		return this.editor.focused;
+	}
+
+	set focused(value: boolean) {
+		this.editor.focused = value;
+	}
+
+	set onChange(handler: (() => void) | undefined) {
+		this.editor.onChange = handler;
+	}
+
+	handleInput(data: string): void {
+		if (this.pasteBuffer !== undefined) {
+			this.pasteBuffer += data;
+			this.flushPasteBuffer();
+			return;
+		}
+		if (matchesKey(data, Key.backspace)) {
+			this.editor.handleInput(data);
+			return;
+		}
+		const pasteStart = data.indexOf(BRACKETED_PASTE_START);
+		if (pasteStart >= 0) {
+			if (pasteStart > 0) this.editor.handleInput(data.slice(0, pasteStart));
+			this.pasteBuffer = data.slice(pasteStart + BRACKETED_PASTE_START.length);
+			this.flushPasteBuffer();
+			return;
+		}
+		if (
+			[...data].some(
+				(character) => isUnsafeDirectEditorCharacter(character) || this.rawByMarker.has(character),
+			)
+		) {
+			this.editor.handleInput(this.encode(data));
+			return;
+		}
+		this.editor.handleInput(data);
+	}
+
+	insertTextAtCursor(value: string): void {
+		this.editor.insertTextAtCursor(this.encode(value));
+	}
+
+	render(width: number): string[] {
+		return this.editor
+			.render(width)
+			.map((line) =>
+				[...line].map((character) => (this.rawByMarker.has(character) ? " " : character)).join(""),
+			);
+	}
+
+	invalidate(): void {
+		this.editor.invalidate();
+	}
+
+	setText(value: string): void {
+		this.rawByMarker.clear();
+		this.markerCodePoint = 0xe000;
+		this.pasteBuffer = undefined;
+		this.editor.setText(this.encode(value));
+	}
+
+	getExpandedText(): string {
+		return this.decode(this.editor.getExpandedText());
+	}
+
+	private flushPasteBuffer(): void {
+		if (this.pasteBuffer === undefined) return;
+		const pasteEnd = this.pasteBuffer.indexOf(BRACKETED_PASTE_END);
+		if (pasteEnd < 0) return;
+		const raw = this.pasteBuffer.slice(0, pasteEnd);
+		const remaining = this.pasteBuffer.slice(pasteEnd + BRACKETED_PASTE_END.length);
+		this.pasteBuffer = undefined;
+		this.editor.handleInput(`${BRACKETED_PASTE_START}${this.encode(raw)}${BRACKETED_PASTE_END}`);
+		if (remaining) this.handleInput(remaining);
+	}
+
+	private encode(value: string): string {
+		const forbidden = new Set([
+			...value,
+			...this.editor.getExpandedText(),
+			...this.rawByMarker.keys(),
+		]);
+		return [...value]
+			.map((character) => {
+				if (!isUnsafeEditorCharacter(character) && !this.rawByMarker.has(character)) {
+					return character;
+				}
+				const marker = this.nextMarker(forbidden);
+				this.rawByMarker.set(marker, character);
+				forbidden.add(marker);
+				return marker;
+			})
+			.join("");
+	}
+
+	private decode(value: string): string {
+		return [...value].map((character) => this.rawByMarker.get(character) ?? character).join("");
+	}
+
+	private nextMarker(forbidden: ReadonlySet<string>): string {
+		for (;;) {
+			if (this.markerCodePoint === 0xf900) this.markerCodePoint = 0xf0000;
+			if (this.markerCodePoint === 0xffffe) this.markerCodePoint = 0x100000;
+			if (this.markerCodePoint > 0x10fffd) {
+				throw new Error("Task prompt editor exhausted its safe input markers.");
+			}
+			const marker = String.fromCodePoint(this.markerCodePoint++);
+			if (!forbidden.has(marker)) return marker;
+		}
+	}
+}
+
+const BRACKETED_PASTE_START = "\u001b[200~";
+const BRACKETED_PASTE_END = "\u001b[201~";
+
+function isUnsafeDirectEditorCharacter(character: string): boolean {
+	const codePoint = character.codePointAt(0) ?? 0;
+	return (
+		(codePoint >= 0x7f && codePoint <= 0x9f) ||
+		codePoint === 0x2028 ||
+		codePoint === 0x2029 ||
+		isBidiControl(codePoint)
+	);
+}
+
+function isUnsafeEditorCharacter(character: string): boolean {
+	const codePoint = character.codePointAt(0) ?? 0;
+	return (
+		character !== "\n" &&
+		(codePoint <= 0x1f ||
+			(codePoint >= 0x7f && codePoint <= 0x9f) ||
+			codePoint === 0x2028 ||
+			codePoint === 0x2029 ||
+			isBidiControl(codePoint))
+	);
+}
+
+function isBidiControl(codePoint: number): boolean {
+	return (
+		codePoint === 0x061c ||
+		codePoint === 0x200e ||
+		codePoint === 0x200f ||
+		(codePoint >= 0x202a && codePoint <= 0x202e) ||
+		(codePoint >= 0x2066 && codePoint <= 0x2069)
+	);
+}
+
+function taskEditorHint(keybindings: KeybindingsManager): string {
+	return [
+		formatHintKeys(keybindings.getKeys("tui.input.submit"), "save"),
+		formatHintKeys(keybindings.getKeys("tui.input.newLine"), "newline"),
+		formatHintKeys([...keybindings.getKeys("tui.select.cancel"), "ctrl+c"], "cancel"),
+	]
+		.filter(Boolean)
+		.join(" · ");
+}
+
+function formatHintKeys(keys: readonly string[], label: string): string {
+	const names = [...new Set(keys.map(formatHintKey).filter(Boolean))];
+	return names.length > 0 ? `${names.join("/")} ${label}` : "";
+}
+
+function formatHintKey(value: string): string {
+	const key = safeLine(value).toLowerCase();
+	if (key === "escape") return "esc";
+	if (key === "return") return "enter";
+	return key;
 }
 
 function requireSelectedName(name: string | undefined): string {

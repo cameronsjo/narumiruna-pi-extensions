@@ -294,6 +294,8 @@ Every child disables session persistence, unrelated extensions, skills, and prom
 
 A selected agent adds only its validated local `task` string to that child's system prompt.
 
+The runtime passes that string through a private temporary prompt file so path-like text remains literal, then removes the file after the child settles.
+
 Agent profiles are trusted user configuration rather than a security boundary, and selecting a profile can enable its configured work tools.
 
 The profile manager validates every profile before writing and never repairs malformed settings by replacing them with defaults.

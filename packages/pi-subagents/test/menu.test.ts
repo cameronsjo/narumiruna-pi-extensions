@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import type { KeybindingsManager } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { createTuiHarness, type TuiHarness } from "@narumitw/pi-tui-kit/testing";
@@ -29,16 +30,11 @@ afterEach(() => {
 test("profile manager creates, edits, renames, and deletes one complete profile", async () => {
 	const store = createAgentProfileStore(path.join(directory, "pi-subagents.json"));
 	const tui = createTuiHarness({ width: 48, rows: 18 });
-	const editorDrafts: string[] = [];
 	const context = createMockContext({
 		mode: "tui",
 		hasUI: true,
 		thinkingLevel: "high",
 		custom: tui.custom,
-		editor: async (_title: string, draft: string) => {
-			editorDrafts.push(draft);
-			return "Review the assigned scope and return exact evidence.";
-		},
 	});
 	const controller = new AbortController();
 	const running = showSubagentsMenu(context.ctx, {
@@ -59,11 +55,18 @@ test("profile manager creates, edits, renames, and deletes one complete profile"
 	assert.equal(store.read().kind, "loaded");
 	assert.match(tui.render().join("\n"), /Profile · reviewer/u);
 
+	await activate(tui, "Profile settings");
+	assert.match(tui.render().join("\n"), /Type to search/u);
 	await activate(tui, "Task prompt");
-	assert.deepEqual(editorDrafts, ["Complete the assigned task and report the result."]);
+	await activate(tui, "Edit task prompt");
+	assert.match(tui.render().join("\n"), /Complete the assigned task/u);
+	paste(tui, " Review the assigned scope and return exact evidence.");
+	tui.press("tui.input.submit");
+	await tui.waitForPending();
+	await tui.waitForOpen();
 	assert.equal(
 		profile(store, "reviewer").task,
-		"Review the assigned scope and return exact evidence.",
+		"Complete the assigned task and report the result. Review the assigned scope and return exact evidence.",
 	);
 
 	await activate(tui, "Tools");
@@ -82,14 +85,11 @@ test("profile manager creates, edits, renames, and deletes one complete profile"
 	assert.equal(profile(store, "reviewer").timeout, 45);
 
 	await activate(tui, "Thinking level");
-	tui.press("home");
-	tui.press("tui.select.down");
-	tui.press("tui.select.down");
-	tui.press("tui.select.confirm");
+	assert.equal(profile(store, "reviewer").thinkingLevel, "xhigh");
+
+	tui.press("tui.select.cancel");
 	await tui.waitForPending();
 	await tui.waitForOpen();
-	assert.equal(profile(store, "reviewer").thinkingLevel, "low");
-
 	await activate(tui, "Rename");
 	tui.setFocused(true);
 	tui.type("careful-reviewer");
@@ -152,6 +152,56 @@ test("invalid settings stay read-only and render safely with remapped bindings",
 	assert.equal(store.read().kind, "invalid");
 });
 
+test("profile settings and task editing honor remapped standard bindings", async () => {
+	const store = createAgentProfileStore(path.join(directory, "pi-subagents.json"));
+	store.create("reviewer", {
+		task: "x",
+		tools: ["read"],
+		timeout: 30,
+		thinkingLevel: "medium",
+	});
+	const mapping: Record<string, string> = {
+		"tui.select.up": "k",
+		"tui.select.down": "j",
+		"tui.select.pageUp": "u",
+		"tui.select.pageDown": "d",
+		"tui.select.confirm": "y",
+		"tui.select.cancel": "q",
+		"tui.input.submit": "s",
+		"tui.input.newLine": "n",
+	};
+	const keybindings: Pick<KeybindingsManager, "matches" | "getKeys"> = {
+		matches: (data, binding) => data === mapping[binding],
+		getKeys: (binding) => (mapping[binding] ? [mapping[binding] as never] : []),
+	};
+	const tui = createTuiHarness({ width: 40, rows: 14, keybindings });
+	const context = createMockContext({ mode: "tui", hasUI: true, custom: tui.custom });
+	const controller = new AbortController();
+	const running = showSubagentsMenu(context.ctx, {
+		owner: { signal: controller.signal, isCurrent: () => !controller.signal.aborted },
+		getActiveJobs: () => [],
+		store,
+	});
+	await tui.waitForOpen();
+	await activateWithBindings(tui, "Settings", "j", "y");
+	await activateWithBindings(tui, "reviewer", "j", "y");
+	await activateWithBindings(tui, "Profile settings", "j", "y");
+	await activateWithBindings(tui, "Thinking level", "j", "y");
+	assert.equal(profile(store, "reviewer").thinkingLevel, "high");
+	await activateWithBindings(tui, "Task prompt", "j", "y");
+	await activateWithBindings(tui, "Edit task prompt", "j", "y");
+	tui.send("n");
+	paste(tui, "after");
+	tui.send("s");
+	await tui.waitForPending();
+	await tui.waitForOpen();
+	assert.equal(profile(store, "reviewer").task, "x\nafter");
+	assert.match(stripVTControlCharacters(tui.render().join("\n")), /q\s*to go back|q\s*cancel/iu);
+	assertWidth(tui, 40);
+	tui.press("ctrl+c");
+	await running;
+});
+
 test("profile manager reports save failures and keeps the accepted state", async () => {
 	const store = createAgentProfileStore(path.join(directory, "pi-subagents.json"));
 	store.create("reviewer", {
@@ -177,6 +227,7 @@ test("profile manager reports save failures and keeps the accepted state", async
 	await tui.waitForOpen();
 	await activate(tui, "Settings");
 	await activate(tui, "reviewer");
+	await activate(tui, "Profile settings");
 	await activate(tui, "Tools");
 	await activate(tui, "bash");
 	assert.deepEqual(profile(store, "reviewer").tools, ["read"]);
@@ -202,26 +253,16 @@ test("session shutdown disposes the registered command menu", async () => {
 	assert.equal(tui.isOpen, false);
 });
 
-test("invalid task edits reopen with the rejected draft before saving", async () => {
+test("invalid task edits reopen with the raw rejected draft and safe rendering", async () => {
 	const store = createAgentProfileStore(path.join(directory, "pi-subagents.json"));
 	store.create("reviewer", {
-		task: "Original task.",
+		task: "x",
 		tools: ["read"],
 		timeout: 30,
 		thinkingLevel: "medium",
 	});
-	const drafts: string[] = [];
-	const responses = ["", "Corrected task."];
 	const tui = createTuiHarness({ width: 48, rows: 16 });
-	const context = createMockContext({
-		mode: "tui",
-		hasUI: true,
-		custom: tui.custom,
-		editor: async (_title: string, draft: string) => {
-			drafts.push(draft);
-			return responses.shift();
-		},
-	});
+	const context = createMockContext({ mode: "tui", hasUI: true, custom: tui.custom });
 	const controller = new AbortController();
 	const running = showSubagentsMenu(context.ctx, {
 		owner: { signal: controller.signal, isCurrent: () => !controller.signal.aborted },
@@ -231,15 +272,27 @@ test("invalid task edits reopen with the rejected draft before saving", async ()
 	await tui.waitForOpen();
 	await activate(tui, "Settings");
 	await activate(tui, "reviewer");
+	await activate(tui, "Profile settings");
 	await activate(tui, "Task prompt");
-	assert.deepEqual(drafts, ["Original task.", ""]);
-	assert.equal(profile(store, "reviewer").task, "Corrected task.");
+	await activate(tui, "Edit task prompt");
+	tui.send("\u007f");
+	tui.press("tui.input.submit");
+	await tui.waitForPending();
+	await tui.waitForOpen();
 	assert.match(context.notifications[0]?.message ?? "", /Task prompt was not saved/i);
+
+	const corrected = "Corrected\u001b[31m task.\nNext line.";
+	paste(tui, corrected);
+	assert.match(stripVTControlCharacters(tui.render().join("\n")), /Corrected \[31m task/u);
+	tui.press("tui.input.submit");
+	await tui.waitForPending();
+	await tui.waitForOpen();
+	assert.equal(profile(store, "reviewer").task, corrected);
 	tui.press("ctrl+c");
 	await running;
 });
 
-test("owner replacement while the task editor is open does not save stale text", async () => {
+test("owner replacement settles and disposes an open task editor without saving", async () => {
 	const store = createAgentProfileStore(path.join(directory, "pi-subagents.json"));
 	store.create("reviewer", {
 		task: "Original task.",
@@ -247,17 +300,8 @@ test("owner replacement while the task editor is open does not save stale text",
 		timeout: 30,
 		thinkingLevel: "medium",
 	});
-	let finishEditor!: (value: string | undefined) => void;
-	const editorResult = new Promise<string | undefined>((resolve) => {
-		finishEditor = resolve;
-	});
 	const tui = createTuiHarness({ width: 48, rows: 16 });
-	const context = createMockContext({
-		mode: "tui",
-		hasUI: true,
-		custom: tui.custom,
-		editor: async () => editorResult,
-	});
+	const context = createMockContext({ mode: "tui", hasUI: true, custom: tui.custom });
 	const controller = new AbortController();
 	const running = showSubagentsMenu(context.ctx, {
 		owner: { signal: controller.signal, isCurrent: () => !controller.signal.aborted },
@@ -267,15 +311,31 @@ test("owner replacement while the task editor is open does not save stale text",
 	await tui.waitForOpen();
 	await activate(tui, "Settings");
 	await activate(tui, "reviewer");
-	selectRow(tui, "Task prompt");
-	tui.press("tui.select.confirm");
-	await Promise.resolve();
+	await activate(tui, "Profile settings");
+	await activate(tui, "Task prompt");
+	await activate(tui, "Edit task prompt");
+	paste(tui, " Stale task must not save.");
 	controller.abort(new DOMException("Session replaced", "AbortError"));
-	finishEditor("Stale task must not save.");
-	await tui.waitForPending();
 	await running;
+	assert.equal(tui.isOpen, false);
 	assert.equal(profile(store, "reviewer").task, "Original task.");
 });
+
+function paste(tui: TuiHarness, text: string): void {
+	tui.send(`\u001b[200~${text}\u001b[201~`);
+}
+
+async function activateWithBindings(
+	tui: TuiHarness,
+	label: string,
+	down: string,
+	confirm: string,
+): Promise<void> {
+	selectRowWithInput(tui, label, down);
+	tui.send(confirm);
+	await tui.waitForPending();
+	await tui.waitForOpen();
+}
 
 async function activate(tui: TuiHarness, label: string): Promise<void> {
 	selectRow(tui, label);
@@ -285,12 +345,16 @@ async function activate(tui: TuiHarness, label: string): Promise<void> {
 }
 
 function selectRow(tui: TuiHarness, label: string): void {
+	selectRowWithInput(tui, label, "\u001b[B");
+}
+
+function selectRowWithInput(tui: TuiHarness, label: string, down: string): void {
 	for (let attempt = 0; attempt < 30; attempt++) {
 		const selected = tui
 			.render()
 			.find((line) => (line.includes("→") || line.includes("›")) && line.includes(label));
 		if (selected) return;
-		tui.press("tui.select.down");
+		tui.send(down);
 	}
 	assert.fail(`Could not select row: ${label}\n${tui.render().join("\n")}`);
 }

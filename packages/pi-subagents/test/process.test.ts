@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, test, vi } from "vitest";
@@ -67,9 +67,64 @@ test("buildPiArgs isolates the child and preserves selected communication tools"
 	const noWorkTools = buildPiArgs(childRequest({ tools: [] }));
 	assert.equal(noWorkTools[noWorkTools.indexOf("--tools") + 1], "subagent_ask,subagent_wait");
 
-	const profiled = buildPiArgs(childRequest({ agentPrompt: "Review independently." }));
-	assert.equal(profiled[profiled.indexOf("--append-system-prompt") + 1], "Review independently.");
+	const profiled = buildPiArgs(
+		childRequest({ agentPrompt: "Review independently." }),
+		"/tmp/profile-prompt.md",
+	);
+	assert.equal(profiled[profiled.indexOf("--append-system-prompt") + 1], "/tmp/profile-prompt.md");
 	assert.equal(profiled.at(-1), "Task: task");
+	assert.throws(
+		() => buildPiArgs(childRequest({ agentPrompt: "Review independently." })),
+		/temporary agent prompt file/i,
+	);
+});
+
+test("runChild passes path-like profile prompts as literal private files and cleans them", async () => {
+	writeFileSync(path.join(directory, "README.md"), "wrong file contents", "utf8");
+	installFakePi(`
+const promptIndex = process.argv.indexOf("--append-system-prompt");
+const promptPath = process.argv[promptIndex + 1];
+const text = JSON.stringify({
+  promptPath,
+  prompt: fs.readFileSync(promptPath, "utf8"),
+  privateMode: process.platform === "win32" || (fs.statSync(promptPath).mode & 0o777) === 0o600,
+});
+console.log(JSON.stringify({
+  type: "message_end",
+  message: { role: "assistant", content: [{ type: "text", text }], stopReason: "stop" }
+}));
+`);
+	const result = await runChild(childRequest({ agentPrompt: "README.md" }));
+	assert.equal(result.state, "completed");
+	const evidence = JSON.parse(result.result ?? "{}") as {
+		promptPath: string;
+		prompt: string;
+		privateMode: boolean;
+	};
+	assert.notEqual(evidence.promptPath, "README.md");
+	assert.equal(evidence.prompt, "README.md");
+	assert.equal(evidence.privateMode, true);
+	assert.equal(existsSync(evidence.promptPath), false);
+});
+
+test("runChild cleans profile prompt files after launch failure, timeout, and cancellation", async () => {
+	const before = promptDirectories();
+	installFakePi("setInterval(() => {}, 1000);\n");
+
+	const removedCwd = path.join(directory, "removed-profiled-cwd");
+	mkdirSync(removedCwd);
+	rmSync(removedCwd, { recursive: true });
+	const failed = await runChild(childRequest({ agentPrompt: "Review.", cwd: removedCwd }));
+	assert.equal(failed.state, "failed");
+
+	const timedOut = await runChild(childRequest({ agentPrompt: "Review.", timeout: 0.025 }));
+	assert.equal(timedOut.state, "timed_out");
+
+	const controller = new AbortController();
+	const work = runChild(childRequest({ agentPrompt: "Review.", signal: controller.signal }));
+	setTimeout(() => controller.abort(), 25);
+	assert.equal((await work).state, "cancelled");
+	assert.deepEqual(promptDirectories(), before);
 });
 
 test("runChild classifies completed and partial subprocess output", async () => {
@@ -278,6 +333,13 @@ test("Windows process-tree termination bounds a hung taskkill helper", async () 
 	assert.deepEqual(treeKillerKill.mock.calls, [["SIGKILL"]]);
 	assert.deepEqual(childKill.mock.calls, [["SIGKILL"]]);
 });
+
+function promptDirectories(): string[] {
+	const prefix = `pi-subagents-prompt-${process.pid}-`;
+	return readdirSync(os.tmpdir())
+		.filter((entry) => entry.startsWith(prefix))
+		.sort();
+}
 
 function childRequest(overrides: Partial<ChildRequest> = {}): ChildRequest {
 	return {

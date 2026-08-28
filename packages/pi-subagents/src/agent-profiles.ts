@@ -153,7 +153,13 @@ export function renameAgentProfile(
 ): AgentProfilesLoadResult {
 	const name = requireAgentName(nameValue);
 	const nextName = requireAgentName(nextNameValue);
-	if (name === nextName) return requireMutableDocument(options);
+	if (name === nextName) {
+		const loaded = requireMutableDocument(options);
+		if (!Object.hasOwn(loaded.profiles, name)) {
+			throw new Error(`Subagent agent "${name}" does not exist.`);
+		}
+		return loaded;
+	}
 	return mutateAgentProfiles((document) => {
 		if (!Object.hasOwn(document, name)) {
 			throw new Error(`Subagent agent "${name}" does not exist.`);
@@ -247,7 +253,9 @@ function mutateAgentProfiles(
 	return readAgentProfiles(settingsPath);
 }
 
-function requireMutableDocument(options: AgentProfilesMutationOptions): AgentProfilesLoadResult {
+function requireMutableDocument(
+	options: AgentProfilesMutationOptions,
+): Exclude<AgentProfilesLoadResult, { kind: "invalid" }> {
 	const settingsPath = options.settingsPath ?? agentProfilesPath();
 	const loaded = readAgentProfiles(settingsPath);
 	if (loaded.kind === "invalid") {

@@ -200,6 +200,8 @@ test("rejects duplicate, missing, and invalid mutation targets", () => {
 	assert.throws(() => renameAgentProfile("reviewer", "debugger"), /already exists/i);
 	assert.throws(() => updateAgentProfile("missing", { timeout: 1 }), /does not exist/i);
 	assert.throws(() => deleteAgentProfile("missing"), /does not exist/i);
+	assert.throws(() => renameAgentProfile("missing", "missing"), /does not exist/i);
+	assert.equal(renameAgentProfile("reviewer", "reviewer").kind, "loaded");
 	assert.throws(() => renameAgentProfile("reviewer", "Not Valid"), /lowercase kebab-case/i);
 	assert.throws(() => updateAgentProfile("reviewer", { timeout: 0 }), /Refusing to save invalid/i);
 });
