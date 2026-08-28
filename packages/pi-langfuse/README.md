@@ -2,12 +2,12 @@
 
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-langfuse)](https://www.npmjs.com/package/@narumitw/pi-langfuse) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-Trace Pi agent runs, model generations, retries, tools, compaction, usage, and timing in [Langfuse](https://langfuse.com/) through OpenTelemetry.
+Export Pi agent runs, model generations, retries, tools, compaction, usage, and timing to [Langfuse](https://langfuse.com/) through OpenTelemetry.
 
 ## ✨ Features
 
 - Groups each settled agent run into one trace with indexed attempt spans for retries and queued continuations.
-- Records bounded provider requests, final assistant output, identity, TTFT, usage, known costs, and safe response diagnostics.
+- Records bounded provider requests, final assistant output, model identity, time to first content, usage, known costs, and safe response diagnostics.
 - Captures final tool inputs and outputs, progress timing, duration, failures, and structural compaction events.
 - Adds session, context, Git branch, commit, and aggregate counters as searchable metadata.
 - Supports metadata-only tracing when content capture is disabled.
@@ -26,24 +26,26 @@ Try the published package without installing it:
 pi -e npm:@narumitw/pi-langfuse
 ```
 
-Try a local checkout:
+Build and load a local checkout from the repository root:
 
 ```bash
 npm --workspace @narumitw/pi-langfuse run build
 pi -e ./packages/pi-langfuse
 ```
 
-An unbuilt local checkout must be built before loading the package directory.
-The Langfuse v4 SDK requires Node.js 20 or newer.
+The package declares `dist/index.ts`, so Pi cannot load an unbuilt local checkout.
+The installed Langfuse SDK dependencies require Node.js 20 or newer.
+Pi extensions run with your user permissions.
+Review this extension and its data-export behavior before installing it.
 
 ## 🚀 Quick start
 
-Run `/langfuse`, choose the setup action, enter the Langfuse credentials, and restart Pi.
-Subsequent agent runs are traced according to the saved content-capture and metadata settings.
+Run `/langfuse`, choose **Set up Langfuse for this Pi agent directory**, enter your credentials, and restart Pi.
+New agent runs are then traced with the saved content-capture and metadata settings.
 
 ## ⚙️ Settings
 
-Run the interactive manager, then choose **Set up Langfuse for this Pi agent directory** or **Update Langfuse for this Pi agent directory**:
+Run the interactive manager and choose **Set up Langfuse for this Pi agent directory** or **Update Langfuse for this Pi agent directory**:
 
 ```text
 /langfuse
@@ -54,11 +56,12 @@ Leave either key blank to preserve its existing value when updating a valid conf
 Leave the base URL blank to use `https://us.cloud.langfuse.com`.
 The first successful setup creates the file.
 Within one Pi process, updates run in invocation order, reread the latest valid private document, preserve unknown fields, and save atomically with mode `0600`.
-Malformed JSON or invalid recognized fields block setup and update writes until repaired; errors redact entered and stored credentials.
-A failed save leaves the current session and prior file unchanged.
+Malformed JSON or invalid recognized fields block writes until you repair the file.
+Errors redact entered and stored credentials.
+A failed save leaves the current session and previous file unchanged.
 
-Configuration belongs to the displayed Pi agent directory, not just the current conversation.
-Restart each running Pi process after saving; the new connection applies to subsequent sessions in that process.
+Configuration applies to the displayed Pi agent directory, not only the current conversation.
+Restart every running Pi process after saving so later sessions use the new connection.
 `/reload` is not sufficient because the isolated Langfuse runtime is initialized once per process.
 In print or JSON mode, edit the file manually because the interactive manager is unavailable.
 
@@ -84,7 +87,8 @@ Prefer HTTPS because HTTP sends Langfuse credentials and trace content without t
 `environment`, `release`, and `userId` are optional Langfuse trace attributes.
 An environment must match Langfuse's contract: at most 40 lowercase letters, numbers, hyphens, or underscores, and it cannot start with `langfuse`.
 `userId` populates the Langfuse user dimension, which is what the Sessions and Traces views group by; Langfuse accepts at most 200 characters, and leaving it unset reports no user.
-Set `captureContent` to `false` to trace timing, model, usage, cost, status, and bounded diagnostic metadata without sending prompts, provider-request snapshots, responses, or tool content.
+Set `captureContent` to `false` to trace timing, model, usage, cost, status, and bounded diagnostic metadata.
+In that mode, pi-langfuse does not export prompts, provider-request snapshots, responses, or tool content.
 
 The extension automatically restricts an existing config file to mode `0600` and refuses to load credentials if that protection cannot be enforced.
 You can also set it explicitly:
@@ -93,9 +97,10 @@ You can also set it explicitly:
 chmod 600 ~/.pi/agent/pi-langfuse.json
 ```
 
-Restart Pi after changing credentials, endpoint, environment, release, or `captureContent`.
+Changes to credentials, endpoint, environment, release, or `captureContent` require a Pi process restart.
 Changes to `userId` apply to new sessions without restarting Pi.
-The isolated OpenTelemetry tracer provider is initialized once per Pi process and selected only for Langfuse; it does not replace Pi's process-global provider or send Langfuse observations to another extension's exporter.
+The isolated OpenTelemetry tracer provider is initialized once per Pi process and used only for Langfuse.
+It does not replace Pi's process-global provider or send Langfuse observations to another extension's exporter.
 
 ## 🔭 What is traced
 
@@ -148,7 +153,8 @@ Each `pi.llm` generation records:
 - additive input, output, cache-read, cache-write, and total token usage plus known positive input, output, cache-read, cache-write, and total cost buckets;
 - non-additive `pi.usage.reasoning_tokens` and `pi.usage.cache_write_1h_tokens` in metadata so subsets are not double-counted.
 
-The request snapshot is the payload visible at this handler, not a guaranteed final wire payload: later extensions can still replace it.
+The request snapshot is the payload visible to this handler, not a guaranteed final wire payload.
+A later extension can still replace it.
 Final assistant content is reconciled from `turn_end` and `agent_end` after message transformation.
 A recovered sequence such as `429 -> 200` remains queryable in HTTP metadata but is not an error; the final assistant outcome decides generation severity.
 
@@ -162,7 +168,8 @@ Existing `pi.tool.call_id` and `pi.tool.name` correlation fields remain.
 `tool_execution_update` partial-result bodies are never captured.
 Duplicate, parallel, failed, no-progress, and interrupted tools are closed independently.
 
-An active `pi.compaction` records `pi.compaction.reason`, `pi.compaction.will_retry`, `pi.compaction.from_extension`, `pi.compaction.tokens_before`, `pi.compaction.messages_to_summarize`, `pi.compaction.turn_prefix_messages`, `pi.compaction.branch_entries`, and `pi.compaction.is_split_turn`.
+An active `pi.compaction` records its reason, retry state, source, token count, message counts, branch-entry count, and split-turn state.
+The exported field names are `pi.compaction.reason`, `pi.compaction.will_retry`, `pi.compaction.from_extension`, `pi.compaction.tokens_before`, `pi.compaction.messages_to_summarize`, `pi.compaction.turn_prefix_messages`, `pi.compaction.branch_entries`, and `pi.compaction.is_split_turn`.
 It adds `pi.compaction.read_file_count`, `pi.compaction.modified_file_count`, and `pi.compaction.usage.*` / `pi.compaction.cost.*` when Pi reports them.
 It never records the summary, custom instructions, or message bodies.
 Manual compaction outside an active agent trace is ignored; incomplete compaction closes as a warning at settlement or shutdown.
@@ -208,17 +215,19 @@ Available actions depend on that state:
 - **Show setup and privacy help** explains the agent-directory scope, manual configuration path, and content-capture risk.
 
 Connection actions state their agent-directory scope and per-process restart requirement before selection.
-Command arguments are intentionally ignored so remembered subcommands cannot silently bypass the menu.
+For compatibility, command arguments are ignored and cannot select or bypass a menu action.
 Print and JSON modes reject the interactive command with an observable error that includes current tracing state and the manual configuration path.
 
 ## 🔒 Security and privacy
 
 With content capture enabled, traces can contain user prompts, model responses, tool arguments, and tool results.
 These may include source code, file contents, shell output, or other sensitive project data.
-Review your Langfuse retention and access controls before enabling this extension.
+Review Langfuse retention and access controls before enabling the extension.
 
-Git branch names, commit ids, working directory, session/leaf ids, the configured `userId`, model identity, usage/cost, aggregate counts, and allowlisted response-header values are metadata.
-They remain exported when `captureContent` is `false`; branch names and diagnostic header values can themselves contain operational details, and a `userId` may itself be personally identifying if you set it to an email address or a real name.
+Metadata includes Git branch names, commit ids, working directory, session and leaf ids, the configured `userId`, model identity, usage, cost, aggregate counts, and allowlisted response-header values.
+This metadata remains exported when `captureContent` is `false`.
+Branch names and diagnostic header values can contain operational details.
+A `userId` can identify you if you set it to an email address or real name.
 Choose a pseudonymous value when that matters, or leave `userId` unset to export no user at all.
 
 The built-in mask specifically protects Langfuse credentials; it is not a general secret scanner.

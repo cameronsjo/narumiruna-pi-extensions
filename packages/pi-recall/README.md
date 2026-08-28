@@ -6,9 +6,8 @@
 > Pi Recall is experimental.
 > Its storage format and interaction flow may change between releases.
 
-Save selected user or assistant messages, find them in another Pi session, and quote only the text you choose into a new draft.
-
-Saved content stays local until you explicitly submit a recalled quote.
+Save selected user or assistant messages, find them in another Pi session, and quote them into a new draft.
+Saved content stays local until you submit that draft.
 
 ## ✨ Features
 
@@ -16,9 +15,9 @@ Saved content stays local until you explicitly submit a recalled quote.
 - Recalls by current cwd, current session, or all saved messages.
 - Filters by role and fuzzy-searches message text, role, and session name.
 - Previews the full message before inserting an XML-marked quote at the editor cursor.
-- Never submits recalled text automatically and confirms deletion before changing storage.
-- Stores private versioned JSONL with cross-process locking and atomic replacement.
-- Fails closed for malformed, unsupported, oversized, symlinked, or non-file storage.
+- Inserts recalled text without submitting it and confirms every deletion.
+- Stores private, versioned JSONL with cross-process locking and atomic replacement.
+- Makes malformed, unsupported, oversized, symlinked, or non-file storage read-only.
 
 ## 📦 Install
 
@@ -41,7 +40,8 @@ npm --workspace @narumitw/pi-recall run build
 pi -e ./packages/pi-recall
 ```
 
-The package declares `dist/index.ts`, so an unbuilt local checkout must be built before Pi loads the package directory.
+The package declares `dist/index.ts`, so build an unbuilt local checkout before Pi loads the package directory.
+Install only from sources you trust because Pi extensions run with Pi's permissions.
 
 ## 🚀 Quick start
 
@@ -52,11 +52,10 @@ The package declares `dist/index.ts`, so an unbuilt local checkout must be built
 ## 🧭 Recall workflow
 
 1. Type to fuzzy-search saved messages.
-2. Press `Tab` or `Shift+Tab` to change scope, or use the configured `/tree` filter-cycle keys to change the message view.
-3. The default view keys are `Ctrl+O` and `Ctrl+Shift+O`, and the picker shows the active bindings in its help text.
-4. Press `Enter` to open the selected message, or press `Ctrl+D` to review and confirm its deletion directly from the TUI picker.
-5. Preview the message or choose **Quote into draft**.
-6. Add your question or instruction, then submit the draft normally.
+2. Press `Tab` or `Shift+Tab` to change scope.
+3. Use the configured `/tree` filter-cycle keys to change the message view; the defaults are `Ctrl+O` and `Ctrl+Shift+O`.
+4. Press `Enter` to open the selected message, or press `Ctrl+D` to review and confirm deletion from the picker.
+5. Preview or quote the message, then add your instruction and submit the draft normally.
 
 A quoted draft uses this form:
 
@@ -74,7 +73,7 @@ The quote sent to the editor omits cwd, session IDs, entry IDs, session files, a
 
 | Command | Modes | Description |
 | --- | --- | --- |
-| `/recall` | TUI, RPC | Open the Pi Recall manager. Arguments are rejected. |
+| `/recall` | TUI, RPC | Open the Pi Recall manager; arguments are rejected. |
 
 Print and JSON modes reject `/recall` before opening an interactive flow.
 TUI and RPC expose the same save, preview, quote, delete, status, and help capabilities; RPC uses explicit dialogs instead of terminal shortcuts.
@@ -100,13 +99,12 @@ The saved-message TUI has three flat display views:
 - **Assistant only** — only saved assistant messages in the active scope.
 
 The view uses Pi's injected `app.tree.filter.cycleForward` and `app.tree.filter.cycleBackward` bindings, which default to `Ctrl+O` and `Ctrl+Shift+O`.
-Pi Recall does not reuse `/tree`'s direct filter bindings because `Ctrl+D` remains the Recall delete action.
-The active view, filtered count, cursor position, and configured cycle keys remain visible in the picker.
+Pi Recall reserves `Ctrl+D` for deletion instead of reusing `/tree`'s direct filter bindings.
+The picker shows the active view, filtered count, cursor position, and configured cycle keys.
 
-Picker scope, view, and query survive record opening plus cancelled, successful, and failed direct deletion during one `/recall` flow.
-Selection is retained when possible and moves to a neighboring visible record after successful deletion.
-A new `/recall` starts with **Current cwd**, **All messages**, and an empty query.
-RPC continues to ask for scope explicitly and shows the complete scoped list without simulating TUI-only view or search shortcuts.
+Scope, view, query, and selection survive record opening and deletion attempts within one `/recall` flow.
+After successful deletion, selection moves to a neighboring visible record.
+RPC asks for scope explicitly and shows the complete scoped list without TUI-only view or search shortcuts.
 
 ## 🔍 TUI fuzzy search
 
@@ -116,10 +114,9 @@ Search matches complete saved message text, the `user` or `assistant` role, and 
 Matching is case-insensitive and requires every whitespace- or slash-separated token as an ordered subsequence.
 It ranks closer matches first but does not perform typo-edit-distance correction.
 
-The scope, view, query, and current selection survive selected-message navigation during one `/recall` interaction.
-Scope and view changes retain the selected record when it remains visible; otherwise the picker chooses the first ranked or newest visible result.
-A new `/recall` starts with an empty query, **Current cwd**, and **All messages**.
-Queries are limited to 256 UTF-16 code units; an overlong query shows an error and runs no matching.
+Scope and view changes retain the selected record when it remains visible; otherwise the picker chooses the first ranked result, or the newest result for an empty query.
+Each new `/recall` starts with **Current cwd**, **All messages**, and an empty query.
+Queries are limited to 256 UTF-16 code units; an overlong query shows an error and does not run.
 Terminal controls are replaced before matching or display, while ordinary spaces remain available for multi-token queries.
 
 `Ctrl+D`—or the configured `app.session.delete` binding—opens a confirmation identifying the selected record and showing a bounded preview.
@@ -132,7 +129,7 @@ The existing `Enter` → **Delete…** route remains available when a complete s
 RPC continues to show the complete scoped list through explicit dialogs and does not simulate a hidden fuzzy query or terminal shortcut.
 Message timestamps, cwd, session IDs, entry IDs, and local paths are not searchable.
 
-## 🔒 Storage, privacy, and recovery
+## 🔒 Security and privacy
 
 The canonical user file is:
 
@@ -145,15 +142,16 @@ Each line is one active versioned `recall_message` record.
 Records contain the text, role, saved time, original message time, source cwd, source session ID, source entry ID, and optional session name.
 This provenance is shown locally but is excluded from generated quote payloads except for role and original message time.
 
-Pi Recall does not create settings, session custom entries, tools, background processes, watchers, or automatic model context.
-It reads storage only when `/recall` needs it.
+Pi Recall creates no settings, session custom entries, tools, background work, or automatic model context.
+It reads storage only while `/recall` needs it.
 
 Save and delete operations acquire one cross-process lock, reread canonical storage under that lock, and publish a complete JSONL replacement through a unique same-directory `0600` temporary file.
 Lock waiting is abort-aware.
 The canonical file is required to be a regular non-symlink file and is kept at `0600`.
 
 Malformed JSON, duplicate IDs, unknown record types or versions, invalid records, symlinks, and limit violations make storage read-only.
-Fix or move the reported file, then reopen `/recall`; Pi Recall never overwrites invalid storage.
+Fix or move the reported file, then reopen `/recall`.
+Pi Recall never overwrites invalid storage.
 Unknown fields on otherwise valid version-1 records survive later rewrites.
 
 Deleting a message removes it from canonical `pi-recall.jsonl`.
@@ -164,8 +162,7 @@ It is not secure erasure of filesystem blocks, backups, snapshots, temporary cop
 - Eligible sources are `message` entries with role `user` or `assistant` on the active branch.
 - User strings and text blocks are kept; multiple text blocks are joined in source order with newlines.
 - Thinking, tool calls, tool results, images/base64, custom messages, image-only messages, empty text, and abandoned branches are not saved.
-- Markdown, indentation, Unicode, and original line breaks are preserved.
-  Oversized messages are excluded rather than truncated.
+- Markdown, indentation, Unicode, and original line breaks are preserved; oversized messages are excluded rather than truncated.
 - A source message can be saved only once for the same source session ID and entry ID.
 - At most 200 messages may be saved.
 - One message text may contain at most 50,000 UTF-8 bytes.
@@ -181,8 +178,7 @@ The raw stored text is not modified merely for display.
 - No tags, saved-query persistence, message editing, reordering, batch deletion, import/export, automatic expiry, or automatic context injection.
 - No cross-session transcript browser: only previously saved records can be recalled across sessions.
 - Text only; images and tool payloads are deliberately omitted.
-- The custom TUI picker is keyboard-operated.
-  RPC uses sequential dialogs.
+- The custom TUI picker is keyboard-operated; RPC uses sequential dialogs.
 - Scope, view, and search preferences are not persisted; every new `/recall` interaction starts at **Current cwd**, **All messages**, and an empty query.
 
 ## 🗂️ Package layout

@@ -2,19 +2,19 @@
 
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-sync)](https://www.npmjs.com/package/@narumitw/pi-sync) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-Sync selected Pi settings and content across machines through Git, WebDAV, Cloudflare R2, or another S3-compatible store.
+Pi Sync synchronizes selected Pi settings and content across machines through Git, WebDAV, Cloudflare R2, or another S3-compatible store.
 
-Reusable storage connections hold credentials, while named sync setups define the exact remote path, included content, and automatic-sync behavior.
+Reusable storage connections hold credentials, while named sync setups define exactly what to sync, where to store it, and whether to sync automatically.
 
 ## ✨ Features
 
-- Manages Git, WebDAV, Cloudflare R2, and general S3-compatible backends through `/sync`.
-- Separates reusable storage connections from named sync setups and exact reviewed remote paths.
-- Selects Pi roots, safe agent-relative paths, and the privacy-sensitive sessions root through one ordered include list.
+- Manages Git, WebDAV, Cloudflare R2, and general S3-compatible storage through `/sync`.
+- Separates reusable storage connections from named setups with exact reviewed remote paths.
+- Uses one ordered list for Pi roots, safe agent-relative paths, and privacy-sensitive sessions.
 - Protects changes with immutable snapshots, secret scanning, locks, conflict checks, pull backups, transactional apply, and recovery journals.
-- Keeps snapshot selection portable and credential-free across environments.
+- Keeps snapshot selection portable and free of credentials.
 - Writes settings atomically, preserves unknown fields, rejects stale edits, and fails closed on unsafe configuration.
-- Loads a generated split runtime while preserving lazy UI and backend chunks.
+- Loads a generated split runtime with lazy UI and backend chunks.
 
 ## 📦 Install
 
@@ -35,19 +35,23 @@ npm --workspace @narumitw/pi-sync run build
 pi -e ./packages/pi-sync
 ```
 
-The package declares `dist/index.ts`, so the build command must finish before Pi loads the local package directory.
+The package declares `dist/index.ts`, so an unbuilt checkout must run the build before Pi loads the package directory.
 
-An unbuilt checkout still declares `dist/index.ts`, but the generated entrypoint and chunks do not exist until the build completes.
+Extensions run with Pi's permissions, so install only packages from sources you trust.
 
 ## 🚀 Quick start
 
-Run `/sync`, choose **Set up sync**, and review the storage connection, exact remote path, included content, automatic-sync choice, and masked credentials before saving.
+Run `/sync` and choose **Set up sync**.
+
+Before saving, review the storage connection, exact remote path, included content, automatic-sync choice, and masked credentials.
+
 Buckets and remote repositories must already exist.
+
 Git uses existing non-interactive SSH or credential-helper configuration and never stores Git credentials.
 
 ## 🧭 Manager, conflicts, and recovery
 
-The manager shows local state without contacting remote storage:
+The `/sync` manager shows local state without contacting remote storage:
 
 ```text
 Current sync setup: home
@@ -58,33 +62,52 @@ Remote status: Not checked
 ```
 
 Primary actions include **Sync now**, **Switch sync setup**, **Status & changes**, **Settings**, and **More…**.
-When pi-sync has already detected a synced-content-list mismatch, the manager instead shows **Sync status: Review needed**, puts **Review synced content (recommended)** first, and keeps **Sync now** visibly unavailable until the choice is reviewed.
-Opening the manager still performs no new remote request.
-The standard manager also owns setup and connection lists/details plus history and recovery.
-Secondary screens provide **Back**; Escape goes back and Ctrl+C closes the flow.
-Specialized operation and masked-credential prompts show the effective cancellation bindings and retain Ctrl+C as a hard-cancel input when Back is remapped.
-Destructive, credential-bearing, and externally visible operations retain exact specialized previews and confirmations.
+
+After Pi Sync detects an included-content mismatch, the manager shows **Sync status: Review needed** and puts **Review synced content (recommended)** first.
+
+**Sync now** remains unavailable until you review the mismatch.
+
+Opening the manager does not make another remote request.
+
+The manager also provides setup and connection details, history, and recovery.
+
+On secondary screens, **Back** and Escape return to the previous screen, while Ctrl+C closes the flow.
+
+Specialized operation and masked-credential prompts show the effective cancellation bindings and keep Ctrl+C as a hard-cancel input when Back is remapped.
+
+Destructive, credential-bearing, and externally visible operations show exact previews and confirmations.
 
 ### Restore sync access
 
-When an operation is currently running, the manager shows its command and process ID, keeps sync and settings changes unavailable, and puts **Refresh operation status** first.
-When lock metadata is still protected by an active guard, the manager explains that another pi-sync process may be starting or finishing and asks the user to wait before refreshing.
+While an operation is running, the manager shows its command and process ID, disables sync and settings changes, and puts **Refresh operation status** first.
+
+When an active guard still protects lock metadata, the manager asks you to wait because another Pi Sync process may be starting or finishing.
+
 It never offers lock removal while an owner or guard may still be active.
 
-When a previous operation appears to have stopped without releasing its local lock, the manager shows **Sync paused** and puts **Restore sync access… (recommended)** first instead of hiding recovery inside **History & recovery…**.
-Unreadable metadata receives a stronger warning because pi-sync cannot verify who owns it.
-Close every other Pi session that may still be syncing, review the local-lock-only confirmation, then choose **Remove local lock and continue**.
-The guarded recovery path rechecks metadata and ownership before removal, changes no settings, local files, sync state, or remote data, and returns directly to the normal manager when access is restored.
+If a stopped operation leaves its local lock behind, the manager shows **Sync paused** and puts **Restore sync access… (recommended)** first.
+
+Unreadable metadata receives a stronger warning because Pi Sync cannot verify its owner.
+
+Close every other Pi session that may still be syncing, review the local-lock-only confirmation, and choose **Remove local lock and continue**.
+
+Before removal, the guarded recovery path rechecks metadata and ownership.
+
+Successful recovery changes no settings, local files, sync state, or remote data and returns to the normal manager.
+
 Cancellation leaves the lock unchanged.
-If ownership changes or a guard is still expiring, pi-sync refuses removal and keeps actionable status available for refresh or retry.
-The deterministic fallback remains `/sync unlock --stale` after the same no-other-sync verification.
+
+If ownership changes or a guard is still expiring, Pi Sync refuses removal and keeps refresh or retry available.
+
+After the same no-other-sync verification, `/sync unlock --stale` provides a deterministic fallback.
 
 ### Resolve conflicts in the manager
 
-When **Sync now**, **Pull from remote…**, or **Push to remote…** finds changes that require a human direction choice, the manager opens **Resolve sync conflict** instead of ending at a command-only error.
-The flow names the current sync setup and explains whether local content, remote content, or the included-content policy changed.
+When **Sync now**, **Pull from remote…**, or **Push to remote…** requires a direction choice, the manager opens **Resolve sync conflict**.
 
-An explicit remote content-list mismatch now opens **Synced content differs** inside the same manager flow.
+The flow names the current setup and explains whether local content, remote content, or the included-content policy changed.
+
+An explicit remote content-list mismatch opens **Synced content differs** in the same manager flow.
 Nothing changes until you choose an action.
 Choose **Review all paths (recommended)** first to compare exact remote-only paths, device-only paths, and both ordered lists.
 If membership matches but order differs, the review says that only ordering differs.
@@ -119,7 +142,9 @@ It clears after verified resolution, invalidation, session replacement, or shutd
 Interactive TUI `/sync sync`, `/sync pull`, and `/sync push` routes without `--yes` open the same review flow when they detect the mismatch.
 Explicit `--yes` routes remain non-interactive and report exact remote-only, device-only, or order-only guidance while leaving visible attention for later review.
 Shutdown automatic sync never opens a dialog because Pi is exiting.
-RPC startup and direct routes remain read-only and notification-based, while print and JSON modes remain unsupported for `/sync` because their UI output is not observable.
+RPC startup mismatch review remains read-only and notification-based.
+
+Print and JSON modes do not support `/sync` because UI output is not observable there.
 
 ## ⚙️ Settings
 
@@ -130,14 +155,18 @@ The canonical private user file is:
 ```
 
 Pi's configured agent directory replaces `~/.pi/agent` when applicable.
-Missing settings load as unconfigured without creating an agent directory, file, temporary, or lock.
+Missing settings load as unconfigured without creating an agent directory, file, temporary file, or lock.
+
 An explicit setup creates the file atomically.
 On POSIX, pi-sync creates and replaces it with mode `0600`.
 Pi-sync processes coordinate settings access through `pi-sync.json.mutation-lock`; lock-unaware editors are outside that serialization boundary and should not save the file while a pi-sync settings operation is running.
 Credentials stay in this canonical private file and are never shown in menus, reviews, status, notifications, errors, logs, or completion metadata.
 
-An existing private `pi-sync.local.json` containing a valid version 3 document is copied byte-for-byte to `pi-sync.json`; the old file remains as a recovery copy.
-If both paths exist, `pi-sync.json` wins and the other path remains untouched.
+A private `pi-sync.local.json` containing a valid version 3 document is copied byte-for-byte to `pi-sync.json`.
+
+The old file remains as a recovery copy.
+
+If both paths exist, `pi-sync.json` wins and the legacy file remains untouched.
 
 ### Complete version 3 example
 
@@ -273,7 +302,10 @@ Automatic apply protects the currently open session file; restart Pi or resume a
 
 ### Unsupported old settings and recovery
 
-Version 1, version 2, and non-empty unversioned documents are intentionally unsupported by this breaking schema reset. pi-sync does **not** migrate, partially interpret, downgrade, or overwrite them.
+Version 1, version 2, and non-empty unversioned documents are unsupported after the version 3 schema reset.
+
+Pi Sync does **not** migrate, partially interpret, downgrade, or overwrite them.
+
 Automatic sync pauses and reports an actionable version 3 error without displaying secrets.
 
 Recovery:
@@ -310,17 +342,19 @@ The menu is preferred, while deterministic routes remain available:
 ```
 
 - `--setup <name>` addresses a setup without switching it.
-- `--yes` / `-y` skips a direct route's confirmation.
-- `--force` accepts a reviewed content conflict but never disables backend concurrency protection.
-- `--stale` requests guarded stale-lock recovery.
+- `--yes` or `-y` skips confirmation for `push`, `pull`, `sync`, `rollback`, or `migrate-state`.
+- `--force` lets `push`, `pull`, and `sync` accept a reviewed content conflict without disabling backend concurrency protection.
+- `--stale` applies only to guarded stale-lock recovery through `unlock`.
 
 The former version 2 setup-addressing flag is rejected.
 Unknown flags, unknown commands, trailing values, and missing setup/snapshot values are rejected.
 Completion includes known setup names and preserves preceding command tokens.
 
-TUI mode uses standard manager, settings, resource, and included-content screens plus specialized secret, wizard, confirmation, and commit-aware loader components.
-RPC uses Pi's supported dialog/notification protocol and does not gain settings mutation.
-Print and JSON modes never enter TUI-only screens; unsupported interactive routes reject or remain protocol-safe rather than relying on no-op output.
+TUI mode provides manager, settings, resource, included-content, secret, wizard, confirmation, and operation-review screens.
+
+In RPC mode, the **Settings** and **Included Content** interfaces provide read-only summaries through Pi's dialog and notification protocol.
+
+Print and JSON modes reject `/sync` before entering interactive screens.
 
 ## 🔄 Backend and recovery model
 
@@ -365,12 +399,15 @@ Preserve both roots before manual recovery; with every Pi process closed and no 
   Publication/apply commit boundaries finish with bounded signals and report ambiguous outcomes explicitly.
 - Terminal-bound names, paths, metadata, and errors are control-character sanitized.
 
-## ♿ Conditional terminal accessibility smoke
+## ♿ Terminal accessibility
 
-Pi exposes terminal components rather than a semantic/ARIA tree.
-Release validation checks textual state, keyboard operation, Escape/Back, control escaping, and narrow rendering.
-Critical meaning appears in text such as `(current)`, `Review needed`, `Later`, `Warning`, `Invalid`, `Saved`, `Cancelled`, and `Applied`; color is supplementary.
-The attention widget is informational and does not pretend to be a clickable control.
+Pi exposes terminal components rather than a semantic or ARIA tree.
+
+Release checks cover textual state, keyboard operation, Escape and Back behavior, control escaping, and narrow rendering.
+
+Critical meaning appears in text such as `(current)`, `Review needed`, `Later`, `Warning`, `Invalid`, `Saved`, `Cancelled`, and `Applied`.
+
+Color is supplementary, and the attention widget is informational rather than interactive.
 
 ## 🗂️ Package layout
 
@@ -420,4 +457,4 @@ Pi extension, Pi coding agent, settings sync, Git, WebDAV, Nextcloud, Cloudflare
 
 ## 📄 License
 
-MIT
+[MIT](./LICENSE)

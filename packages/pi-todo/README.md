@@ -4,13 +4,13 @@
 [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-Give coding agents a focused todo list for tracking multi-step work above Pi's editor.
+Pi Todo gives the model a focused list for tracking multi-step work above Pi's editor.
 
-The list follows the active session branch and disappears cleanly when no tracked work remains or the session ends.
+The list follows the active session branch and disappears when no tracked work remains or the session ends.
 
 ## ✨ Features
 
-- Registers one `update_todo_list` tool with clear guidance for meaningful multi-step work.
+- Registers one `update_todo_list` tool for meaningful multi-step work.
 - Keeps task text concise and action-oriented, with at most one task in progress.
 - Shows a compact themed task list and completion count above the editor in TUI mode.
 - Restores the latest valid list when Pi starts a session or navigates between branches.
@@ -47,17 +47,17 @@ Pi extensions run with the user's permissions, so install only trusted code.
 
 Ask Pi to perform work with multiple meaningful steps.
 
-The agent can create a concise list through `update_todo_list`, mark one task `in_progress`, and revise the list when the plan changes.
+The model can use `update_todo_list` to create a concise list, mark one task `in_progress`, and revise the plan as work changes.
 
-Stable tool guidance tells the agent to update the list immediately after task status changes and to reconcile it before progress reports or the final response.
+Each update replaces the complete list, and an empty list clears it.
 
-The agent sends the complete current list with every update and sends an empty list when no tracked work remains.
+Tool guidance tells the model to update changed statuses promptly and reconcile the list before progress reports or the final response.
 
 ## 🛠️ Tools
 
 ### `update_todo_list`
 
-Replace the complete current todo list for the active session.
+Replaces the complete todo list for the active session.
 
 Each item has this shape:
 
@@ -72,23 +72,33 @@ Accepted statuses are `pending`, `in_progress`, and `completed`.
 
 A list may contain up to 50 items, each item may contain up to 300 characters, and at most one item may be `in_progress`.
 
-The tool result stores a versioned snapshot in the session branch so branch navigation can reconstruct the latest valid list.
+### Session and compaction behavior
 
-Branch reconstruction also accepts valid results stored under the previous `todo_widget` name, but the extension only registers `update_todo_list` for new calls.
+Each successful tool result stores a versioned snapshot on the active session branch.
 
-During ordinary turns, the model reads the complete list from the persisted `update_todo_list` assistant tool call, while its successful result confirms the active state and preserves append-only prompt history.
+Session startup and branch navigation reconstruct the latest valid list from those results.
 
-If leading compaction or branch summaries remove that matching call/result pair, the extension inserts one hidden, non-persistent state-only fallback immediately after those summaries.
+Reconstruction also accepts valid results stored under the former `todo_widget` name, but new calls use only `update_todo_list`.
 
-That restored message remains fixed for the current leading-summary epoch, including after a later valid todo update or clear.
-The extension stores branch-local boundary metadata in the session so reload and branch navigation retain the established prefix without making the hidden fallback itself persistent model context.
-The later tool call and result supersede the restored state at the conversation tail without rewriting the earlier provider prefix.
-An ordinary context without a leading summary does not synthesize a fallback, and a new summary epoch restores only the then-current list when needed.
+During ordinary turns, the persisted assistant tool call and successful result keep the complete current list visible to the model without rewriting prompt history.
 
-In TUI mode, updates appear immediately in a widget above the editor.
+If leading compaction or branch summaries remove that matching pair, the extension inserts one hidden, non-persistent state message immediately after the summaries.
 
-The widget header shows completed and total task counts, followed by themed completed, in-progress, and pending rows.
-Long task text wraps to the available terminal width with continuation lines aligned beneath the text.
+The restored message stays fixed for that leading-summary epoch, even after a later valid update or clear.
+
+Branch-local boundary metadata preserves the established prefix across reload and branch navigation without persisting the hidden message as model context.
+
+A later tool call and result supersede the restored state at the conversation tail without rewriting the earlier provider prefix.
+
+An ordinary context without a leading summary receives no fallback.
+
+A new summary epoch restores only the list that is current when restoration becomes necessary.
+
+In TUI mode, updates appear immediately above the editor.
+
+The widget shows completed and total task counts, followed by themed completed, in-progress, and pending rows.
+
+Long task text wraps to the terminal width, with continuation lines aligned beneath the text.
 
 In RPC, print, and JSON modes, the tool still returns structured details but does not create a visual widget.
 
@@ -96,13 +106,13 @@ In RPC, print, and JSON modes, the tool still returns structured details but doe
 
 The extension does not read or write files, start processes, access credentials, or make network requests.
 
-Task text is stored in Pi's normal session tool results and therefore follows the user's existing session persistence choices.
+Pi stores task text in normal session tool results, so it follows the user's session persistence choices.
 
 Terminal escape sequences, control characters, and bidirectional display controls are removed at the rendering boundary without changing the stored tool payload.
 
 ## 🚧 Limitations
 
-- The visual widget uses a fixed position above the editor and is available only in TUI mode.
+- The visual widget appears above the editor only in TUI mode.
 - The extension provides a model tool rather than a slash command or manual task editor.
 - The extension reminds the model to update statuses but cannot infer task completion or force a tool call.
 - Branch reconstruction uses only valid versioned `update_todo_list` or legacy `todo_widget` tool results on the active branch.
@@ -117,7 +127,7 @@ packages/pi-todo/
 ├── scripts/
 │   └── build-runtime.mjs     # Deterministic runtime builder and validator
 ├── src/
-│   ├── index.ts              # Thin authoritative extension forwarder
+│   ├── index.ts              # Thin extension entrypoint
 │   └── todo-widget.ts        # Tool, lifecycle, state reconstruction, and rendering
 ├── test/
 │   ├── build-runtime.test.ts       # Build, boundary, and Jiti loader coverage
@@ -145,6 +155,4 @@ Pi extension, coding agent, todo list, task progress, session widget, TypeScript
 
 ## 📄 License
 
-MIT.
-
-See [`LICENSE`](./LICENSE).
+[MIT](./LICENSE)

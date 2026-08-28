@@ -2,41 +2,34 @@
 
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-accounts)](https://www.npmjs.com/package/@narumitw/pi-accounts) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-Save and switch named OpenAI Codex, Anthropic, GitHub Copilot, Kimi For Coding, OpenRouter, Radius, and xAI OAuth accounts without replacing Pi's built-in provider integrations.
-
-Each selection overrides only the chosen provider, and selecting `default` restores Pi's normal authentication without deleting saved accounts.
-
-## ✨ Features
-
-- Manages named OpenAI Codex, Anthropic Claude Pro/Max, GitHub Copilot, Kimi For Coding, OpenRouter, Radius, and xAI OAuth accounts through `/accounts`.
-- Keeps an independent selected account—or Pi's default login—for each provider.
-- Applies provider-specific credentials, endpoints, headers, and model availability through Pi's built-in providers.
-- Refreshes rotating credentials safely and verifies effective runtime authentication before reporting success.
-- Makes only the verified active OAuth credential available process-locally to compatible current-account consumers.
-- Stores credentials atomically in a private local file and fails closed for the affected provider on activation errors.
-- Migrates legacy `pi-codex-accounts.json` data while preserving its rollback source.
-
-## 🔌 Supported providers
-
-| Provider | Provider ID | Account-specific behavior |
-| --- | --- | --- |
-| OpenAI Codex | `openai-codex` | ChatGPT Plus/Pro OAuth, OAuth-only native-provider bridge, and Codex WebSocket invalidation |
-| Anthropic | `anthropic` | Claude Pro/Max OAuth without interfering with Anthropic API-key auth after returning to `default` |
-| GitHub Copilot | `github-copilot` | Individual or Enterprise login, credential-derived API endpoint, and account-specific available models |
-| Kimi For Coding | `kimi-coding` | Kimi Code subscription OAuth with provider-owned Bearer-header authentication |
-| OpenRouter | `openrouter` | OpenRouter OAuth that mints a persistent account API key without managing manually entered API-key profiles |
-| Radius | `radius` | Gateway-bound OAuth with credential-specific dynamic model-catalog refresh and selected-model rebinding |
-| xAI | `xai` | SuperGrok or X Premium OAuth with the native xAI provider and model catalog |
+Save and switch named OAuth accounts for Pi's built-in providers.
+Each provider keeps its own selection, and choosing `default` restores Pi's normal authentication without deleting saved accounts.
 
 > [!WARNING]
 > Anthropic currently treats Claude Pro/Max use through third-party harnesses as **extra usage billed per token**, rather than consumption of the normal plan allowance.
 > Review your Anthropic billing and extra-usage settings before using a named Anthropic account.
 
+## ✨ Features
+
+- Manages named OpenAI Codex, Anthropic Claude Pro/Max, GitHub Copilot, Kimi For Coding, OpenRouter, Radius, and xAI OAuth accounts through `/accounts`.
+- Selects an account—or Pi's default login—independently for each provider.
+- Applies provider-specific credentials, endpoints, headers, and model availability through Pi's built-in providers.
+- Refreshes rotating credentials and verifies the effective authentication before reporting success.
+- Offers only the verified active OAuth credential to compatible in-process consumers.
+- Writes credentials atomically to a private local file and fails closed for only the affected provider when activation fails.
+- Imports legacy `pi-codex-accounts.json` data while retaining the source file for rollback.
+
 ## 📦 Install
 
-`pi-codex-accounts` is deprecated and its source is archived under `deprecated/`.
-Do not load both packages together; they can manage and refresh the same rotating Codex credential independently.
-To migrate one Pi installation:
+Install persistently:
+
+```bash
+pi install npm:@narumitw/pi-accounts
+```
+
+`pi-codex-accounts` is deprecated and archived under `deprecated/`.
+Do not load both packages because each can refresh the same rotating Codex credential.
+Migrate an existing installation with:
 
 ```bash
 pi uninstall npm:@narumitw/pi-codex-accounts
@@ -60,8 +53,20 @@ The package declares `dist/index.ts`, so an unbuilt local checkout must be built
 
 ## 🚀 Quick start
 
-Run `/accounts` in TUI or RPC mode, then choose a provider action from the account manager.
-Use the manager to log in, switch accounts, restore Pi's default login, or remove a saved account.
+Run `/accounts` in TUI or RPC mode.
+Use the manager to log in, switch accounts, restore a provider's default Pi login, or remove an account.
+
+## 🔌 Supported providers
+
+| Provider | Provider ID | Account-specific behavior |
+| --- | --- | --- |
+| OpenAI Codex | `openai-codex` | ChatGPT Plus/Pro OAuth, OAuth-only native-provider bridge, and Codex WebSocket invalidation |
+| Anthropic | `anthropic` | Claude Pro/Max OAuth without interfering with Anthropic API-key auth after returning to `default` |
+| GitHub Copilot | `github-copilot` | Individual or Enterprise login, credential-derived API endpoint, and account-specific available models |
+| Kimi For Coding | `kimi-coding` | Kimi Code subscription OAuth with provider-owned Bearer-header authentication |
+| OpenRouter | `openrouter` | OpenRouter OAuth that mints a persistent account API key without managing manually entered API-key profiles |
+| Radius | `radius` | Gateway-bound OAuth with credential-specific dynamic model-catalog refresh and selected-model rebinding |
+| xAI | `xai` | SuperGrok or X Premium OAuth with the native xAI provider and model catalog |
 
 ## 💬 Commands
 
@@ -71,10 +76,11 @@ Open the interactive account manager:
 /accounts
 ```
 
-The standard manager runs in TUI or RPC mode; Back returns through provider/account screens and Escape closes the root.
-Print and JSON modes reject it observably.
-Any extra text after `/accounts` is ignored so the entry point stays singular.
-Provider-owned OAuth challenges, account-name text input, and exact replacement/removal confirmations remain specialized dialogs because they carry credential and destructive-action policy rather than ordinary navigation.
+The manager supports TUI and RPC mode.
+Back returns through provider and account screens, and Escape closes the root.
+Print and JSON modes do not provide account-manager output.
+Extra text after `/accounts` is ignored.
+OAuth challenges, account names, and replacement or removal confirmations use dedicated dialogs.
 
 When no accounts are saved yet, the menu starts with login:
 
@@ -111,24 +117,29 @@ What do you want to do?
   Switch another provider’s account
 ```
 
-Login reuses Pi's native `/login` dialog in TUI mode: choose a provider, enter a named account, then complete the provider's OAuth flow in the same bordered screen with native links, device codes, progress, prompts, and Escape cancellation.
-Provider-owned choices temporarily use Pi's native selector before returning to the login dialog.
-RPC mode uses Pi's standard extension UI requests for the same OAuth contract.
+### Login
+
+In TUI mode, login uses Pi's native `/login` dialog with links, device codes, progress, prompts, and Escape cancellation.
+Provider-owned choices temporarily open Pi's native selector, then return to the login dialog.
+RPC mode uses Pi's standard extension UI requests for the same OAuth flow.
 `default` is reserved for Pi's built-in login.
-Reusing an existing provider/account name asks before replacing the stored credential.
+Reusing a provider and account name requires confirmation before replacement.
 
-Switching the current model provider is the primary flow.
-Switching a different provider is explicit: choose **Switch another provider’s account**, choose the provider, then choose the account.
+### Switch or remove an account
+
+The primary switch action targets the current model's provider.
+To switch another provider, choose **Switch another provider’s account**, then choose the provider and account.
 Choosing `default` restores Pi's built-in login for that provider.
-`/accounts` manages account identity only; it does not switch models except when login succeeds while the current model is still `unknown`, where it selects that provider's default model as onboarding help.
+`/accounts` changes account identity, not the model.
+As onboarding help, a successful login selects the provider's default model only when the current model is `unknown`.
 
-Removing an account lists named accounts as `Provider · account`, asks for confirmation, then removes the credential.
-Removing an active account automatically restores that provider to Pi's built-in login.
+Removal lists accounts as `Provider · account` and requires confirmation.
+Removing the active account restores that provider to Pi's built-in login.
 
 ## 🔒 Security and privacy
 
-Each selected account is refreshed through the provider's own OAuth `refresh()` implementation and converted through `toAuth()`.
-The extension then applies the returned API key, headers, and endpoint, verifies the effective runtime state, and reports success.
+The extension refreshes each selected account through the provider's OAuth `refresh()` implementation and converts it through `toAuth()`.
+It applies the returned API key, headers, and endpoint, then verifies the effective runtime state before reporting success.
 
 If refresh, conversion, provider overlay, or verification fails, the extension installs a non-secret failing runtime credential and aborts turns for that provider.
 It does not silently fall back to Pi's built-in login, an environment API key, or another named account.
@@ -137,17 +148,16 @@ Other providers remain independent and usable.
 Selecting `default` removes the package-owned runtime override and restores the exact provider registration that existed before activation.
 Pi's built-in credentials are never deleted.
 
-The extension implements the versioned `oauth:credential-source:v1` protocol for compatible current-account consumers such as usage reporters.
-It offers a fresh in-memory clone only after the named OAuth credential has produced and verified the active runtime authentication for the exact Pi session.
+The extension implements `oauth:credential-source:v1` for compatible in-process consumers such as usage reporters.
+It offers a fresh clone only after the named credential has produced and verified authentication for the current Pi session.
 Pending, default, stale, failed, replaced, reloaded, and shut-down states offer nothing.
-The offer contains no account name or extension identity and is never persisted or logged by the protocol.
-A consumer must still match the offered access token and provider-specific metadata against freshly resolved runtime auth before using it.
-Installing `pi-accounts` without a compatible consumer does not change account activation behavior.
-An older or absent consumer simply does not request the credential.
+The protocol does not persist or log the offer, which contains neither the account name nor extension identity.
+Consumers must match its access token and provider metadata against freshly resolved runtime authentication.
+Without a compatible consumer, account activation works unchanged and no credential is requested.
 
-Pi extensions run with the user's process privileges, and the shared event bus is not a security boundary between installed extensions.
-Install only trusted extensions because any installed extension may already read user files and process memory.
-The protocol reduces accidental credential coupling; it does not sandbox malicious code.
+Pi extensions run with the user's process privileges, and the shared event bus does not isolate installed extensions.
+Install only trusted extensions because any extension can read user files and process memory.
+The protocol reduces accidental credential coupling; it is not a sandbox.
 
 GitHub Copilot's `availableModelIds` are projected into the active provider model list.
 Switching Copilot accounts rebuilds the projection from the complete pre-overlay model catalog.
@@ -177,7 +187,8 @@ The canonical file is:
 When `PI_CODING_AGENT_DIR` is set, the file is stored at `$PI_CODING_AGENT_DIR/pi-accounts.json` instead.
 Its versioned structure keeps account maps and active names under separate provider IDs.
 Credential values are private and must not be committed.
-When neither canonical nor legacy storage exists, reads use an empty in-memory store without creating an agent directory or file; the first account mutation creates the private canonical file.
+When neither canonical nor legacy storage exists, reads return an empty store without creating a directory or file.
+The first account change creates the private canonical file.
 
 On first load, if `pi-accounts.json` does not exist and released `pi-codex-accounts.json` does, the extension:
 
@@ -187,10 +198,10 @@ On first load, if `pi-accounts.json` does not exist and released `pi-codex-accou
 4. Atomically installs private `pi-accounts.json`.
 5. Retains the private legacy file for rollback.
 
-If both files exist, `pi-accounts.json` is canonical and the legacy file is not imported again.
+If both files exist, `pi-accounts.json` takes precedence and the legacy file is not imported again.
 The retained legacy refresh token may become stale after `pi-accounts` rotates it, so rollback can require a new Codex login.
-Older `pi-accounts` releases that predate these providers reject files containing their provider sections.
-Back up the file and remove the `kimi-coding`, `openrouter`, `radius`, and `xai` sections only after stopping Pi before downgrading.
+Older releases reject files that contain provider sections added later.
+Before downgrading, stop Pi, back up the file, and remove the `kimi-coding`, `openrouter`, `radius`, and `xai` sections.
 
 ### Rollback
 

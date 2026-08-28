@@ -2,13 +2,12 @@
 
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-stamp)](https://www.npmjs.com/package/@narumitw/pi-stamp) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-Add a quiet right-aligned timestamp after each user and assistant message in Pi's interactive transcript.
-
-Optional details can show response timing, assistant provenance and usage, or tool duration and outcome.
+Add a quiet, right-aligned timestamp after each user and assistant message in Pi's interactive transcript.
+Optionally show response timing, assistant provenance and usage, or tool duration and outcome.
 
 ## ✨ Features
 
-- Shows each message's recorded creation time on a dim right-aligned row.
+- Shows each message's recorded creation time on a dim, right-aligned row.
 - Supports 12/24-hour clocks, seconds, automatic date context, locales, and time zones.
 - Optionally shows response latency, model and provider identity, stop reason, tokens, and estimated cost.
 - Optionally records tool duration and success or error after each complete tool block.
@@ -37,7 +36,8 @@ npm --workspace @narumitw/pi-stamp run build
 pi -e ./packages/pi-stamp
 ```
 
-The package declares `dist/index.ts`, so an unbuilt local checkout must be built before Pi loads the package directory.
+The package declares `dist/index.ts`, so build an unbuilt local checkout before Pi loads the package directory.
+Install only from sources you trust because Pi extensions run with Pi's permissions.
 
 ## 🚀 Quick start
 
@@ -65,12 +65,12 @@ Close
 ```
 
 Settings save immediately.
-Mounted compatible stamps reformat on the next render, and future stamps use the same effective values.
+Existing compatible stamps reformat on the next render, and new stamps use the same settings.
 
 ## 💬 Commands
 
-Run `/stamp` in TUI or RPC mode to open the presentation, status, and help menu.
-The command accepts no arguments and rejects print and JSON modes without changing settings.
+Run `/stamp` in TUI or RPC mode to open Settings, Status, and Help.
+The command rejects arguments, print mode, and JSON mode without changing settings.
 
 ## ⚙️ Settings
 
@@ -127,11 +127,9 @@ A fresh process uses defaults while the file is invalid, and a running process r
 Reads and writes are serialized within one Pi process.
 Separate Pi processes do not share a lock, so concurrent saves are last-writer-wins even though each process rereads immediately before atomic publication.
 
-`/stamp` supports TUI and RPC dialog modes.
-Print and JSON command invocations reject without writing ad hoc protocol output.
-Transcript stamps themselves are appended only in TUI mode.
+Transcript stamps are appended only in TUI mode; RPC provides configuration dialogs without adding transcript entries.
 
-## 🕰️ Timestamp and response-timing semantics
+## 🕰️ Timestamp and response timing
 
 - A **user** stamp is the timestamp recorded when Pi creates the submitted user message.
 - An **assistant** clock is the timestamp recorded when Pi creates the response stream/message.
@@ -148,8 +146,9 @@ Transcript stamps themselves are appended only in TUI mode.
   14:32:08 · first 0.8s · total 3.2s
   ```
 
-First content is the first non-empty text, thinking, or tool-call update—not a provider-server timestamp or guaranteed time-to-first-token.
-`first n/a` means Pi finalized the response without such an update; completion time is never substituted.
+First content is the first non-empty text, thinking, or tool-call update observed by Pi.
+It is not a provider-server timestamp or guaranteed time to first token.
+`first n/a` means Pi finalized the response without such an update; completion time is not substituted.
 - If an assistant message invokes tools, response timing ends at the assistant's `message_end` and excludes tool execution even though the assistant stamp appears after the complete tool block.
 - Error and aborted assistant messages use the same local completion boundary.
   Invalid or backwards clock observations degrade to timestamp-only data rather than showing a negative or clamped value.
@@ -163,7 +162,7 @@ Relative labels such as `3m ago` remain unavailable because they would require p
 
 ## 🧾 Assistant provenance and usage
 
-Assistant metadata is captured only when `assistantMetadata` is `"compact"` or `"expanded"` as the assistant stamp is finalized.
+Assistant metadata is captured when the stamp is finalized and only when `assistantMetadata` is `"compact"` or `"expanded"`.
 A compact stamp can look like:
 
 ```text
@@ -180,7 +179,7 @@ requested-alias → provider-response-model · 842 tok
 Expanded mode adds labeled rows for API, provider, requested model, provider-reported response model, stop reason, and each individually reported input/output/reasoning/cache-read/cache-write/total token or estimated-cost field.
 Missing values stay absent; `pi-stamp` never derives a token total, response model, cost, or diagnostic message.
 
-Pi's transcript expansion action (`app.tools.expand`, `Ctrl+O` by default) is the explicit debug view.
+Use Pi's transcript expansion action (`app.tools.expand`, `Ctrl+O` by default) to open the debug view.
 With assistant metadata enabled, it may additionally show the sanitized response ID and at most five diagnostic summaries.
 A summary contains only diagnostic type, error name, and error code.
 Stamp data never copies diagnostic messages, stacks, details, raw payloads, message content, tool arguments, or `textSignature`, `thinkingSignature`, and `thoughtSignature` fields.
@@ -209,11 +208,12 @@ Duplicate, unmatched, malformed, backwards, or excess observations are ignored.
 Pending state is cleared on a new turn, agent cancellation/end, session replacement, reload, and shutdown.
 Tools that were not observed while tool stamps were enabled are not backfilled.
 
-## 🔒 Context and persistence
+## 🔒 Security and privacy
 
-Stamps use Pi custom session entries.
-Pi renders those entries in the interactive transcript but excludes them from model context.
-The extension does not modify user, assistant, or tool-result message content.
+Stamps are Pi custom session entries that appear in the interactive transcript but stay outside model context.
+The extension does not modify user, assistant, or tool-result content.
+
+## 💾 Persistence and compatibility
 
 Message entry compatibility is cumulative:
 
@@ -227,13 +227,14 @@ Message entry compatibility is cumulative:
 Existing versions remain readable.
 Changing settings never rewrites session history.
 Once recorded, a stamp survives `/reload` and session resume while the extension remains loaded.
-Messages and tools created before `pi-stamp` recorded them are not backfilled because Pi's current public API cannot insert a new custom entry into an older position in the session tree.
+Messages and tools created before `pi-stamp` observed them are not backfilled because Pi cannot insert a new custom entry at an older session-tree position.
 
 ## 🚧 Limitations
 
 - Pi does not currently expose a public decorator for built-in message or tool rows, so stamps appear as separate transcript rows rather than inside the original bubble/block.
 - Another extension can append transcript entries at the same lifecycle boundary, so strict visual adjacency between independently loaded extensions is not guaranteed.
-- There are no arbitrary format strings, relative labels, provider-server latency, token/cost estimation beyond Pi's message fields, aggregates, raw diagnostics, or analytics dashboard.
+- There are no arbitrary format strings, relative labels, provider-server latency, aggregates, raw diagnostics, or analytics dashboard.
+- Token and cost values come only from Pi's message fields.
 
 ## 🗂️ Package layout
 

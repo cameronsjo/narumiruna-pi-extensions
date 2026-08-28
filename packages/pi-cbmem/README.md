@@ -2,14 +2,14 @@
 
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-cbmem)](https://www.npmjs.com/package/@narumitw/pi-cbmem) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-pi-cbmem bundles the Codebase Memory extension and its knowledge-graph operating skill.
+Connect Pi to the local Codebase Memory CLI and give the model graph-first operating guidance.
 
 ## ✨ Features
 
-- Registers all 15 Codebase Memory graph, search, indexing, coverage, trace, and architecture tools.
-- Invokes the local `codebase-memory-mcp` CLI with cancellation, failure reporting, and bounded output.
-- Bundles the `codebase-memory` skill for evidence-tier and graph-first workflows.
-- Keeps the extension and skill available through one package declaration.
+- Registers 15 Codebase Memory tools for graph queries, search, indexing, coverage, tracing, and architecture.
+- Runs the local `codebase-memory-mcp` CLI with cancellation, failure reporting, and bounded output.
+- Bundles the `codebase-memory` skill for graph-first, evidence-tier workflows.
+- Loads the extension and skill from one package.
 
 ## 📦 Install
 
@@ -25,7 +25,7 @@ Try from npm without installing permanently:
 pi -e npm:@narumitw/pi-cbmem
 ```
 
-Build and load the package from a repository checkout:
+Build and load a local checkout from the repository root:
 
 ```bash
 npm --workspace @narumitw/pi-cbmem run build
@@ -35,14 +35,12 @@ pi --no-extensions -e ./packages/pi-cbmem
 The package declares `dist/index.ts`, so an unbuilt local checkout must run the build before Pi loads the package directory.
 
 Pi extensions run with your user permissions.
-
-Review the source before loading the package.
+Install only trusted packages, and review the source before loading this extension.
 
 ## 🚀 Quick start
 
-Install `codebase-memory-mcp` at `~/.local/bin/codebase-memory-mcp`, load the package, and ask Pi a structural codebase question.
-
-The bundled skill tells Pi to check the active graph project before exploration and to verify material claims with graph snippets and index-coverage evidence.
+Install `codebase-memory-mcp` at `~/.local/bin/codebase-memory-mcp`, load pi-cbmem, and ask Pi a structural codebase question.
+The bundled skill directs Pi to identify the active graph project before exploration and verify material claims with snippets and index-coverage evidence.
 
 ## 🛠️ Tools
 
@@ -64,37 +62,26 @@ The extension registers these tools:
 - `manage_adr`
 - `ingest_traces`
 
-Each tool sends JSON arguments to `codebase-memory-mcp cli <tool>` over standard input and returns the last JSON response written to standard output.
-
-Validated JSON output over 2,000 lines is truncated with an explicit omission notice.
-
-Standard output over 50 KB fails safely because the complete JSON response cannot be validated within the bounded capture.
-
-Spawn failures, nonzero exits, oversized output, and missing JSON responses are reported as failed tool calls.
+Each tool sends JSON arguments to `codebase-memory-mcp cli <tool>` over standard input and returns the final JSON response from standard output.
+Validated JSON longer than 2,000 lines is truncated with an omission notice.
+Standard output over 50 KB fails because the extension cannot validate a complete JSON response within its capture limit.
+Spawn failures, nonzero exits, oversized output, and missing JSON responses fail the tool call.
 
 ## 🔒 Security and privacy
 
-The Codebase Memory binary runs with the Pi process environment and user permissions.
-
+The Codebase Memory binary inherits the Pi process environment and user permissions.
 Tool calls can read and index repositories, inspect source, persist graph data, manage architecture decisions and traces, or delete indexed projects.
-
-Deleting a project or replacing its Architecture Decision Records requires explicit confirmation in TUI or RPC mode and is rejected in non-interactive modes.
-
+Deleting a project or replacing all Architecture Decision Records requires explicit confirmation in TUI or RPC mode and is rejected in other modes.
 Repository content returned by graph tools can be sent to the selected model provider as tool output.
-
-Terminal controls are removed only from the TUI rendering boundary; the validated raw result remains available to the model.
-
-The extension starts one local CLI child process per tool call in the active session directory and does not start background work during extension factory load.
-
-Cancelling a tool call terminates its child process.
+Terminal controls are removed at the TUI display boundary, while the validated raw result remains available to the model.
+Each tool call starts one local CLI child process in the active session directory; extension loading starts no background work.
+Cancelling the tool call terminates that child process.
 
 ## 🚧 Limitations
 
-The package expects the binary at `~/.local/bin/codebase-memory-mcp` for the current user.
-
-It does not install or update the Codebase Memory binary.
-
-The extension exposes static tool schemas that match the bundled Codebase Memory skill and delegates final argument validation to the installed CLI.
+- The package requires `~/.local/bin/codebase-memory-mcp` for the current user.
+- It does not install or update the Codebase Memory binary.
+- Static tool schemas match the bundled skill, while the installed CLI performs final argument validation.
 
 ## 🗂️ Package layout
 
