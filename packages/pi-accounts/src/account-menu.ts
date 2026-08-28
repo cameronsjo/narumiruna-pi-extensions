@@ -329,7 +329,7 @@ function buildAccountMainItems(
 		return [{ id: "login", label: LOGIN_ACTION, action: "login-route" }];
 	}
 	const currentHasAccounts = currentState ? accountNames(currentState).length > 0 : false;
-	if (currentState && (currentHasAccounts || selectionInvalid)) {
+	if (currentState && (currentHasAccounts || currentState.selectionInvalid)) {
 		return [
 			{
 				id: currentState.id,
@@ -337,7 +337,9 @@ function buildAccountMainItems(
 				action: "switch-current",
 			},
 			{ id: "login", label: LOGIN_ACTION, action: "login-route" },
-			{ id: "remove", label: REMOVE_ACTION, action: "remove-route" },
+			...(hasAnyStoredAccount
+				? [{ id: "remove", label: REMOVE_ACTION, action: "remove-route" as const }]
+				: []),
 			...(providerStatesWithAccounts(states, currentState.id, selectionInvalid).length > 0
 				? [
 						{
@@ -356,7 +358,9 @@ function buildAccountMainItems(
 			label: currentState ? SWITCH_ANOTHER_PROVIDER_ACTION : SWITCH_PROVIDER_ACTION,
 			action: "switch-route",
 		},
-		{ id: "remove", label: REMOVE_ACTION, action: "remove-route" },
+		...(hasAnyStoredAccount
+			? [{ id: "remove", label: REMOVE_ACTION, action: "remove-route" as const }]
+			: []),
 	];
 }
 

@@ -639,6 +639,43 @@ test("accounts menu prioritizes login when the current provider has no saved acc
 	]);
 });
 
+test("accounts recovery routes to the invalid provider without dead current-provider actions", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	const mock = createMockPi();
+	accountsExtension(mock.pi, {
+		store,
+		providers: [
+			fakeProvider("openai-codex"),
+			fakeProvider("anthropic"),
+			fakeProvider("github-copilot"),
+		],
+	});
+	const sessionManager = SessionManager.inMemory(process.cwd(), { id: randomUUID() });
+	sessionManager.appendCustomEntry(ACCOUNT_SELECTION_ENTRY_TYPE, {
+		version: 1,
+		sessionId: sessionManager.getSessionId(),
+		providers: {
+			anthropic: null,
+			"github-copilot": null,
+			"openai-codex": "missing",
+		},
+	});
+	const { registry } = runtimeHarness(mock);
+	const { ctx, selectCalls } = createInteractiveAccountContext({
+		model: { provider: "anthropic", id: "claude" },
+		modelRegistry: registry,
+		sessionManager,
+	});
+
+	await mock.commands.get("accounts")?.handler("ignored", ctx);
+
+	assert.match(selectCalls[0]?.title ?? "", /selected account is no longer available/iu);
+	assert.deepEqual(selectCalls[0]?.options, [
+		"Login new account",
+		"Switch another provider’s account",
+	]);
+});
+
 test("accounts menu uses generic provider switch for unsupported current models", async () => {
 	const store = new AccountStore(new InMemoryAccountStorageBackend());
 	await store.write({
@@ -819,6 +856,70 @@ test("concurrent sessions keep independent provider account selections", async (
 	assert.equal((await store.readProviderAsync("anthropic")).active, "alpha");
 	await first.events.get("before_agent_start")?.[0]?.({}, firstContext);
 	assert.equal(firstRuntime.keys.get("anthropic"), "access-alpha");
+});
+
+test("one extension instance isolates concurrent headless session owners", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: {
+			anthropic: {
+				active: "alpha",
+				accounts: { alpha: credential("alpha"), beta: credential("beta") },
+			},
+		},
+	});
+	const mock = createMockPi();
+	accountsExtension(mock.pi, {
+		store,
+		providers: [
+			fakeProvider("openai-codex"),
+			fakeProvider("anthropic"),
+			fakeProvider("github-copilot"),
+		],
+	});
+	const firstRuntime = runtimeHarness(mock);
+	const secondRuntime = runtimeHarness(mock);
+	const firstSession = SessionManager.inMemory(process.cwd(), { id: randomUUID() });
+	const secondSession = SessionManager.inMemory(process.cwd(), { id: randomUUID() });
+	for (const [session, accountName] of [
+		[firstSession, "alpha"],
+		[secondSession, "beta"],
+	] as const) {
+		session.appendCustomEntry(ACCOUNT_SELECTION_ENTRY_TYPE, {
+			version: 1,
+			sessionId: session.getSessionId(),
+			providers: {
+				anthropic: accountName,
+				"github-copilot": null,
+				"openai-codex": null,
+			},
+		});
+	}
+	const firstContext = createMockContext({
+		model: { provider: "anthropic", id: "claude" },
+		modelRegistry: firstRuntime.registry,
+		sessionManager: firstSession,
+	}).ctx;
+	const secondContext = createMockContext({
+		model: { provider: "anthropic", id: "claude" },
+		modelRegistry: secondRuntime.registry,
+		sessionManager: secondSession,
+	}).ctx;
+
+	await mock.events.get("session_start")?.[0]?.({}, firstContext);
+	await mock.events.get("session_start")?.[0]?.({}, secondContext);
+	await mock.events.get("before_agent_start")?.[0]?.({}, firstContext);
+
+	assert.equal(firstRuntime.keys.get("anthropic"), "access-alpha");
+	assert.equal(secondRuntime.keys.get("anthropic"), "access-beta");
+	assert.equal(collectCredentialOffers(mock, firstSession, "anthropic")[0]?.access, "access-alpha");
+	assert.equal(collectCredentialOffers(mock, secondSession, "anthropic")[0]?.access, "access-beta");
+
+	await mock.events.get("session_shutdown")?.[0]?.({}, secondContext);
+	assert.equal(secondRuntime.keys.has("anthropic"), false);
+	assert.equal(firstRuntime.keys.get("anthropic"), "access-alpha");
+	assert.equal(collectCredentialOffers(mock, firstSession, "anthropic")[0]?.access, "access-alpha");
 });
 
 test("session-local account selection restores on resume and ignores tree position", async () => {
@@ -1242,6 +1343,7 @@ test("session replacement prevents a stale switch menu from mutating accounts", 
 
 	const stale = mock.commands.get("accounts")?.handler("ignored", oldContext);
 	await readStarted;
+	await mock.events.get("session_shutdown")?.[0]?.({}, oldContext);
 	await mock.events.get("session_start")?.[0]?.({}, newContext);
 	releaseRead();
 	await stale;
@@ -1292,6 +1394,7 @@ test("session replacement prevents a stale remove menu from deleting accounts", 
 
 	const stale = mock.commands.get("accounts")?.handler("ignored", oldContext);
 	await updateStarted;
+	await mock.events.get("session_shutdown")?.[0]?.({}, oldContext);
 	await mock.events.get("session_start")?.[0]?.({}, newContext);
 	releaseUpdate();
 	await stale;
@@ -1351,6 +1454,7 @@ test("stale multi-provider startup stops before syncing later providers", async 
 
 	const stale = mock.events.get("session_start")?.[0]?.({}, oldContext);
 	await oldStarted;
+	await mock.events.get("session_shutdown")?.[0]?.({}, oldContext);
 	await mock.events.get("session_start")?.[0]?.({}, newContext);
 	releaseOld();
 	await stale;
@@ -1913,6 +2017,7 @@ test("credential source suppresses pending, stale, failed-closed, and replaced a
 		modelRegistry: registry,
 		sessionManager: createTestSessionManager(),
 	}).ctx;
+	await mock.events.get("session_shutdown")?.[0]?.({}, ctx);
 	await mock.events.get("session_start")?.[0]?.({}, replacement);
 	assert.deepEqual(collectCredentialOffers(mock, sessionManager, "github-copilot"), []);
 });
@@ -1959,6 +2064,7 @@ test("session replacement invalidates a pending credential offer before old work
 
 	const oldStart = mock.events.get("session_start")?.[0]?.({}, oldContext);
 	await firstStarted;
+	await mock.events.get("session_shutdown")?.[0]?.({}, oldContext);
 	await mock.events.get("session_start")?.[0]?.({}, newContext);
 	assert.deepEqual(collectCredentialOffers(mock, oldSession, "github-copilot"), []);
 	assert.equal(
@@ -2428,6 +2534,7 @@ test("Radius session replacement aborts the stale catalog refresh", async () => 
 
 	const oldStart = mock.events.get("session_start")?.[0]?.({}, oldContext);
 	await firstStarted;
+	await mock.events.get("session_shutdown")?.[0]?.({}, oldContext);
 	await mock.events.get("session_start")?.[0]?.({}, newContext);
 	await oldStart;
 	assert.equal(firstSignal?.aborted, true);
@@ -3045,9 +3152,11 @@ test("account reset during OAuth conversion cannot restore a stale runtime overr
 		providers: [fakeProvider("openai-codex"), anthropic, fakeProvider("github-copilot")],
 	});
 	const { registry, keys } = runtimeHarness(mock);
+	const sessionManager = createTestSessionManager();
 	const { ctx } = createMockContext({
 		model: { provider: "anthropic", id: "claude" },
 		modelRegistry: registry,
+		sessionManager,
 	});
 
 	const startup = mock.events.get("session_start")?.[0]?.({}, ctx);
@@ -3056,6 +3165,7 @@ test("account reset during OAuth conversion cannot restore a stale runtime overr
 		{
 			model: { provider: "anthropic", id: "claude" },
 			modelRegistry: registry,
+			sessionManager,
 		},
 		{ selections: ["Switch Anthropic account", "default"] },
 	).ctx;

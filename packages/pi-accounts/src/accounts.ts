@@ -20,7 +20,10 @@ import {
 	loginWithOAuthUI,
 	SUPPORTED_PROVIDER_IDS,
 } from "./oauth.js";
-import { registerOAuthCredentialSource } from "./oauth-credential-source.js";
+import {
+	parseCredentialRequest,
+	registerOAuthCredentialSource,
+} from "./oauth-credential-source.js";
 import {
 	type EnsureActiveProviderAuthResult,
 	RUNTIME_FAIL_CLOSED_API_KEY,
@@ -60,13 +63,18 @@ export type AccountsDependencies = {
 };
 
 type SessionSelectionOwner = {
-	generation: number;
 	sessionManager: ExtensionContext["sessionManager"];
 	sessionId: string;
 	selections: ProviderAccountSelections;
 	error?: string;
+	controller: AbortController;
 	signal: AbortSignal;
 	ready: Promise<void>;
+	coordinators: Map<AccountProviderId, RuntimeAuthCoordinator>;
+	results: Map<AccountProviderId, EnsureActiveProviderAuthResult>;
+	appliedIdentities: Map<AccountProviderId, string>;
+	abortProviders: Set<AccountProviderId>;
+	syncTasks: Map<AccountProviderId, Promise<EnsureActiveProviderAuthResult>>;
 };
 
 type SyncProvider = (
@@ -96,20 +104,22 @@ export default function accountsExtension(
 	];
 	validateProviderSet(providers, dependencies.providers === undefined);
 	const adapters = new Map(providers.map((provider) => [provider.id, provider]));
-	const coordinators = new Map(
-		providers.map((provider) => [provider.id, new RuntimeAuthCoordinator(pi, provider)]),
-	);
-	registerOAuthCredentialSource(pi, [...coordinators.values()]);
-	const results = new Map<AccountProviderId, EnsureActiveProviderAuthResult>();
-	const appliedIdentities = new Map<AccountProviderId, string>();
-	const abortProviders = new Set<AccountProviderId>();
-	const syncTasks = new Map<AccountProviderId, Promise<EnsureActiveProviderAuthResult>>();
-	let sessionGeneration = 0;
-	let menuController = new AbortController();
-	let sessionOwner: SessionSelectionOwner | undefined;
+	const sessionOwners = new WeakMap<ExtensionContext["sessionManager"], SessionSelectionOwner>();
+	registerOAuthCredentialSource(pi, [
+		{
+			offerCredential(data) {
+				const request = parseCredentialRequest(data);
+				if (!request) return;
+				const owner = sessionOwners.get(request.session as ExtensionContext["sessionManager"]);
+				const providerId = toProviderId(request.provider);
+				if (!owner || !providerId) return;
+				owner.coordinators.get(providerId)?.offerCredential(data);
+			},
+		},
+	]);
 
 	const isOwnerCurrent = (owner: SessionSelectionOwner): boolean =>
-		sessionOwner === owner && owner.generation === sessionGeneration && !owner.signal.aborted;
+		sessionOwners.get(owner.sessionManager) === owner && !owner.signal.aborted;
 
 	const initializeOwner = async (
 		owner: SessionSelectionOwner,
@@ -157,34 +167,39 @@ export default function accountsExtension(
 	};
 
 	const startSessionOwner = (ctx: ExtensionContext): SessionSelectionOwner => {
-		sessionGeneration += 1;
-		menuController.abort(new DOMException("Accounts session replaced", "AbortError"));
-		menuController = new AbortController();
-		results.clear();
-		appliedIdentities.clear();
-		abortProviders.clear();
-		syncTasks.clear();
-		for (const coordinator of coordinators.values()) coordinator.invalidate(ctx);
-		const owner = {
-			generation: sessionGeneration,
+		const previous = sessionOwners.get(ctx.sessionManager);
+		if (previous) {
+			previous.controller.abort(new DOMException("Accounts session replaced", "AbortError"));
+			previous.results.clear();
+			previous.appliedIdentities.clear();
+			previous.abortProviders.clear();
+			previous.syncTasks.clear();
+			for (const coordinator of previous.coordinators.values()) coordinator.invalidate(ctx);
+		}
+		const controller = new AbortController();
+		const owner: SessionSelectionOwner = {
 			sessionManager: ctx.sessionManager,
 			sessionId: ctx.sessionManager.getSessionId(),
 			selections: cloneAccountSelections(Object.create(null) as ProviderAccountSelections),
-			signal: menuController.signal,
+			controller,
+			signal: controller.signal,
 			ready: Promise.resolve(),
+			coordinators: new Map(
+				providers.map((provider) => [provider.id, new RuntimeAuthCoordinator(pi, provider)]),
+			),
+			results: new Map(),
+			appliedIdentities: new Map(),
+			abortProviders: new Set(),
+			syncTasks: new Map(),
 		};
-		sessionOwner = owner;
+		sessionOwners.set(ctx.sessionManager, owner);
 		owner.ready = initializeOwner(owner, ctx);
 		return owner;
 	};
 
 	const ensureSessionOwner = async (ctx: ExtensionContext): Promise<SessionSelectionOwner> => {
-		let owner = sessionOwner;
-		if (
-			!owner ||
-			owner.sessionManager !== ctx.sessionManager ||
-			owner.sessionId !== ctx.sessionManager.getSessionId()
-		) {
+		let owner = sessionOwners.get(ctx.sessionManager);
+		if (!owner || owner.sessionId !== ctx.sessionManager.getSessionId()) {
 			owner = startSessionOwner(ctx);
 		}
 		await owner.ready;
@@ -219,7 +234,7 @@ export default function accountsExtension(
 		let task!: Promise<EnsureActiveProviderAuthResult>;
 		task = (async () => {
 			const adapter = requireAdapter(adapters, providerId);
-			const coordinator = coordinators.get(providerId);
+			const coordinator = owner.coordinators.get(providerId);
 			if (!coordinator) throw new Error(`Missing runtime coordinator for ${providerId}.`);
 			if (!isOwnerCurrent(owner)) return staleResult(providerId);
 			const signal = ownerSignal ? AbortSignal.any([owner.signal, ownerSignal]) : owner.signal;
@@ -233,35 +248,35 @@ export default function accountsExtension(
 						signal,
 					);
 			let identity: string | undefined;
-			let latest = syncTasks.get(providerId);
+			let latest = owner.syncTasks.get(providerId);
 			if (!isOwnerCurrent(owner))
 				return latest && latest !== task ? latest : staleResult(providerId);
 			if (latest && latest !== task) return latest;
 			try {
 				identity = await authIdentity(store, result);
-				latest = syncTasks.get(providerId);
+				latest = owner.syncTasks.get(providerId);
 				if (!isOwnerCurrent(owner))
 					return latest && latest !== task ? latest : staleResult(providerId);
 				if (latest && latest !== task) return latest;
-				const previousIdentity = appliedIdentities.get(providerId);
+				const previousIdentity = owner.appliedIdentities.get(providerId);
 				const shouldInvalidate =
 					previousIdentity !== identity &&
 					!(previousIdentity === undefined && identity === "default");
 				if (shouldInvalidate) {
 					await adapter.invalidateConnections?.(owner.sessionId);
-					latest = syncTasks.get(providerId);
+					latest = owner.syncTasks.get(providerId);
 					if (!isOwnerCurrent(owner))
 						return latest && latest !== task ? latest : staleResult(providerId);
 					if (latest && latest !== task) return latest;
 				}
-				appliedIdentities.set(providerId, identity);
+				owner.appliedIdentities.set(providerId, identity);
 			} catch (error) {
-				latest = syncTasks.get(providerId);
+				latest = owner.syncTasks.get(providerId);
 				if (!isOwnerCurrent(owner))
 					return latest && latest !== task ? latest : staleResult(providerId);
 				if (latest && latest !== task) return latest;
 				const credential = await selectedCredential(store, providerId, result);
-				latest = syncTasks.get(providerId);
+				latest = owner.syncTasks.get(providerId);
 				if (!isOwnerCurrent(owner))
 					return latest && latest !== task ? latest : staleResult(providerId);
 				if (latest && latest !== task) return latest;
@@ -272,16 +287,16 @@ export default function accountsExtension(
 					credential,
 				);
 			}
-			latest = syncTasks.get(providerId);
+			latest = owner.syncTasks.get(providerId);
 			if (!isOwnerCurrent(owner))
 				return latest && latest !== task ? latest : staleResult(providerId);
 			if (latest && latest !== task) return latest;
 			coordinator.publishCredentialOffer(ctx, result, identity ?? "");
-			results.set(providerId, result);
-			updateStatus(ctx, results, model);
+			owner.results.set(providerId, result);
+			updateStatus(ctx, owner.results, model);
 			return result;
 		})();
-		syncTasks.set(providerId, task);
+		owner.syncTasks.set(providerId, task);
 		return task;
 	};
 
@@ -297,7 +312,7 @@ export default function accountsExtension(
 				);
 			}
 		}
-		if (isOwnerCurrent(owner)) updateStatus(ctx, results);
+		if (isOwnerCurrent(owner)) updateStatus(ctx, owner.results);
 	};
 
 	pi.registerCommand(
@@ -328,55 +343,61 @@ export default function accountsExtension(
 		if (!isOwnerCurrent(owner)) return;
 		const providerId = toProviderId(event.model.provider);
 		if (providerId) await syncProvider(providerId, ctx, owner, undefined, event.model);
-		else updateStatus(ctx, results, event.model);
+		else updateStatus(ctx, owner.results, event.model);
 	});
 
 	pi.on("before_agent_start", async (_event, ctx) => {
-		abortProviders.clear();
 		const owner = await ensureSessionOwner(ctx);
+		owner.abortProviders.clear();
 		if (!isOwnerCurrent(owner)) return;
 		const providerId = toProviderId(ctx.model?.provider);
 		if (!providerId) return;
 		try {
 			const result = await syncProvider(providerId, ctx, owner);
 			if (!isOwnerCurrent(owner)) return;
-			const coordinator = coordinators.get(providerId);
-			if (result.status === "error") abortProviders.add(providerId);
+			const coordinator = owner.coordinators.get(providerId);
+			if (result.status === "error") owner.abortProviders.add(providerId);
 			if (
 				result.status === "active" &&
 				ctx.model &&
 				coordinator &&
 				!coordinator.isModelAvailable(ctx.model.id)
 			) {
-				abortProviders.add(providerId);
+				owner.abortProviders.add(providerId);
 				ctx.ui.notify(
 					`${requireAdapter(adapters, providerId).displayName} model ${ctx.model.id} is not available to account "${result.accountName}".`,
 					"error",
 				);
 			}
 		} catch (error) {
-			abortProviders.add(providerId);
+			owner.abortProviders.add(providerId);
 			throw error;
 		}
 	});
 
 	pi.on("turn_start", (_event, ctx) => {
+		const owner = sessionOwners.get(ctx.sessionManager);
+		if (!owner || !isOwnerCurrent(owner)) return;
 		const providerId = toProviderId(ctx.model?.provider);
-		if (!providerId || !abortProviders.has(providerId)) return;
-		abortProviders.delete(providerId);
+		if (!providerId || !owner.abortProviders.has(providerId)) return;
+		owner.abortProviders.delete(providerId);
 		ctx.abort();
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
-		sessionGeneration += 1;
-		menuController.abort(new DOMException("Accounts session shut down", "AbortError"));
-		sessionOwner = undefined;
-		results.clear();
-		appliedIdentities.clear();
-		abortProviders.clear();
-		syncTasks.clear();
+		const owner = sessionOwners.get(ctx.sessionManager);
+		if (!owner) {
+			setStatus(ctx, undefined);
+			return;
+		}
+		sessionOwners.delete(ctx.sessionManager);
+		owner.controller.abort(new DOMException("Accounts session shut down", "AbortError"));
+		owner.results.clear();
+		owner.appliedIdentities.clear();
+		owner.abortProviders.clear();
+		owner.syncTasks.clear();
 		await Promise.allSettled(
-			[...coordinators.values()].map(async (coordinator) => {
+			[...owner.coordinators.values()].map(async (coordinator) => {
 				coordinator.invalidate(ctx, false);
 				await coordinator.clear(ctx, true);
 			}),
