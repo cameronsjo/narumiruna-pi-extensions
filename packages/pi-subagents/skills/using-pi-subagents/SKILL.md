@@ -1,10 +1,10 @@
 ---
-name: subagents
+name: using-pi-subagents
 description: Operate bounded pi-subagents jobs safely, including direct-work decisions, least-privilege tool selection, thinking-level selection, background delegation, question replies, parallel starts, timeout selection, waiting, cancellation, result handling, verification, and writer isolation.
 license: MIT
 ---
 
-# Subagents
+# Using Pi Subagents
 
 Use this skill when deciding whether or how to delegate with the `subagent-*` tools.
 

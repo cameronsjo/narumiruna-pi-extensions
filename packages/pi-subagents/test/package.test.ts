@@ -34,9 +34,10 @@ test("package declares one generated extension and one bundled operating skill",
 
 test("bundled skill documents every minimal-runtime operating responsibility", () => {
 	const skill = readFileSync(
-		path.join(packageDirectory, "skills", "subagents", "SKILL.md"),
+		path.join(packageDirectory, "skills", "using-pi-subagents", "SKILL.md"),
 		"utf8",
 	);
+	assert.match(skill, /^name: using-pi-subagents$/m);
 	for (const evidence of [
 		/prefer direct work/i,
 		/subagent-spawn/i,
