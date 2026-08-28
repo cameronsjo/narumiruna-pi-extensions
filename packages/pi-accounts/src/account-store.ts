@@ -197,7 +197,7 @@ export function normalizeStoredCredential(
 	if (typeof cloned.access !== "string" || !cloned.access) {
 		throw new Error(`Invalid accounts data: ${accountName} credential is missing access token.`);
 	}
-	if (typeof cloned.refresh !== "string" || !cloned.refresh) {
+	if (typeof cloned.refresh !== "string") {
 		throw new Error(`Invalid accounts data: ${accountName} credential is missing refresh token.`);
 	}
 	if (typeof cloned.expires !== "number" || !Number.isFinite(cloned.expires)) {

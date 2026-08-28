@@ -55,6 +55,14 @@ test("provider-scoped storage preserves independent active accounts and OAuth me
 				active: "fast",
 				accounts: { fast: credential("kimi") },
 			},
+			openrouter: {
+				active: "router",
+				accounts: { router: credential("openrouter", { refresh: "" }) },
+			},
+			radius: {
+				active: "gateway",
+				accounts: { gateway: credential("radius", { scope: "gateway offline_access" }) },
+			},
 			xai: {
 				active: "grok",
 				accounts: { grok: credential("xai") },
@@ -78,6 +86,10 @@ test("provider-scoped storage preserves independent active accounts and OAuth me
 		"github.example.com",
 	);
 	assert.equal(stored.providers["kimi-coding"]?.accounts.fast?.access, "access-kimi");
+	assert.equal(stored.providers.openrouter?.accounts.router?.access, "access-openrouter");
+	assert.equal(stored.providers.openrouter?.accounts.router?.refresh, "");
+	assert.equal(stored.providers.radius?.accounts.gateway?.access, "access-radius");
+	assert.equal(stored.providers.radius?.accounts.gateway?.scope, "gateway offline_access");
 	assert.equal(stored.providers.xai?.accounts.grok?.access, "access-xai");
 });
 
@@ -119,6 +131,22 @@ test("storage rejects malformed credentials and non-JSON-safe metadata", async (
 			),
 		/missing refresh token/,
 	);
+	assert.throws(
+		() =>
+			parseAccountsData(
+				JSON.stringify({
+					version: 1,
+					providers: {
+						openrouter: {
+							accounts: {
+								work: { type: "oauth", access: "a", refresh: null, expires: 1 },
+							},
+						},
+					},
+				}),
+			),
+		/missing refresh token/,
+	);
 
 	const store = new AccountStore(new InMemoryAccountStorageBackend());
 	await assert.rejects(
@@ -137,6 +165,21 @@ test("storage rejects malformed credentials and non-JSON-safe metadata", async (
 		}),
 		/not JSON-safe/,
 	);
+});
+
+test("OpenRouter and Radius storage rejects malformed provider data", () => {
+	for (const providerId of ["openrouter", "radius"] as const) {
+		assert.throws(
+			() =>
+				parseAccountsData(
+					JSON.stringify({
+						version: 1,
+						providers: { [providerId]: { active: "work", accounts: [] } },
+					}),
+				),
+			/accounts must be an object/,
+		);
+	}
 });
 
 test("missing account storage reads as empty without materializing its directory", async () => {
