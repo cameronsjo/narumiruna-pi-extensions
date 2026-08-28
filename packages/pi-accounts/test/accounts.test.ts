@@ -1,7 +1,8 @@
 // Cohesion justification: this account-manager integration matrix shares credential/provider
 // fixtures and cross-covers menus, OAuth, replacement, switching, persistence, and lifecycle safety.
 import assert from "node:assert/strict";
-import { initTheme } from "@earendil-works/pi-coding-agent";
+import { InMemoryCredentialStore, type ModelAuth } from "@earendil-works/pi-ai";
+import { initTheme, ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { beforeAll, test } from "vitest";
 import {
 	createCustomSelectorHarness,
@@ -46,11 +47,18 @@ function fakeProvider(
 		requiresApiKeyBridge?: boolean;
 	} = {},
 ): AccountProviderAdapter {
+	const displayNames: Record<AccountProviderAdapter["id"], string> = {
+		anthropic: "Anthropic",
+		"github-copilot": "GitHub Copilot",
+		"kimi-coding": "Kimi For Coding",
+		"openai-codex": "OpenAI Codex",
+		xai: "xAI",
+	};
 	return {
 		id,
-		displayName:
-			id === "openai-codex" ? "OpenAI Codex" : id === "anthropic" ? "Anthropic" : "GitHub Copilot",
+		displayName: displayNames[id],
 		requiresApiKeyBridge: options.requiresApiKeyBridge ?? id === "openai-codex",
+		runtimeAuthMode: id === "kimi-coding" ? "authorization-header" : "api-key",
 		oauth: {
 			async login() {
 				return credential(
@@ -62,7 +70,15 @@ function fakeProvider(
 				return { ...current, access: `${current.access}-refreshed`, expires: Date.now() + 60_000 };
 			},
 			async toAuth(current) {
-				return { apiKey: current.access, baseUrl: options.baseUrl, headers: options.headers };
+				return id === "kimi-coding"
+					? {
+							baseUrl: options.baseUrl,
+							headers: {
+								Authorization: `Bearer ${current.access}`,
+								...options.headers,
+							},
+						}
+					: { apiKey: current.access, baseUrl: options.baseUrl, headers: options.headers };
 			},
 		},
 	};
@@ -75,6 +91,8 @@ function runtimeHarness(mock: ReturnType<typeof createMockPi>) {
 		{ provider: "anthropic", id: "claude", baseUrl: "https://anthropic.example" },
 		{ provider: "github-copilot", id: "allowed", baseUrl: "https://default.copilot" },
 		{ provider: "github-copilot", id: "blocked", baseUrl: "https://default.copilot" },
+		{ provider: "kimi-coding", id: "k3", baseUrl: "https://api.kimi.com/coding" },
+		{ provider: "xai", id: "grok-4.3", baseUrl: "https://api.x.ai/v1" },
 	];
 	const runtime = {
 		async setRuntimeApiKey(provider: string, key: string) {
@@ -192,6 +210,19 @@ test("built-in provider adapters preserve each provider's complete OAuth auth sh
 		apiKey: copilotCredential.access,
 		baseUrl: "https://api.business.githubcopilot.com",
 	});
+	assert.deepEqual(await byId.get("xai")?.oauth.toAuth(base), {
+		apiKey: "access-contract",
+	});
+	assert.deepEqual(await byId.get("kimi-coding")?.oauth.toAuth(base), {
+		headers: { Authorization: "Bearer access-contract" },
+	});
+	assert.deepEqual([...byId.keys()].sort(), [
+		"anthropic",
+		"github-copilot",
+		"kimi-coding",
+		"openai-codex",
+		"xai",
+	]);
 });
 
 test("OAuth interaction preserves provider prompts, cancellation, and notifications", async () => {
@@ -461,6 +492,8 @@ test("accounts menu summarizes all supported providers and prioritizes current p
 			fakeProvider("openai-codex"),
 			fakeProvider("anthropic"),
 			fakeProvider("github-copilot"),
+			fakeProvider("kimi-coding"),
+			fakeProvider("xai"),
 		],
 	});
 	const { registry } = runtimeHarness(mock);
@@ -475,6 +508,8 @@ test("accounts menu summarizes all supported providers and prioritizes current p
 	assert.match(selectCalls[0]?.title ?? "", /Anthropic: work/);
 	assert.match(selectCalls[0]?.title ?? "", /OpenAI Codex: default/);
 	assert.match(selectCalls[0]?.title ?? "", /GitHub Copilot: default/);
+	assert.match(selectCalls[0]?.title ?? "", /Kimi For Coding: default/);
+	assert.match(selectCalls[0]?.title ?? "", /xAI: default/);
 	assert.deepEqual(selectCalls[0]?.options, [
 		"Switch Anthropic account",
 		"Login new account",
@@ -832,6 +867,33 @@ test("generic login stores the full provider-owned credential and activates it",
 	assert.equal(keys.get("github-copilot"), "access-login-github-copilot");
 });
 
+test("xAI and Kimi login routes store and activate named OAuth accounts", async () => {
+	for (const providerId of ["xai", "kimi-coding"] as const) {
+		const store = new AccountStore(new InMemoryAccountStorageBackend());
+		const provider = fakeProvider(providerId);
+		const mock = createMockPi();
+		accountsExtension(mock.pi, { store, providers: [provider] });
+		const { registry, keys } = runtimeHarness(mock);
+		const modelId = providerId === "xai" ? "grok-4.3" : "k3";
+		const { ctx } = createInteractiveAccountContext(
+			{
+				model: { provider: providerId, id: modelId },
+				modelRegistry: registry,
+			},
+			{ selections: ["Login new account", provider.displayName], inputs: ["work"] },
+		);
+
+		await mock.commands.get("accounts")?.handler("ignored", ctx);
+		const state = await store.readProviderAsync(providerId);
+		assert.equal(state.active, "work");
+		assert.equal(state.accounts.work?.access, `access-login-${providerId}`);
+		assert.equal(
+			keys.get(providerId),
+			providerId === "xai" ? "access-login-xai" : "pi-accounts-header-auth",
+		);
+	}
+});
+
 test("session shutdown aborts idle OAuth login before stale credentials can publish", async () => {
 	const store = new AccountStore(new InMemoryAccountStorageBackend());
 	let loginStarted!: () => void;
@@ -1169,6 +1231,222 @@ test("session replacement invalidates a pending credential offer before old work
 		collectCredentialOffers(mock, newSession, "github-copilot")[0]?.access,
 		"access-work",
 	);
+});
+
+test("xAI named OAuth applies its access token and restores default auth", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: { xai: { active: "work", accounts: { work: credential("xai") } } },
+	});
+	const mock = createMockPi();
+	const { keys, registry } = runtimeHarness(mock);
+	const sessionManager = {};
+	const { ctx } = createMockContext({
+		model: { provider: "xai", id: "grok-4.3" },
+		modelRegistry: registry,
+		sessionManager,
+	});
+	const coordinator = new RuntimeAuthCoordinator(mock.pi, fakeProvider("xai"));
+
+	const active = await coordinator.ensureActive(ctx, store);
+	assert.deepEqual(active, {
+		status: "active",
+		providerId: "xai",
+		accountName: "work",
+	});
+	coordinator.publishCredentialOffer(ctx, active, "work:access-xai");
+	assert.equal(keys.get("xai"), "access-xai");
+	const offers: StoredOAuthCredential[] = [];
+	coordinator.offerCredential({
+		session: sessionManager,
+		provider: "xai",
+		offer: (candidate: StoredOAuthCredential) => offers.push(candidate),
+	});
+	assert.equal(offers[0]?.access, "access-xai");
+
+	await store.updateProvider("xai", (state) => ({ ...state, active: undefined }));
+	assert.deepEqual(await coordinator.ensureActive(ctx, store), {
+		status: "inactive",
+		providerId: "xai",
+	});
+	assert.equal(keys.has("xai"), false);
+});
+
+test("xAI and Kimi refresh expiring named credentials before activation", async () => {
+	for (const providerId of ["xai", "kimi-coding"] as const) {
+		const store = new AccountStore(new InMemoryAccountStorageBackend());
+		await store.write({
+			version: 1,
+			providers: {
+				[providerId]: {
+					active: "work",
+					accounts: { work: { ...credential(providerId), expires: 0 } },
+				},
+			},
+		});
+		const mock = createMockPi();
+		const { keys, registry } = runtimeHarness(mock);
+		const { ctx } = createMockContext({ modelRegistry: registry });
+		const coordinator = new RuntimeAuthCoordinator(mock.pi, fakeProvider(providerId));
+
+		assert.equal((await coordinator.ensureActive(ctx, store)).status, "active");
+		assert.equal(
+			(await store.readProviderAsync(providerId)).accounts.work?.access,
+			`access-${providerId}-refreshed`,
+		);
+		assert.equal(
+			keys.get(providerId),
+			providerId === "xai" ? "access-xai-refreshed" : "pi-accounts-header-auth",
+		);
+	}
+});
+
+test("Kimi named OAuth displaces default auth with its Bearer header and restores it", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: {
+			"kimi-coding": { active: "work", accounts: { work: credential("kimi") } },
+		},
+	});
+	const mock = createMockPi();
+	mock.rawPi.registerProvider("kimi-coding", {
+		headers: { authorization: "Bearer default", Existing: "yes" },
+	});
+	const { keys, registry } = runtimeHarness(mock);
+	const { ctx } = createMockContext({
+		model: { provider: "kimi-coding", id: "k3" },
+		modelRegistry: registry,
+	});
+	const coordinator = new RuntimeAuthCoordinator(mock.pi, fakeProvider("kimi-coding"));
+
+	assert.deepEqual(await coordinator.ensureActive(ctx, store), {
+		status: "active",
+		providerId: "kimi-coding",
+		accountName: "work",
+	});
+	assert.equal(keys.get("kimi-coding"), "pi-accounts-header-auth");
+	assert.deepEqual(mock.providers.get("kimi-coding"), {
+		headers: { Existing: "yes", Authorization: "Bearer access-kimi" },
+	});
+
+	await store.updateProvider("kimi-coding", (state) => ({ ...state, active: undefined }));
+	assert.deepEqual(await coordinator.ensureActive(ctx, store), {
+		status: "inactive",
+		providerId: "kimi-coding",
+	});
+	assert.equal(keys.has("kimi-coding"), false);
+	assert.deepEqual(mock.providers.get("kimi-coding"), {
+		headers: { authorization: "Bearer default", Existing: "yes" },
+	});
+});
+
+test("Kimi named auth resolves through Pi with the selector and Bearer header", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: {
+			"kimi-coding": { active: "work", accounts: { work: credential("kimi") } },
+		},
+	});
+	const runtime = await ModelRuntime.create({
+		credentials: new InMemoryCredentialStore(),
+		modelsPath: null,
+		refreshOnCreate: false,
+	});
+	const registry = new ModelRegistry(runtime);
+	const pi = {
+		registerProvider: registry.registerProvider.bind(registry),
+		unregisterProvider: registry.unregisterProvider.bind(registry),
+	};
+	const model = registry.find("kimi-coding", "k3");
+	assert.ok(model);
+	const { ctx } = createMockContext({ model, modelRegistry: registry });
+	const coordinator = new RuntimeAuthCoordinator(pi as never, fakeProvider("kimi-coding"));
+
+	assert.equal((await coordinator.ensureActive(ctx, store)).status, "active");
+	assert.deepEqual(await registry.getApiKeyAndHeaders(model), {
+		ok: true,
+		apiKey: "pi-accounts-header-auth",
+		headers: { Authorization: "Bearer access-kimi" },
+		env: undefined,
+	});
+
+	await store.updateProvider("kimi-coding", (state) => ({ ...state, active: undefined }));
+	assert.equal((await coordinator.ensureActive(ctx, store)).status, "inactive");
+	assert.equal(registry.getRegisteredProviderConfig("kimi-coding"), undefined);
+});
+
+test("Kimi session shutdown cancels ownership and restores default auth", async () => {
+	const store = new AccountStore(new InMemoryAccountStorageBackend());
+	await store.write({
+		version: 1,
+		providers: {
+			"kimi-coding": { active: "work", accounts: { work: credential("kimi") } },
+		},
+	});
+	const mock = createMockPi();
+	mock.rawPi.registerProvider("kimi-coding", { headers: { Existing: "yes" } });
+	accountsExtension(mock.pi, { store, providers: [fakeProvider("kimi-coding")] });
+	const { keys, registry } = runtimeHarness(mock);
+	const sessionManager = {};
+	const { ctx } = createMockContext({
+		model: { provider: "kimi-coding", id: "k3" },
+		modelRegistry: registry,
+		sessionManager,
+	});
+
+	await mock.events.get("session_start")?.[0]?.({}, ctx);
+	assert.equal(keys.get("kimi-coding"), "pi-accounts-header-auth");
+	assert.equal(
+		collectCredentialOffers(mock, sessionManager, "kimi-coding")[0]?.access,
+		"access-kimi",
+	);
+	assert.deepEqual(mock.providers.get("kimi-coding"), {
+		headers: { Existing: "yes", Authorization: "Bearer access-kimi" },
+	});
+
+	await mock.events.get("session_shutdown")?.[0]?.({}, ctx);
+	assert.equal(keys.has("kimi-coding"), false);
+	assert.deepEqual(collectCredentialOffers(mock, sessionManager, "kimi-coding"), []);
+	assert.deepEqual(mock.providers.get("kimi-coding"), { headers: { Existing: "yes" } });
+});
+
+test("Kimi malformed header auth fails closed without retaining a named Bearer token", async () => {
+	const invalidAuth: ModelAuth[] = [
+		{},
+		{ headers: { Authorization: "" } },
+		{ headers: { Authorization: "Bearer token\r\nInjected: yes" } },
+		{ headers: { Authorization: "Bearer first", authorization: "Bearer second" } },
+		{ apiKey: "unexpected", headers: { Authorization: "Bearer token" } },
+	];
+	for (const auth of invalidAuth) {
+		const store = new AccountStore(new InMemoryAccountStorageBackend());
+		await store.write({
+			version: 1,
+			providers: {
+				"kimi-coding": { active: "work", accounts: { work: credential("kimi") } },
+			},
+		});
+		const mock = createMockPi();
+		const { keys, registry } = runtimeHarness(mock);
+		const { ctx } = createMockContext({
+			model: { provider: "kimi-coding", id: "k3" },
+			modelRegistry: registry,
+		});
+		const kimi = fakeProvider("kimi-coding");
+		kimi.oauth.toAuth = async () => auth;
+		const coordinator = new RuntimeAuthCoordinator(mock.pi, kimi);
+
+		const result = await coordinator.ensureActive(ctx, store);
+		assert.equal(result.status, "error");
+		assert.equal(keys.get("kimi-coding"), FAIL_CLOSED_API_KEY);
+		assert.equal(
+			JSON.stringify(mock.providers.get("kimi-coding") ?? {}).includes("Bearer access-kimi"),
+			false,
+		);
+	}
 });
 
 test("providers without account-specific overlays leave existing registrations untouched", async () => {

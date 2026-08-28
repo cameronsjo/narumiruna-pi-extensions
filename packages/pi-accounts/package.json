@@ -14,7 +14,10 @@
 		"codex",
 		"anthropic",
 		"claude",
-		"github-copilot"
+		"github-copilot",
+		"kimi",
+		"xai",
+		"grok"
 	],
 	"files": [
 		"src",

@@ -2,13 +2,13 @@
 
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-accounts)](https://www.npmjs.com/package/@narumitw/pi-accounts) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-Save and switch named OpenAI Codex, Anthropic, and GitHub Copilot subscription accounts without replacing Pi's built-in provider integrations.
+Save and switch named OpenAI Codex, Anthropic, GitHub Copilot, Kimi For Coding, and xAI subscription accounts without replacing Pi's built-in provider integrations.
 
 Each selection overrides only the chosen provider, and selecting `default` restores Pi's normal authentication without deleting saved accounts.
 
 ## ✨ Features
 
-- Manages named OpenAI Codex, Anthropic Claude Pro/Max, and GitHub Copilot OAuth accounts through `/accounts`.
+- Manages named OpenAI Codex, Anthropic Claude Pro/Max, GitHub Copilot, Kimi For Coding, and xAI OAuth accounts through `/accounts`.
 - Keeps an independent selected account—or Pi's default login—for each provider.
 - Applies provider-specific credentials, endpoints, headers, and model availability through Pi's built-in providers.
 - Refreshes rotating credentials safely and verifies effective runtime authentication before reporting success.
@@ -23,6 +23,8 @@ Each selection overrides only the chosen provider, and selecting `default` resto
 | OpenAI Codex | `openai-codex` | ChatGPT Plus/Pro OAuth, OAuth-only native-provider bridge, and Codex WebSocket invalidation |
 | Anthropic | `anthropic` | Claude Pro/Max OAuth without interfering with Anthropic API-key auth after returning to `default` |
 | GitHub Copilot | `github-copilot` | Individual or Enterprise login, credential-derived API endpoint, and account-specific available models |
+| Kimi For Coding | `kimi-coding` | Kimi Code subscription OAuth with provider-owned Bearer-header authentication |
+| xAI | `xai` | SuperGrok or X Premium OAuth with the native xAI provider and model catalog |
 
 > [!WARNING]
 > Anthropic currently treats Claude Pro/Max use through third-party harnesses as **extra usage billed per token**, rather than consumption of the normal plan allowance.
@@ -94,7 +96,9 @@ Current model:
 Active accounts:
   Anthropic: work
   GitHub Copilot: enterprise
+  Kimi For Coding: fast
   OpenAI Codex: default
+  xAI: personal
 
 What do you want to do?
 › Switch Anthropic account
@@ -145,6 +149,10 @@ GitHub Copilot's `availableModelIds` are projected into the active provider mode
 Switching Copilot accounts rebuilds the projection from the complete pre-overlay model catalog.
 A currently selected model that is unavailable to the named account is rejected before the turn starts.
 
+Kimi's provider-owned OAuth returns an `Authorization: Bearer` header instead of an API key.
+The extension applies that header and installs a non-secret runtime selector to displace Pi's default Kimi credential.
+Activation verifies the effective Bearer header and fails closed before a turn if Pi does not retain it.
+
 ## 🗄️ Storage and migration
 
 The canonical file is:
@@ -168,6 +176,8 @@ On first load, if `pi-accounts.json` does not exist and released `pi-codex-accou
 
 If both files exist, `pi-accounts.json` is canonical and the legacy file is not imported again.
 The retained legacy refresh token may become stale after `pi-accounts` rotates it, so rollback can require a new Codex login.
+Older `pi-accounts` releases that predate xAI and Kimi support reject files containing those provider sections.
+Back up the file and remove the `xai` and `kimi-coding` sections only after stopping Pi before downgrading.
 
 ### Rollback
 
@@ -185,7 +195,7 @@ It is excluded from active workspace checks, version bumps, and publishing.
   It does not store or switch API-key profiles.
 - Continue using Pi's `auth.json`, environment variables, or `!command` secret-manager resolution for API keys.
 - It does not rotate accounts automatically, evade quotas, or report usage.
-- It does not support arbitrary custom providers in the first release.
+- It does not support arbitrary custom providers.
 - Live OAuth login and model requests depend on provider service availability and account entitlement.
 
 ## 🗂️ Package layout
@@ -225,7 +235,7 @@ The package exposes its Pi extension through `package.json`:
 
 ## 🔎 Keywords
 
-Pi extension, Pi coding agent, OAuth accounts, OpenAI Codex, ChatGPT Plus, ChatGPT Pro, Anthropic, Claude Pro, Claude Max, GitHub Copilot, GitHub Enterprise, subscription account switching.
+Pi extension, Pi coding agent, OAuth accounts, OpenAI Codex, ChatGPT Plus, ChatGPT Pro, Anthropic, Claude Pro, Claude Max, GitHub Copilot, GitHub Enterprise, Kimi For Coding, Kimi Code, xAI, Grok, SuperGrok, X Premium, subscription account switching.
 
 ## 📄 License
 
