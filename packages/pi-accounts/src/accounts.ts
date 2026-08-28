@@ -320,7 +320,6 @@ export default function accountsExtension(
 	pi.registerCommand(
 		"accounts",
 		createAccountCommand(
-			pi,
 			store,
 			adapters,
 			syncProvider,
@@ -409,7 +408,6 @@ export default function accountsExtension(
 }
 
 function createAccountCommand(
-	pi: ExtensionAPI,
 	store: AccountStore,
 	adapters: Map<AccountProviderId, AccountProviderAdapter>,
 	syncProvider: SyncProvider,
@@ -433,7 +431,6 @@ function createAccountCommand(
 				{
 					login: (adapter, name, signal, isCurrent) =>
 						loginAccount(
-							pi,
 							ctx,
 							store,
 							adapter,
@@ -476,7 +473,6 @@ function createAccountCommand(
 }
 
 async function loginAccount(
-	pi: ExtensionAPI,
 	ctx: ExtensionCommandContext,
 	store: AccountStore,
 	adapter: AccountProviderAdapter,
@@ -526,8 +522,6 @@ async function loginAccount(
 		credentialSaved = true;
 		if (!persistSelection(session, adapter.id, parsed.name, isCurrent)) return;
 		const result = await syncProvider(adapter.id, ctx, session, signal);
-		if (!isCurrent()) return;
-		await selectDefaultModelIfUnknown(pi, ctx, adapter);
 		if (!isCurrent()) return;
 		ctx.ui.notify(
 			formatActivationMessage("Logged in", adapter, parsed.name, result),
@@ -767,29 +761,6 @@ function setStatus(ctx: ExtensionContext, value: string | undefined): void {
 	} catch (error) {
 		if (!isStaleContextError(error)) throw error;
 	}
-}
-
-async function selectDefaultModelIfUnknown(
-	pi: ExtensionAPI,
-	ctx: ExtensionCommandContext,
-	adapter: AccountProviderAdapter,
-): Promise<void> {
-	if (!adapter.defaultModelId || !isUnknownModel(ctx.model)) return;
-	const model = ctx.modelRegistry.find(adapter.id, adapter.defaultModelId);
-	if (!model) {
-		ctx.ui.notify(
-			`Logged in, but ${adapter.id}/${adapter.defaultModelId} was not found.`,
-			"warning",
-		);
-		return;
-	}
-	if (!(await pi.setModel(model))) {
-		ctx.ui.notify(`Logged in, but selecting ${adapter.defaultModelId} failed.`, "warning");
-	}
-}
-
-function isUnknownModel(model: NonNullable<ExtensionContext["model"]> | undefined): boolean {
-	return model?.provider === "unknown" && model.id === "unknown" && model.api === "unknown";
 }
 
 function isStaleContextError(error: unknown): boolean {

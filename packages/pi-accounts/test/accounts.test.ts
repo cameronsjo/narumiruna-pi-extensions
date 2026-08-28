@@ -1945,7 +1945,7 @@ test("login asks before replacing an existing account name", async () => {
 	assert.equal((await store.readProviderAsync("anthropic")).accounts.work?.access, "access-new");
 });
 
-test("login selects a provider default model only when the current model is unknown", async () => {
+test("login leaves concurrent session models unchanged without a session-scoped model action", async () => {
 	const store = new AccountStore(new InMemoryAccountStorageBackend());
 	const codex = fakeProvider("openai-codex");
 	codex.defaultModelId = "codex";
@@ -1954,18 +1954,30 @@ test("login selects a provider default model only when the current model is unkn
 		store,
 		providers: [codex, fakeProvider("anthropic"), fakeProvider("github-copilot")],
 	});
-	const { registry } = runtimeHarness(mock);
+	const { keys, registry } = runtimeHarness(mock);
+	const firstModel = { provider: "anthropic", id: "claude" };
+	const unknownModel = { provider: "unknown", id: "unknown", api: "unknown" };
+	const firstContext = createMockContext({
+		model: firstModel,
+		modelRegistry: registry,
+		sessionManager: createTestSessionManager("first-onboarding-session"),
+	}).ctx;
+	await mock.events.get("session_start")?.[0]?.({}, firstContext);
 	const { ctx } = createInteractiveAccountContext(
 		{
-			model: { provider: "unknown", id: "unknown", api: "unknown" },
+			model: unknownModel,
 			modelRegistry: registry,
+			sessionManager: createTestSessionManager("second-onboarding-session"),
 		},
 		{ selections: ["Login new account", "OpenAI Codex"], inputs: ["work"] },
 	);
 
 	await mock.commands.get("accounts")?.handler("ignored", ctx);
 
-	assert.equal(mock.setModels.length, 1);
+	assert.equal(keys.get("openai-codex"), "access-login-openai-codex");
+	assert.equal(mock.setModels.length, 0);
+	assert.deepEqual(firstModel, { provider: "anthropic", id: "claude" });
+	assert.deepEqual(unknownModel, { provider: "unknown", id: "unknown", api: "unknown" });
 });
 
 test("credential source offers a refreshed active credential as defensive session-bound clones", async () => {

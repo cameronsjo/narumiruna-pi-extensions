@@ -133,7 +133,6 @@ To switch another provider, choose **Switch another provider’s account**, then
 Choosing `default` restores Pi's built-in login for that provider in the current Pi session only.
 Switching or logging in does not change selections owned by other running or resumable sessions.
 `/accounts` changes account identity, not the model.
-As onboarding help, a successful login selects the provider's default model only when the current model is `unknown`.
 
 Removal lists accounts as `Provider · account` and requires confirmation.
 Removing the current session's selected account records `default` for that provider.
