@@ -10,11 +10,13 @@ Use this skill when deciding whether or how to delegate with the `subagent-*` to
 
 ## Prefer direct work
 
+Only use a subagent when the work can be split into independent tasks, or when context isolation provides a concrete benefit.
+
+Otherwise, do the work directly.
+
 Keep planning, critical-path work, integration, deterministic checks, authorization decisions, and the final answer in the main agent.
 
 Do the work directly when it is simple, latency-sensitive, tightly coupled to the current context, likely to need user clarification, or faster than preparing and verifying a delegation.
-
-Do not delegate merely to avoid work the main agent can complete safely and promptly.
 
 Nested subagents are unsupported.
 
