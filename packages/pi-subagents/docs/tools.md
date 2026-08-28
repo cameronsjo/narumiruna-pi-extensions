@@ -9,7 +9,7 @@
 | `thinkingLevel` | `string` | No | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`; defaults to the main agent's effective thinking level. |
 | `timeout` | `number` | No | Seconds; `> 0` through `2,147,483.647`; no default timeout. |
 
-Starts a task-specialized background job with the selected tool capabilities and returns its job ID immediately.
+Starts one task-specialized subagent job with the selected tool capabilities and returns its job ID immediately.
 
 The runtime always adds `subagent-ask` and `subagent-wait` to the selected tools.
 
@@ -46,7 +46,7 @@ No parameters.
 
 Returns `{ jobId, state, timedOut: false, interrupted: true, reason: "subagent_message" }` without cancelling the job when any unanswered child question needs a main-agent response.
 
-### Background subagent
+### Subagent
 
 | Parameter | Type | Required | Constraint / default |
 | --- | --- | --- | --- |
@@ -59,7 +59,7 @@ A timeout or caller cancellation throws and stops only that wait, so the child m
 
 ## `subagent-ask`
 
-Available only to background subagents.
+Available only to subagents.
 
 | Parameter | Type | Required | Constraint / default |
 | --- | --- | --- | --- |
@@ -75,7 +75,7 @@ Available only to the main agent.
 
 | Parameter | Type | Required | Constraint / default |
 | --- | --- | --- | --- |
-| `requestId` | `string` | Yes | Pending request ID received from a background subagent. |
+| `requestId` | `string` | Yes | Pending request ID received from a subagent. |
 | `message` | `string` | Yes | Plain-text response, up to 50 KiB of UTF-8 text and 2,000 lines. |
 
 The first accepted response wins.

@@ -115,7 +115,7 @@ export class MessageBroker {
 			});
 		})
 			.catch((error) => {
-				const message = boundedError(error instanceof Error ? error.message : String(error));
+				const message = truncateError(error instanceof Error ? error.message : String(error));
 				this.failure = message;
 				throw new Error(`Subagent message broker failed to start: ${message}`);
 			})
@@ -382,7 +382,7 @@ export class MessageBroker {
 	}
 
 	private respondError(socket: Socket, error: string): void {
-		this.respond(socket, { ok: false, error: boundedError(error) });
+		this.respond(socket, { ok: false, error: truncateError(error) });
 	}
 
 	private respond(socket: Socket, value: Record<string, unknown>, onFlushed?: () => void): void {
@@ -395,7 +395,7 @@ export class MessageBroker {
 	}
 
 	private fail(error: Error): void {
-		this.failure = boundedError(error.message);
+		this.failure = truncateError(error.message);
 		for (const jobId of [...this.tokenByJob.keys()]) {
 			this.revokeJob(jobId, "Subagent message broker failed.");
 		}
@@ -448,7 +448,7 @@ function lineCount(value: string): number {
 	return count;
 }
 
-function boundedError(error: string): string {
+function truncateError(error: string): string {
 	const bytes = Buffer.from(error, "utf8");
 	if (bytes.length <= MAX_ERROR_BYTES) return error;
 	return `${bytes

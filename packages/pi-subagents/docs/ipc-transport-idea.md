@@ -68,7 +68,7 @@ Any replacement must preserve:
 - Retryable waits after timeout.
 - Caller cancellation that stops only the current wait.
 - Immediate rejection of pending waits after job cancellation, child exit, session replacement, reload, or shutdown.
-- Bounded retained state and terminal-safe cleanup.
+- Retention-limited state and terminal-safe cleanup.
 - Untrusted-content handling and terminal sanitization.
 - No peer messaging, retained child conversations, or nested subagents.
 
@@ -88,7 +88,7 @@ Reject the IPC design if any supported runtime cannot expose a reliable private 
 
 If child-process IPC is not portable enough, evaluate dedicated inherited file descriptors such as fd 3 and fd 4.
 
-Inherited pipes can still remove TCP addressing and authentication, but they require a bounded framing protocol and explicit stream lifecycle handling.
+Inherited pipes can still remove TCP addressing and authentication, but they require explicit frame-size limits and stream lifecycle handling.
 
 HTTP loopback may simplify framing incrementally, but it retains the server, port, token, and network lifecycle and therefore offers a smaller reduction.
 

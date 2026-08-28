@@ -22,7 +22,7 @@ If work depends on substantial history from the current conversation, continue i
 
 ## Simplicity over feature breadth
 
-Keep the architecture explicit, bounded, and easy to understand.
+Keep the architecture explicit, minimal, and easy to understand.
 
 Feature breadth alone does not justify more machinery.
 

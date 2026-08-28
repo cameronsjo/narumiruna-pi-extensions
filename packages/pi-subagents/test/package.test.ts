@@ -11,6 +11,7 @@ test("package declares one generated extension and one bundled operating skill",
 		readFileSync(path.join(packageDirectory, "package.json"), "utf8"),
 	) as {
 		name: string;
+		description: string;
 		private: boolean;
 		files: string[];
 		pi: { extensions: string[]; skills: string[] };
@@ -19,6 +20,7 @@ test("package declares one generated extension and one bundled operating skill",
 		repository: { directory: string };
 	};
 	assert.equal(manifest.name, "@narumitw/pi-subagents");
+	assert.doesNotMatch(manifest.description, /\b(?:background|bounded)\b/i);
 	assert.equal(manifest.private, true);
 	assert.equal(manifest.repository.directory, "packages/pi-subagents");
 	assert.deepEqual(manifest.pi.extensions, ["./dist/index.ts"]);
@@ -38,6 +40,7 @@ test("bundled skill documents every minimal-runtime operating responsibility", (
 		"utf8",
 	);
 	assert.match(skill, /^name: using-pi-subagents$/m);
+	assert.doesNotMatch(skill, /\b(?:background|bounded)\b/i);
 	for (const evidence of [
 		/prefer direct work/i,
 		/subagent-spawn/i,

@@ -52,7 +52,7 @@ export function createChildCommunicationExtension(
 			name: "subagent-ask",
 			label: "Subagent · Ask Main Agent",
 			description:
-				"Use subagent-ask to send one bounded, self-contained question to the main agent. It returns a request ID immediately; call subagent-wait with that ID to receive the plain-text reply.",
+				"Use subagent-ask to send one self-contained question to the main agent. It returns a request ID immediately; call subagent-wait with that ID to receive the plain-text reply.",
 			promptSnippet: "Use subagent-ask to ask the main agent one necessary question",
 			parameters: AskParameters,
 			async execute(_toolCallId, params, signal) {

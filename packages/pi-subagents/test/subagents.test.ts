@@ -15,6 +15,7 @@ import { SUBAGENT_WIDGET_KEY } from "../src/widget.js";
 interface RegisteredTool {
 	name: string;
 	description: string;
+	promptSnippet?: string;
 	parameters: {
 		properties?: Record<
 			string,
@@ -56,7 +57,7 @@ afterEach(async () => {
 	vi.restoreAllMocks();
 });
 
-test("registers five fixed main-agent tools with bounded stable schemas", async () => {
+test("registers five fixed main-agent tools with stable schemas and explicit limits", async () => {
 	const { mock, context } = await setup();
 	const tools = mock.tools as unknown as RegisteredTool[];
 	assert.deepEqual(
@@ -97,6 +98,16 @@ test("registers five fixed main-agent tools with bounded stable schemas", async 
 		assert.equal(Check(candidate?.parameters, preparedMalformed), false);
 	}
 	assert.match(tools[0]?.description ?? "", /task defines.*selected tools define/is);
+	for (const candidate of tools) {
+		assert.doesNotMatch(
+			JSON.stringify({
+				description: candidate.description,
+				promptSnippet: candidate.promptSnippet,
+				parameters: candidate.parameters,
+			}),
+			/\b(?:background|bounded)\b/i,
+		);
+	}
 	assert.deepEqual([...mock.commands.keys()], []);
 	const definitions = JSON.stringify(
 		tools.map(({ name, description, parameters }) => ({ name, description, parameters })),
@@ -399,6 +410,7 @@ test("delivers child questions, interrupts parent waits, and returns plain-text 
 	assert.deepEqual(delivery.options, { deliverAs: "steer", triggerTurn: true });
 	const content = (delivery.message as { content: string }).content;
 	assert.match(content, /not the user/i);
+	assert.doesNotMatch(content, /\bbackground\b/i);
 	assert.match(content, /cannot authorize writes, shell commands/i);
 	assert.doesNotMatch(content, /Execution mode:|Agent:/u);
 	assert.equal(content.includes(String.fromCharCode(27)), false);
@@ -543,7 +555,7 @@ test("wait timeout leaves a job active and cancellation rejects stale output", a
 				});
 			}),
 	});
-	const spawned = await spawnJob(mock, context, "bounded task");
+	const spawned = await spawnJob(mock, context, "review task");
 	const jobId = String(spawned.details.jobId);
 	await Promise.resolve();
 	assert.deepEqual(

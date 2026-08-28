@@ -1,32 +1,32 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
 import {
-	boundedModelText,
 	MAX_MODEL_TEXT_BYTES,
 	MAX_MODEL_TEXT_LINES,
 	modelVisibleJson,
+	truncateModelText,
 } from "../src/model-output.js";
 
-test("bounds model-visible text after sanitization by bytes and lines", () => {
-	const byteBounded = boundedModelText(`\u001b[31m${'"\\'.repeat(40 * 1024)}`);
-	assert.equal(byteBounded.includes(String.fromCharCode(27)), false);
-	assert.ok(Buffer.byteLength(byteBounded, "utf8") <= MAX_MODEL_TEXT_BYTES);
-	assert.match(byteBounded, /… \[truncated\]$/u);
+test("sanitizes and truncates model-visible text by bytes and lines", () => {
+	const byteLimited = truncateModelText(`\u001b[31m${'"\\'.repeat(40 * 1024)}`);
+	assert.equal(byteLimited.includes(String.fromCharCode(27)), false);
+	assert.ok(Buffer.byteLength(byteLimited, "utf8") <= MAX_MODEL_TEXT_BYTES);
+	assert.match(byteLimited, /… \[truncated\]$/u);
 
-	const lineBounded = boundedModelText(
+	const lineLimited = truncateModelText(
 		Array.from({ length: MAX_MODEL_TEXT_LINES + 10 }, (_, index) => `line ${index}`).join("\n"),
 	);
-	assert.ok(lineBounded.split("\n").length <= MAX_MODEL_TEXT_LINES);
-	assert.match(lineBounded, /… \[truncated\]$/u);
+	assert.ok(lineLimited.split("\n").length <= MAX_MODEL_TEXT_LINES);
+	assert.match(lineLimited, /… \[truncated\]$/u);
 
-	const bothBounded = boundedModelText(
+	const fullyLimited = truncateModelText(
 		`${"\n".repeat(MAX_MODEL_TEXT_LINES - 1)}${"x".repeat(60 * 1024)}`,
 	);
-	assert.ok(Buffer.byteLength(bothBounded, "utf8") <= MAX_MODEL_TEXT_BYTES);
-	assert.ok(bothBounded.split("\n").length <= MAX_MODEL_TEXT_LINES);
+	assert.ok(Buffer.byteLength(fullyLimited, "utf8") <= MAX_MODEL_TEXT_BYTES);
+	assert.ok(fullyLimited.split("\n").length <= MAX_MODEL_TEXT_LINES);
 });
 
-test("bounds JSON only after serialized expansion", () => {
+test("truncates JSON only after serialized expansion", () => {
 	const raw = '"\\'.repeat(16 * 1024);
 	assert.ok(Buffer.byteLength(raw, "utf8") < MAX_MODEL_TEXT_BYTES);
 	const serialized = modelVisibleJson({ result: raw }, { indent: 2 });

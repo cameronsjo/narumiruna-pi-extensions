@@ -58,7 +58,7 @@ export async function runChild(request: ChildRequest): Promise<ChildResult> {
 		if (request.signal.aborted) return cancelledResult();
 		return {
 			state: "failed",
-			error: boundedText(error instanceof Error ? error.message : String(error), MAX_ERROR_BYTES)
+			error: truncateText(error instanceof Error ? error.message : String(error), MAX_ERROR_BYTES)
 				.text,
 			limitations: [],
 			truncated: false,
@@ -116,11 +116,11 @@ async function executeProcess(
 				.join("\n")
 				.trim();
 			if (text) {
-				const bounded = boundedText(text, MAX_OUTPUT_BYTES);
-				latestOutput = bounded.text;
-				truncated ||= bounded.truncated;
+				const limited = truncateText(text, MAX_OUTPUT_BYTES);
+				latestOutput = limited.text;
+				truncated ||= limited.truncated;
 				if (event.message.stopReason === "stop" || event.message.stopReason === "length") {
-					terminalOutput = bounded.text;
+					terminalOutput = limited.text;
 					terminalStopReason = event.message.stopReason;
 				}
 			}
@@ -128,9 +128,9 @@ async function executeProcess(
 				assistantFailed = true;
 			}
 			if (event.message.errorMessage) {
-				const bounded = boundedText(event.message.errorMessage, MAX_ERROR_BYTES);
-				errorMessage = bounded.text;
-				truncated ||= bounded.truncated;
+				const limited = truncateText(event.message.errorMessage, MAX_ERROR_BYTES);
+				errorMessage = limited.text;
+				truncated ||= limited.truncated;
 			}
 		},
 		() => {
@@ -224,18 +224,18 @@ async function executeProcess(
 		});
 		process.stdout?.on("data", (chunk) => decoder.push(chunk));
 		process.stderr?.on("data", (chunk) => {
-			const bounded = boundedTail(`${stderr}${chunk.toString()}`, MAX_ERROR_BYTES);
-			stderr = bounded.text;
-			truncated ||= bounded.truncated;
+			const limited = truncateTail(`${stderr}${chunk.toString()}`, MAX_ERROR_BYTES);
+			stderr = limited.text;
+			truncated ||= limited.truncated;
 		});
 		process.once("close", (code) => {
 			decoder.finish();
 			finish(cancelled ? 130 : timedOut ? 124 : (code ?? 1));
 		});
 		process.once("error", (error) => {
-			const bounded = boundedText(error.message, MAX_ERROR_BYTES);
-			errorMessage = bounded.text;
-			truncated ||= bounded.truncated;
+			const limited = truncateText(error.message, MAX_ERROR_BYTES);
+			errorMessage = limited.text;
+			truncated ||= limited.truncated;
 			if (spawned) terminate(1);
 			else finish(1, error.message);
 		});
@@ -432,7 +432,7 @@ function cancelledResult(
 	};
 }
 
-function boundedText(text: string, maxBytes: number): { text: string; truncated: boolean } {
+function truncateText(text: string, maxBytes: number): { text: string; truncated: boolean } {
 	const bytes = Buffer.from(text, "utf8");
 	if (bytes.length <= maxBytes) return { text, truncated: false };
 	return {
@@ -444,7 +444,7 @@ function boundedText(text: string, maxBytes: number): { text: string; truncated:
 	};
 }
 
-function boundedTail(text: string, maxBytes: number): { text: string; truncated: boolean } {
+function truncateTail(text: string, maxBytes: number): { text: string; truncated: boolean } {
 	const bytes = Buffer.from(text, "utf8");
 	if (bytes.length <= maxBytes) return { text, truncated: false };
 	return {

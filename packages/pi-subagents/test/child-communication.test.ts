@@ -15,6 +15,8 @@ import type { BrokerCredentials } from "../src/types.js";
 
 interface RegisteredTool {
 	name: string;
+	description: string;
+	promptSnippet?: string;
 	parameters: { properties?: Record<string, { maxLength?: number; description?: string }> };
 	prepareArguments?: (args: unknown) => unknown;
 	execute: (
@@ -48,6 +50,16 @@ test("registers fixed ask and wait schemas and returns plain-text results", asyn
 		["subagent-ask", "subagent-wait"],
 	);
 	assert.equal(tools[0]?.parameters.properties?.message?.maxLength, 50 * 1024);
+	for (const tool of tools) {
+		assert.doesNotMatch(
+			JSON.stringify({
+				description: tool.description,
+				promptSnippet: tool.promptSnippet,
+				parameters: tool.parameters,
+			}),
+			/\b(?:background|bounded)\b/i,
+		);
+	}
 	assert.equal(
 		tools[1]?.parameters.properties?.timeout?.description,
 		"Timeout in seconds (optional, no default timeout)",
