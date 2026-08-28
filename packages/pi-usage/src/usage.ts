@@ -210,8 +210,9 @@ export default function usageExtension(
 		displayState: UsageDisplayState,
 		force: boolean,
 		signal: AbortSignal,
+		authRetry = 0,
+		deadlineAt = Date.now() + DEFAULT_TIMEOUT_MS,
 	): Promise<QueryOutcome> => {
-		const startedAt = Date.now();
 		const expectedSessionGeneration = sessionGeneration;
 		const expectedXaiSettingsGeneration = xaiSettingsGeneration;
 		const expectedSessionId = ctx.sessionManager.getSessionId();
@@ -221,7 +222,7 @@ export default function usageExtension(
 			auth = await awaitWithDeadline(
 				resolveUsageAuth(ctx, adapter, undefined, credentialReader, credentialCandidates),
 				signal,
-				DEFAULT_TIMEOUT_MS,
+				Math.max(1, deadlineAt - Date.now()),
 				`resolving ${adapter.displayName} runtime auth`,
 			);
 		} catch (error) {
@@ -239,16 +240,14 @@ export default function usageExtension(
 				},
 			};
 		}
-		if (
-			adapter.id === "xai" &&
-			(expectedSessionGeneration !== sessionGeneration ||
-				expectedXaiSettingsGeneration !== xaiSettingsGeneration ||
-				!xaiUsageEnabled() ||
-				ctx.sessionManager.getSessionId() !== expectedSessionId ||
-				modelIdentity(ctx.model) !== expectedModelIdentity)
-		) {
-			throw abortError();
-		}
+		const requiresRequestBoundaryGuard = adapter.id === "deepseek" || adapter.id === "xai";
+		const requestContextChanged = () =>
+			expectedSessionGeneration !== sessionGeneration ||
+			ctx.sessionManager.getSessionId() !== expectedSessionId ||
+			modelIdentity(ctx.model) !== expectedModelIdentity ||
+			(adapter.id === "xai" &&
+				(expectedXaiSettingsGeneration !== xaiSettingsGeneration || !xaiUsageEnabled()));
+		if (requiresRequestBoundaryGuard && requestContextChanged()) throw abortError();
 		if (!auth) {
 			if (displayState === "current") {
 				transitionCurrentIdentity(`${adapter.id}:unavailable`, adapter.id);
@@ -301,40 +300,28 @@ export default function usageExtension(
 		const queryId = querySequence;
 		setBoundedMap(latestQueries, failureKey, queryId, MAX_ACCOUNT_STATES);
 
+		let deepSeekAuthChanged = false;
 		try {
-			const remainingMs = Math.max(1, DEFAULT_TIMEOUT_MS - (Date.now() - startedAt));
-			const guard =
-				adapter.id === "xai"
-					? async () => {
-							if (
-								signal.aborted ||
-								expectedSessionGeneration !== sessionGeneration ||
-								expectedXaiSettingsGeneration !== xaiSettingsGeneration ||
-								!xaiUsageEnabled() ||
-								ctx.sessionManager.getSessionId() !== expectedSessionId ||
-								modelIdentity(ctx.model) !== expectedModelIdentity
-							) {
-								throw abortError();
+			const remainingMs = Math.max(1, deadlineAt - Date.now());
+			const guard = requiresRequestBoundaryGuard
+				? async () => {
+						if (signal.aborted || requestContextChanged()) throw abortError();
+						const revalidated = await awaitWithDeadline(
+							resolveUsageAuth(ctx, adapter, undefined, credentialReader, credentialCandidates),
+							signal,
+							Math.max(1, deadlineAt - Date.now()),
+							`revalidating ${adapter.displayName} runtime auth`,
+						);
+						if (signal.aborted || requestContextChanged()) throw abortError();
+						if (revalidated?.fingerprint !== auth.fingerprint) {
+							if (adapter.id === "deepseek") {
+								deepSeekAuthChanged = true;
+								throw new Error("DeepSeek runtime credential changed during the balance query.");
 							}
-							const revalidated = await awaitWithDeadline(
-								resolveUsageAuth(ctx, adapter, undefined, credentialReader, credentialCandidates),
-								signal,
-								Math.max(1, DEFAULT_TIMEOUT_MS - (Date.now() - startedAt)),
-								"revalidating xAI runtime auth",
-							);
-							if (
-								signal.aborted ||
-								expectedSessionGeneration !== sessionGeneration ||
-								expectedXaiSettingsGeneration !== xaiSettingsGeneration ||
-								!xaiUsageEnabled() ||
-								ctx.sessionManager.getSessionId() !== expectedSessionId ||
-								modelIdentity(ctx.model) !== expectedModelIdentity ||
-								revalidated?.fingerprint !== auth.fingerprint
-							) {
-								throw abortError();
-							}
+							throw abortError();
 						}
-					: undefined;
+					}
+				: undefined;
 			const report = await queryProviderUsage(adapter, auth, signal, remainingMs, guard);
 			if (guard) await guard();
 			if (latestQueries.get(failureKey) === queryId) {
@@ -353,6 +340,24 @@ export default function usageExtension(
 			};
 		} catch (error) {
 			if (isStaleExtensionContextError(error) || isAbortError(error)) throw error;
+			if (
+				deepSeekAuthChanged &&
+				authRetry === 0 &&
+				!signal.aborted &&
+				!requestContextChanged() &&
+				Date.now() < deadlineAt
+			) {
+				if (latestQueries.get(failureKey) === queryId) latestQueries.delete(failureKey);
+				return queryAdapterState(
+					ctx,
+					adapter,
+					displayState,
+					true,
+					signal,
+					authRetry + 1,
+					deadlineAt,
+				);
+			}
 			const message = errorMessage(error);
 			const now = Date.now();
 			for (const [key, failure] of failureBackoff) {

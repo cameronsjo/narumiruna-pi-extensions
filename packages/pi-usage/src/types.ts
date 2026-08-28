@@ -84,6 +84,11 @@ export type ProviderUsageState =
 			message: string;
 	  };
 
+export type DeepSeekBalancePayload = {
+	is_available?: unknown;
+	balance_infos?: unknown;
+};
+
 export type GitHubCopilotUsagePayload = {
 	login?: unknown;
 	copilot_plan?: unknown;
