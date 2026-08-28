@@ -1,5 +1,11 @@
 # @narumitw/pi-usage
 
+## 0.56.0
+
+### Minor Changes
+
+- bcb8197: Add exact DeepSeek API balance reporting for official runtime API keys.
+
 ## 0.55.0
 
 ### Minor Changes
