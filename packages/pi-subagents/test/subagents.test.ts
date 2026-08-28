@@ -59,6 +59,7 @@ afterEach(async () => {
 
 test("registers five fixed main-agent tools with stable schemas and explicit limits", async () => {
 	const { mock, context } = await setup();
+	assert.ok(mock.messageRenderers.has("pi-subagents-completion"));
 	const tools = mock.tools as unknown as RegisteredTool[];
 	assert.deepEqual(
 		tools.map((candidate) => candidate.name),
@@ -119,6 +120,40 @@ test("registers five fixed main-agent tools with stable schemas and explicit lim
 		),
 		definitions,
 	);
+});
+
+test("completion renderer follows Pi's tool-output expansion state", async () => {
+	const { mock } = await setup();
+	const renderer = mock.messageRenderers.get("pi-subagents-completion");
+	assert.ok(renderer);
+	const message = {
+		customType: "pi-subagents-completion",
+		content: `Subagent job completion:
+{
+  "result": "full child result\u0007"
+}`,
+		display: true,
+		details: { result: "raw details must not render" },
+	};
+	const theme = {
+		fg: (_role: string, text: string) => text,
+		bg: (_role: string, text: string) => text,
+		bold: (text: string) => text,
+	} as Theme;
+	const collapsed = renderer(message, { expanded: false, outputPad: 1 }, theme) as Component;
+	const collapsedLines = collapsed.render(80);
+	const collapsedText = collapsedLines.join("\n");
+	assert.match(collapsedText, /to expand/i);
+	assert.doesNotMatch(collapsedText, /full child result|raw details must not render/i);
+	assert.ok(collapsedLines.every((line) => visibleWidth(line) <= 80));
+
+	const expanded = renderer(message, { expanded: true, outputPad: 1 }, theme) as Component;
+	const expandedLines = expanded.render(80);
+	const expandedText = expandedLines.join("\n");
+	assert.match(expandedText, /full child result/i);
+	assert.equal(expandedText.includes(String.fromCharCode(7)), false);
+	assert.doesNotMatch(expandedText, /to expand|raw details must not render/i);
+	assert.ok(expandedLines.every((line) => visibleWidth(line) <= 80));
 });
 
 test("spawns jobs with default and explicit tools and thinking levels", async () => {
