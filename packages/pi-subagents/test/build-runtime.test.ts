@@ -191,6 +191,7 @@ test("Pi's Jiti loader loads the generated extension and child bridge", async ()
 		const main = loadedMain.extensions[0];
 		assert.ok(main?.handlers.has("session_start"));
 		assert.ok(main?.handlers.has("session_shutdown"));
+		assert.deepEqual([...(main?.messageRenderers.keys() ?? [])], ["pi-subagents-completion"]);
 		assert.deepEqual(
 			[...(main?.tools.keys() ?? [])],
 			["subagent-spawn", "subagent-inspect", "subagent-cancel", "subagent-wait", "subagent-reply"],

@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { COMPLETION_MESSAGE_TYPE } from "./completion-renderer.js";
 import type { MessageBroker } from "./message-broker.js";
 import { modelVisibleJson } from "./model-output.js";
 import { runChild as defaultRunChild } from "./process.js";
@@ -14,8 +15,6 @@ import {
 const MAX_ACTIVE_JOBS = 8;
 const MAX_RETAINED_TERMINAL_JOBS = 32;
 const TERMINAL_RETENTION_MS = 24 * 60 * 60 * 1_000;
-const COMPLETION_MESSAGE_TYPE = "pi-subagents-completion";
-
 interface StopRequest {
 	child: ChildResult;
 	deliver: boolean;

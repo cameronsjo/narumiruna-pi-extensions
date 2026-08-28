@@ -69,6 +69,8 @@ The tool returns a `jobId` immediately.
 
 The job runs in the background while the main agent continues useful work until a completion arrives or the result is required.
 
+Completion messages follow Pi's global tool-output expansion state and `app.tools.expand` binding (`Ctrl+O` by default).
+
 If `subagent-wait` reports `reason: "subagent_message"`, answer the visible question with `subagent-reply`, then wait for the job again when needed.
 
 In TUI mode, an above-editor widget shows one compact line for each queued or running job.
