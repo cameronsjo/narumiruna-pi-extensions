@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
-import type { ExtensionCommandContext, KeybindingsManager } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey, visibleWidth } from "@earendil-works/pi-tui";
+import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import {
+	Key,
+	KeybindingsManager,
+	matchesKey,
+	setKeybindings,
+	TUI_KEYBINDINGS,
+	visibleWidth,
+} from "@earendil-works/pi-tui";
 import { createTuiHarness } from "@narumitw/pi-tui-kit/testing";
 import { test, vi } from "vitest";
 import type { TickerMenuOptions } from "../src/menu.js";
@@ -150,6 +157,35 @@ test("keeps standard remapped navigation ahead of reorder shortcuts", async () =
 	await running;
 });
 
+test("keeps remapped Input editor actions ahead of reorder shortcuts", async () => {
+	const keybindings = new KeybindingsManager(TUI_KEYBINDINGS, {
+		"tui.editor.undo": "shift+down",
+	});
+	setKeybindings(keybindings);
+	const tui = createTuiHarness({ width: 72, rows: 22, keybindings });
+	const { ctx } = context(tui);
+	const state = createOptions(["NVDA", "AAPL"]);
+	try {
+		const running = showTickerTuiMenu(ctx, state.options);
+		await tui.waitForOpen();
+		tui.setFocused(true);
+		tui.type("x");
+		tui.send("\u007f");
+		tui.press("tui.select.up");
+		tui.press("tui.select.up");
+		tui.send(SHIFT_DOWN);
+
+		assert.deepEqual(state.symbols, ["NVDA", "AAPL"]);
+		assert.deepEqual(state.applied, []);
+		assert.match(tui.render().join("\n"), /> x/);
+		assert.doesNotMatch(tui.render().join("\n"), /shift\+down changes its order/);
+		tui.press("ctrl+c");
+		await running;
+	} finally {
+		setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS));
+	}
+});
+
 test("searches safely through the focused Input and disables reorder while filtered", async () => {
 	const tui = createTuiHarness({ width: 72, rows: 22 });
 	const { ctx } = context(tui);
@@ -210,6 +246,27 @@ test("renders every line within a one-column viewport under vertical overflow", 
 	assert.ok(tui.render().every((line) => visibleWidth(line) <= 1));
 	tui.press("ctrl+c");
 	await running;
+});
+
+test("returns a zero-width-safe frame without promoting the supplied bound", async () => {
+	const tui = createTuiHarness({ width: 72, rows: 22 });
+	const { ctx } = context(tui);
+	const state = createOptions(["NVDA"]);
+	const originalCustom = ctx.ui.custom;
+	let zeroWidthFrame: readonly string[] | undefined;
+	ctx.ui.custom = (async (factory, customOptions) =>
+		originalCustom(async (customTui, theme, keybindings, done) => {
+			const component = await factory(customTui, theme, keybindings, done);
+			zeroWidthFrame = [...component.render(0)];
+			return component;
+		}, customOptions)) as ExtensionCommandContext["ui"]["custom"];
+	const running = showTickerTuiMenu(ctx, state.options);
+	await tui.waitForOpen();
+	tui.press("ctrl+c");
+	await running;
+
+	assert.deepEqual(zeroWidthFrame, [""]);
+	assert.ok(zeroWidthFrame?.every((line) => visibleWidth(line) === 0));
 });
 
 test("derives row instructions from remapped confirm and available reorder keys", async () => {

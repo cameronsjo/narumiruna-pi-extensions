@@ -15,13 +15,30 @@ type Row = TickerRow | ActionRow;
 
 const PASTE_START = "\u001b[200~";
 const PASTE_END = "\u001b[201~";
-const STANDARD_BINDINGS = [
+// Keep these aligned with Input.handleInput so configured editing actions beat additive reorder.
+const RESERVED_INPUT_BINDINGS = [
 	"tui.select.up",
 	"tui.select.down",
 	"tui.select.pageUp",
 	"tui.select.pageDown",
 	"tui.select.confirm",
 	"tui.select.cancel",
+	"tui.editor.undo",
+	"tui.input.submit",
+	"tui.editor.deleteCharBackward",
+	"tui.editor.deleteCharForward",
+	"tui.editor.deleteWordBackward",
+	"tui.editor.deleteWordForward",
+	"tui.editor.deleteToLineStart",
+	"tui.editor.deleteToLineEnd",
+	"tui.editor.yank",
+	"tui.editor.yankPop",
+	"tui.editor.cursorLeft",
+	"tui.editor.cursorRight",
+	"tui.editor.cursorLineStart",
+	"tui.editor.cursorLineEnd",
+	"tui.editor.cursorWordLeft",
+	"tui.editor.cursorWordRight",
 ] as const;
 
 // Pi TUI Kit multi-select screens do not expose in-place row-reorder shortcuts.
@@ -280,7 +297,8 @@ export async function showTickerTuiMenu(
 
 				return {
 					render(width: number) {
-						const safeWidth = Number.isFinite(width) ? Math.max(1, Math.floor(width)) : 1;
+						const safeWidth = Number.isFinite(width) ? Math.max(0, Math.floor(width)) : 0;
+						if (safeWidth === 0) return [""];
 						const viewportSize = availableRows(tui.terminal.rows, rows.length);
 						const viewportStart = Math.max(
 							0,
@@ -464,7 +482,7 @@ function shortcutAvailable(
 			"home",
 			"end",
 			"space",
-			...STANDARD_BINDINGS.flatMap((binding) => keybindings.getKeys(binding)),
+			...RESERVED_INPUT_BINDINGS.flatMap((binding) => keybindings.getKeys(binding)),
 		].map(canonicalKey),
 	);
 	return unavailable.has(canonicalKey(shortcut)) ? undefined : shortcut;

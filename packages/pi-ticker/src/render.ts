@@ -81,14 +81,38 @@ function formatItemPlain(item: TickerItem): string {
 }
 
 function formatPrice(quote: Quote): string {
-	const value = quote.price.toFixed(quote.price < 1 ? 4 : 2);
+	const value = formatMarketNumber(quote.price);
 	if (quote.currency === "GBp") return `${value}p`;
 	return `${currencyPrefix(quote.currency)}${value}`;
 }
 
 function formatChange(quote: Quote): string {
 	const sign = quote.change >= 0 ? "+" : "";
-	return `${sign}${quote.change.toFixed(2)} (${sign}${quote.changePercent.toFixed(2)}%)`;
+	return `${sign}${formatMarketNumber(quote.change)} (${sign}${quote.changePercent.toFixed(2)}%)`;
+}
+
+function formatMarketNumber(value: number): string {
+	const absolute = Math.abs(value);
+	if (absolute === 0) return "0.00";
+	const magnitude = Math.floor(Math.log10(absolute));
+	const significantDecimals = 6 - magnitude - 1;
+	const formatted =
+		significantDecimals > 8
+			? value.toPrecision(6)
+			: value.toFixed(Math.max(2, significantDecimals));
+	return trimNumericZeros(formatted);
+}
+
+function trimNumericZeros(value: string): string {
+	const [coefficient, exponent] = value.split("e");
+	const [integer = value, fraction = ""] = coefficient?.split(".") ?? [value, ""];
+	let trimmedFraction = fraction;
+	const minimumFractionDigits = exponent === undefined ? 2 : 0;
+	while (trimmedFraction.length > minimumFractionDigits && trimmedFraction.endsWith("0")) {
+		trimmedFraction = trimmedFraction.slice(0, -1);
+	}
+	const trimmed = trimmedFraction ? `${integer}.${trimmedFraction}` : integer;
+	return exponent === undefined ? trimmed : `${trimmed}e${exponent}`;
 }
 
 function currencyPrefix(currency: string | undefined): string {

@@ -16,6 +16,13 @@ export interface QuoteResult {
 	error?: string;
 }
 
+export class QuoteRequestTimeoutError extends Error {
+	constructor() {
+		super("Quote request timed out.");
+		this.name = "QuoteRequestTimeoutError";
+	}
+}
+
 export async function fetchQuotes(
 	symbols: readonly string[],
 	signal: AbortSignal,
@@ -27,7 +34,10 @@ export async function fetchQuotes(
 				const quote = await fetchQuote(symbol, signal, fetchImplementation);
 				return { symbol, quote };
 			} catch (error) {
-				if (signal.aborted) throw error;
+				if (signal.aborted) {
+					if (!(signal.reason instanceof QuoteRequestTimeoutError)) throw error;
+					return { symbol, error: signal.reason.message };
+				}
 				return { symbol, error: errorMessage(error) };
 			}
 		}),

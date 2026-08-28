@@ -9,6 +9,7 @@ import { afterEach, test, vi } from "vitest";
 import type { SettingsWriter } from "../src/settings.js";
 import stockTicker, {
 	POLL_INTERVAL_MS,
+	REQUEST_TIMEOUT_MS,
 	SETTINGS_FILE_NAME,
 	type StockTickerDependencies,
 	settingsPath,
@@ -32,6 +33,7 @@ const identityTheme = {
 } as unknown as Theme;
 
 afterEach(async () => {
+	vi.useRealTimers();
 	vi.restoreAllMocks();
 	vi.unstubAllEnvs();
 	vi.unstubAllGlobals();
@@ -260,6 +262,31 @@ test("disables and hides an active widget immediately through the RPC menu", asy
 	};
 	assert.equal(settings.widgetEnabled, false);
 	rpc.assertConsumed();
+	await harness.emit("session_shutdown", current.ctx);
+});
+
+test("keeps completed quotes when another symbol reaches the shared timeout", async () => {
+	vi.useFakeTimers();
+	const fetchMock = vi.fn<typeof fetch>((input, init) => {
+		if (String(input).includes("NVDA")) return successfulResponse(input);
+		return new Promise((_resolve, reject) => {
+			const signal = init?.signal;
+			signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+		});
+	});
+	vi.stubGlobal("fetch", fetchMock);
+	const harness = createHarness();
+	const current = await createContext();
+	await writeFile(join(current.cwd, SETTINGS_FILE_NAME), '{"symbols":["NVDA","AAPL"]}\n');
+
+	await harness.emit("session_start", current.ctx);
+	assert.equal(fetchMock.mock.calls.length, 2);
+	await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
+
+	const frame = render(current.widgets.at(-1))?.join("\n") ?? "";
+	assert.match(frame, /NVDA \$110\.00/);
+	assert.match(frame, /AAPL unavailable/);
+	assert.match(frame, /updated/);
 	await harness.emit("session_shutdown", current.ctx);
 });
 

@@ -8,7 +8,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import { sanitizeTerminalText } from "@narumitw/pi-tui-kit/terminal-text";
-import { fetchQuotes } from "./quotes.js";
+import { fetchQuotes, QuoteRequestTimeoutError } from "./quotes.js";
 import {
 	formatTickerPlain,
 	mergeQuoteResults,
@@ -99,10 +99,8 @@ export default function stockTicker(
 
 		const controller = new AbortController();
 		requestController = controller;
-		let timedOut = false;
 		const timeout = setTimeout(() => {
-			timedOut = true;
-			controller.abort();
+			controller.abort(new QuoteRequestTimeoutError());
 		}, REQUEST_TIMEOUT_MS);
 		try {
 			const results = await fetchQuotes(symbols, controller.signal);
@@ -115,7 +113,7 @@ export default function stockTicker(
 			publish(ctx);
 		} catch {
 			if (
-				(!controller.signal.aborted || timedOut) &&
+				!controller.signal.aborted &&
 				ownsSession(ctx, expectedGeneration) &&
 				expectedCycle === cycleVersion
 			) {

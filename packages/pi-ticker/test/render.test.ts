@@ -46,6 +46,37 @@ test("renders Yahoo pence prices without treating them as pounds", () => {
 	assert.doesNotMatch(plain[1] ?? "", /£75/);
 });
 
+test("preserves meaningful precision for low-priced and FX quotes", () => {
+	const plain = formatTickerPlain({
+		items: [
+			{
+				symbol: "MICRO",
+				quote: {
+					...quote,
+					symbol: "MICRO",
+					price: 0.000012,
+					change: 0.000001,
+					changePercent: 9.09,
+				},
+			},
+			{
+				symbol: "EURUSD=X",
+				quote: {
+					...quote,
+					symbol: "EURUSD=X",
+					price: 1.08437,
+					change: 0.00123,
+					changePercent: 0.11,
+				},
+			},
+		],
+		loading: false,
+	});
+
+	assert.match(plain[1] ?? "", /MICRO \$0\.000012 \+0\.000001/);
+	assert.match(plain[2] ?? "", /EURUSD=X \$1\.08437 \+0\.00123/);
+});
+
 test("keeps the previous quote as stale when one refresh fails", () => {
 	const merged = mergeQuoteResults(
 		[{ symbol: "NVDA", quote }],

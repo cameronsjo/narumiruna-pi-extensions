@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { test, vi } from "vitest";
-import { fetchQuotes, parseQuote, QUOTE_ENDPOINT } from "../src/quotes.js";
+import {
+	fetchQuotes,
+	parseQuote,
+	QUOTE_ENDPOINT,
+	QuoteRequestTimeoutError,
+} from "../src/quotes.js";
 
 function response(payload: unknown, status = 200): Response {
 	return new Response(JSON.stringify(payload), {
@@ -55,6 +60,22 @@ test("fetches symbols independently and retains partial failures", async () => {
 	assert.match(String(fetchImplementation.mock.calls[0]?.[0]), new RegExp(`^${QUOTE_ENDPOINT}`));
 	assert.equal(results[0]?.quote?.symbol, "NVDA");
 	assert.match(results[1]?.error ?? "", /HTTP 503/);
+});
+
+test("retains settled quotes when another request reaches the shared timeout", async () => {
+	const controller = new AbortController();
+	const fetchImplementation = vi.fn<typeof fetch>(async (input, init) => {
+		if (String(input).includes("NVDA")) return response(quotePayload("NVDA"));
+		return new Promise((_resolve, reject) => {
+			init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+		});
+	});
+	const pending = fetchQuotes(["NVDA", "AAPL"], controller.signal, fetchImplementation);
+	controller.abort(new QuoteRequestTimeoutError());
+	const results = await pending;
+
+	assert.equal(results[0]?.quote?.symbol, "NVDA");
+	assert.equal(results[1]?.error, "Quote request timed out.");
 });
 
 test("rejects malformed quote payloads", () => {
