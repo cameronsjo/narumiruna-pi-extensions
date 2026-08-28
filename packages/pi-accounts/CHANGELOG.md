@@ -1,5 +1,11 @@
 # @narumitw/pi-accounts
 
+## 0.50.0
+
+### Minor Changes
+
+- ae12c77: Add named OAuth account management for xAI, Kimi For Coding, OpenRouter, and Radius.
+
 ## 0.49.11
 
 ### Patch Changes
