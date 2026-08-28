@@ -47,7 +47,7 @@ test("registers fixed ask and wait schemas and returns plain-text results", asyn
 	const tools = mock.tools as unknown as RegisteredTool[];
 	assert.deepEqual(
 		tools.map((tool) => tool.name),
-		["subagent-ask", "subagent-wait"],
+		["subagent_ask", "subagent_wait"],
 	);
 	assert.equal(tools[0]?.parameters.properties?.message?.maxLength, 50 * 1024);
 	for (const tool of tools) {

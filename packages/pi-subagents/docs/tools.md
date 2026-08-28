@@ -1,6 +1,6 @@
 # Pi Subagents tools
 
-## `subagent-spawn`
+## `subagent_spawn`
 
 | Parameter | Type | Required | Constraint / default |
 | --- | --- | --- | --- |
@@ -11,7 +11,7 @@
 
 Starts one task-specialized subagent job with the selected tool capabilities and returns its job ID immediately.
 
-The runtime always adds `subagent-ask` and `subagent-wait` to the selected tools.
+The runtime always adds `subagent_ask` and `subagent_wait` to the selected tools.
 
 The child inherits the main agent's effective provider and model at spawn time.
 
@@ -25,17 +25,17 @@ Unavailable or extension-only tool names throw before the job is queued.
 
 Throws without launching a child when the session broker is unavailable.
 
-## `subagent-inspect`
+## `subagent_inspect`
 
 No parameters.
 
-## `subagent-cancel`
+## `subagent_cancel`
 
 | Parameter | Type | Required | Constraint / default |
 | --- | --- | --- | --- |
-| `jobId` | `string` | Yes | Job ID returned by `subagent-spawn`. |
+| `jobId` | `string` | Yes | Job ID returned by `subagent_spawn`. |
 
-## `subagent-wait`
+## `subagent_wait`
 
 ### Main agent
 
@@ -50,14 +50,14 @@ Returns `{ jobId, state, timedOut: false, interrupted: true, reason: "subagent_m
 
 | Parameter | Type | Required | Constraint / default |
 | --- | --- | --- | --- |
-| `requestId` | `string` | Yes | Request ID returned by `subagent-ask`. |
+| `requestId` | `string` | Yes | Request ID returned by `subagent_ask`. |
 | `timeout` | `number` | No | Seconds; `> 0` through `2,147,483.647`; no default and does not cancel the request. |
 
 Returns the main agent's response as plain text.
 
 A timeout or caller cancellation throws and stops only that wait, so the child may wait for the same request again.
 
-## `subagent-ask`
+## `subagent_ask`
 
 Available only to subagents.
 
@@ -69,7 +69,7 @@ Returns a request ID immediately.
 
 Each job may have up to four unanswered or answered-but-not-consumed requests.
 
-## `subagent-reply`
+## `subagent_reply`
 
 Available only to the main agent.
 
