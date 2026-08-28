@@ -72,12 +72,17 @@ export const SUPPORTED_ADAPTERS: readonly UsageProviderAdapter[] = [
 		id: "deepseek",
 		displayName: "DeepSeek",
 		semantics: { kind: "api-key", label: "DeepSeek API balance" },
-		async query(auth, signal, timeoutMs) {
+		async query(auth, signal, timeoutMs, guard) {
+			if (!guard) throw new Error("DeepSeek API balance requires request-boundary revalidation.");
+			const startedAt = Date.now();
+			await guard();
+			const remainingMs = timeoutMs - (Date.now() - startedAt);
+			if (remainingMs <= 0) throw new Error("Timed out while revalidating DeepSeek runtime auth.");
 			const payload = await fetchProviderJson(
 				DEEPSEEK_BALANCE_URL,
 				auth,
 				signal,
-				timeoutMs,
+				remainingMs,
 				"DeepSeek API balance endpoint",
 				{ redirect: "error" },
 			);
@@ -278,11 +283,14 @@ export async function resolveUsageAuth(
 	// SAFETY: Pi exposes the required auth methods at runtime, and checks below narrow them before use.
 	const registry = ctx.modelRegistry as unknown as UsageAuthRegistry;
 	let modelAuth: RequestAuth | undefined;
-	if (ctx.model?.provider === adapter.id && typeof registry.getApiKeyAndHeaders === "function") {
-		const result = await registry.getApiKeyAndHeaders(ctx.model);
+	const currentModel = ctx.model?.provider === adapter.id ? ctx.model : undefined;
+	const resolveCurrentModelAuth = async (): Promise<RequestAuth | undefined> => {
+		if (!currentModel || typeof registry.getApiKeyAndHeaders !== "function") return undefined;
+		const result = await registry.getApiKeyAndHeaders(currentModel);
 		if (!result.ok) throw new Error(redactUsageError(result.error));
-		if (authorizationFrom(result)) modelAuth = result;
-	}
+		return authorizationFrom(result) ? result : undefined;
+	};
+	if (adapter.id !== "deepseek") modelAuth = await resolveCurrentModelAuth();
 	if (typeof registry.getProviderAuth !== "function") {
 		throw new Error("pi-usage requires Pi 0.81.0 or newer to validate resolved provider auth.");
 	}
@@ -295,6 +303,9 @@ export async function resolveUsageAuth(
 			`${adapter.displayName} usage cannot send a proxy-resolved credential to the official usage endpoint.`,
 		);
 	}
+	// DeepSeek reads selected-model auth last so a rotation during provider-origin validation
+	// cannot leave the earlier credential queued for the balance request.
+	if (adapter.id === "deepseek") modelAuth = await resolveCurrentModelAuth();
 	const auth = modelAuth ?? providerResult?.auth;
 	if (!auth) return undefined;
 	if (adapter.id === "github-copilot") {

@@ -436,12 +436,13 @@ test("explicit all-provider query retains DeepSeek balance, Kimi, and partial fa
 	t.onTestFinished(() => {
 		globalThis.fetch = originalFetch;
 	});
-	globalThis.fetch = async (input) => {
-		if (
-			String(input).endsWith("/api/v1/key") ||
-			String(input).endsWith("/coding/v1/usages") ||
-			String(input).endsWith("/user/balance")
-		) {
+	const deepSeekFetchedKeys: string[] = [];
+	globalThis.fetch = async (input, init) => {
+		if (String(input).endsWith("/user/balance")) {
+			deepSeekFetchedKeys.push(new Headers(init?.headers).get("authorization") ?? "");
+			return usageFetch(input);
+		}
+		if (String(input).endsWith("/api/v1/key") || String(input).endsWith("/coding/v1/usages")) {
 			return usageFetch(input);
 		}
 		return new Response("backend unavailable", { status: 503, statusText: "Unavailable" });
@@ -450,6 +451,7 @@ test("explicit all-provider query retains DeepSeek balance, Kimi, and partial fa
 	const titles: string[] = [];
 	const choices = ["View all configured providers…", "Close"];
 	const configured = new Set(["openrouter", "openai-codex", "kimi-coding", "deepseek"]);
+	let deepSeekAuthLookups = 0;
 	const mock = createMockPi();
 	usageExtension(mock.pi);
 	const command = mock.commands.get("usage");
@@ -463,12 +465,18 @@ test("explicit all-provider query retains DeepSeek balance, Kimi, and partial fa
 			return choices.shift();
 		},
 		modelRegistry: {
-			getProviderAuth: async (provider: string) => ({
-				auth: {
-					apiKey: `${provider}-key`,
-					...(provider === "kimi-coding" ? { baseUrl: kimiModel.baseUrl } : {}),
-				},
-			}),
+			getProviderAuth: async (provider: string) => {
+				if (provider === "deepseek") deepSeekAuthLookups += 1;
+				return {
+					auth: {
+						apiKey:
+							provider === "deepseek" && deepSeekAuthLookups === 1
+								? "deepseek-account-a"
+								: `${provider}-key`,
+						...(provider === "kimi-coding" ? { baseUrl: kimiModel.baseUrl } : {}),
+					},
+				};
+			},
 			getAvailable: () => [openRouterModel, codexModel, kimiModel, deepSeekModel],
 			getAll: () => [openRouterModel, codexModel, kimiModel, deepSeekModel],
 			getProviderAuthStatus: (provider: string) => ({
@@ -488,6 +496,7 @@ test("explicit all-provider query retains DeepSeek balance, Kimi, and partial fa
 	assert.match(titles[1] ?? "", /1 of 100 used · 99% left/);
 	assert.match(titles[1] ?? "", /DeepSeek API Balance · Configured/);
 	assert.match(titles[1] ?? "", /Total balance:\s+USD 12\.50/u);
+	assert.deepEqual(deepSeekFetchedKeys, ["Bearer deepseek-key"]);
 	assert.match(titles[1] ?? "", /query failed/i);
 	assert.equal(statuses.get("usage"), "openrouter $75.00 left");
 });
@@ -933,6 +942,60 @@ test("current DeepSeek API balance follows account changes and clears status", a
 		ctx,
 	);
 	assert.equal(statuses.get("usage"), undefined);
+	mock.events.get("session_shutdown")?.[0]?.({}, ctx);
+	assert.equal(statuses.get("usage"), undefined);
+});
+
+test("DeepSeek account rotation at the request boundary retries without querying the stale key", async (t) => {
+	const originalFetch = globalThis.fetch;
+	t.onTestFinished(() => {
+		globalThis.fetch = originalFetch;
+	});
+	let authLookups = 0;
+	const fetchedKeys: string[] = [];
+	globalThis.fetch = async (_input, init) => {
+		fetchedKeys.push(new Headers(init?.headers).get("authorization") ?? "");
+		return new Response(
+			JSON.stringify({
+				is_available: true,
+				balance_infos: [
+					{
+						currency: "USD",
+						total_balance: "7.25",
+						granted_balance: "2.50",
+						topped_up_balance: "4.75",
+					},
+				],
+			}),
+			{ status: 200 },
+		);
+	};
+	const mock = createMockPi();
+	usageExtension(mock.pi);
+	const { ctx, statuses } = createMockContext({
+		model: deepSeekModel,
+		modelRegistry: {
+			getProviderAuth: async () => {
+				authLookups += 1;
+				return {
+					auth: {
+						apiKey: authLookups === 1 ? "deepseek-account-a" : "deepseek-account-b",
+						baseUrl: deepSeekModel.baseUrl,
+					},
+				};
+			},
+			getAvailable: () => [deepSeekModel],
+			getAll: () => [deepSeekModel],
+		},
+	});
+
+	mock.events.get("session_start")?.[0]?.({}, ctx);
+	await settle();
+	await settle();
+
+	assert.ok(authLookups >= 5);
+	assert.deepEqual(fetchedKeys, ["Bearer deepseek-account-b"]);
+	assert.equal(statuses.get("usage"), "deepseek USD 7.25");
 	mock.events.get("session_shutdown")?.[0]?.({}, ctx);
 	assert.equal(statuses.get("usage"), undefined);
 });

@@ -10,6 +10,7 @@ import {
 	type ResolvedUsageAuth,
 	resolveUsageAuth,
 	SUPPORTED_ADAPTERS,
+	type UsageProviderAdapter,
 } from "../src/index.js";
 
 const DEEPSEEK_MODEL = {
@@ -19,8 +20,13 @@ const DEEPSEEK_MODEL = {
 	baseUrl: "https://api.deepseek.com",
 };
 
-const adapter = SUPPORTED_ADAPTERS.find((candidate) => candidate.id === "deepseek");
-assert.ok(adapter);
+function deepSeekAdapter(): UsageProviderAdapter {
+	const candidate = SUPPORTED_ADAPTERS.find((adapter) => adapter.id === "deepseek");
+	assert.ok(candidate);
+	return candidate;
+}
+
+const adapter = deepSeekAdapter();
 
 function balance(
 	currency: "CNY" | "USD",
@@ -51,6 +57,10 @@ function deepSeekAuth(secret = "deepseek-test-secret"): ResolvedUsageAuth {
 		secrets: [secret, `Bearer ${secret}`],
 		model: DEEPSEEK_MODEL as never,
 	};
+}
+
+function queryDeepSeek(signal = new AbortController().signal, timeoutMs = 1_000) {
+	return queryProviderUsage(adapter, deepSeekAuth(), signal, timeoutMs, async () => undefined);
 }
 
 test("DeepSeek API balance preserves exact separate currency amounts and deterministic display", () => {
@@ -165,6 +175,30 @@ test("DeepSeek API balance rejects malformed, ambiguous, or hostile response fie
 	}
 });
 
+test("DeepSeek reads current model auth after provider validation when the key rotates", async () => {
+	let activeKey = "stale-deepseek-key";
+	const { ctx } = createMockContext({
+		model: DEEPSEEK_MODEL,
+		modelRegistry: {
+			getApiKeyAndHeaders: async () => {
+				const resolvedKey = activeKey;
+				await Promise.resolve();
+				return { ok: true, apiKey: resolvedKey };
+			},
+			getProviderAuth: async () => {
+				activeKey = "current-deepseek-key";
+				return { auth: { apiKey: activeKey, baseUrl: DEEPSEEK_MODEL.baseUrl } };
+			},
+			getAvailable: () => [DEEPSEEK_MODEL],
+			getAll: () => [DEEPSEEK_MODEL],
+		},
+	});
+
+	const auth = await resolveUsageAuth(ctx, adapter);
+	assert.deepEqual(auth?.headers, { Authorization: "Bearer current-deepseek-key" });
+	assert.ok(!auth?.secrets.includes("stale-deepseek-key"));
+});
+
 test("DeepSeek runtime auth accepts only official model and resolved-auth origins", async () => {
 	const { ctx: officialContext } = createMockContext({
 		model: DEEPSEEK_MODEL,
@@ -228,6 +262,52 @@ test("DeepSeek runtime auth accepts only official model and resolved-auth origin
 	}
 });
 
+test("DeepSeek transport revalidates before network access", async () => {
+	const fetchMock = vi.spyOn(globalThis, "fetch");
+	try {
+		await assert.rejects(
+			() => queryProviderUsage(adapter, deepSeekAuth(), new AbortController().signal, 1_000),
+			/request-boundary revalidation/iu,
+		);
+		await assert.rejects(
+			() =>
+				queryProviderUsage(
+					adapter,
+					deepSeekAuth(),
+					new AbortController().signal,
+					1_000,
+					async () => {
+						throw Object.assign(new Error("stale auth"), { name: "AbortError" });
+					},
+				),
+			(error: unknown) => error instanceof Error && error.name === "AbortError",
+		);
+		assert.equal(fetchMock.mock.calls.length, 0);
+	} finally {
+		fetchMock.mockRestore();
+	}
+});
+
+test("DeepSeek transport counts request-boundary revalidation against its deadline", async () => {
+	const fetchMock = vi.spyOn(globalThis, "fetch");
+	try {
+		await assert.rejects(
+			() =>
+				queryProviderUsage(
+					adapter,
+					deepSeekAuth(),
+					new AbortController().signal,
+					5,
+					() => new Promise<void>((resolve) => setTimeout(resolve, 10)),
+				),
+			/timed out.*revalidating/iu,
+		);
+		assert.equal(fetchMock.mock.calls.length, 0);
+	} finally {
+		fetchMock.mockRestore();
+	}
+});
+
 test("DeepSeek transport uses only the fixed balance endpoint and rejects redirects", async () => {
 	const requests: Array<{ url: string; init?: RequestInit }> = [];
 	const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -236,12 +316,7 @@ test("DeepSeek transport uses only the fixed balance endpoint and rejects redire
 	});
 	vi.stubGlobal("fetch", fetchMock);
 	try {
-		const report = await queryProviderUsage(
-			adapter,
-			deepSeekAuth(),
-			new AbortController().signal,
-			1_000,
-		);
+		const report = await queryDeepSeek();
 		assert.equal(report.providerId, "deepseek");
 		assert.equal(requests.length, 1);
 		assert.equal(requests[0]?.url, "https://api.deepseek.com/user/balance");
@@ -256,10 +331,7 @@ test("DeepSeek transport uses only the fixed balance endpoint and rejects redire
 		const redirected = new Response(JSON.stringify(availableBalance()), { status: 200 });
 		Object.defineProperty(redirected, "redirected", { value: true });
 		fetchMock.mockResolvedValueOnce(redirected);
-		await assert.rejects(
-			() => queryProviderUsage(adapter, deepSeekAuth(), new AbortController().signal, 1_000),
-			/refused a redirected response/iu,
-		);
+		await assert.rejects(() => queryDeepSeek(), /refused a redirected response/iu);
 	} finally {
 		vi.unstubAllGlobals();
 	}
@@ -269,21 +341,17 @@ test("DeepSeek transport bounds timeout, cancellation, bodies, JSON, and redacte
 	const fetchMock = vi.fn(
 		(_input: string | URL | Request, init?: RequestInit) =>
 			new Promise<Response>((_resolve, reject) => {
-				init?.signal?.addEventListener(
-					"abort",
-					() => reject(Object.assign(new Error("aborted"), { name: "AbortError" })),
-					{ once: true },
-				);
+				const rejectAbort = () =>
+					reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+				if (init?.signal?.aborted) rejectAbort();
+				else init?.signal?.addEventListener("abort", rejectAbort, { once: true });
 			}),
 	);
 	vi.stubGlobal("fetch", fetchMock);
 	try {
-		await assert.rejects(
-			() => queryProviderUsage(adapter, deepSeekAuth(), new AbortController().signal, 5),
-			/Timed out/iu,
-		);
+		await assert.rejects(() => queryDeepSeek(undefined, 5), /Timed out/iu);
 		const controller = new AbortController();
-		const cancelled = queryProviderUsage(adapter, deepSeekAuth(), controller.signal, 1_000);
+		const cancelled = queryDeepSeek(controller.signal);
 		controller.abort();
 		await assert.rejects(
 			() => cancelled,
@@ -302,7 +370,7 @@ test("DeepSeek transport bounds timeout, cancellation, bodies, JSON, and redacte
 			),
 		);
 		const bodyController = new AbortController();
-		const stalledBody = queryProviderUsage(adapter, deepSeekAuth(), bodyController.signal, 1_000);
+		const stalledBody = queryDeepSeek(bodyController.signal);
 		await new Promise<void>((resolve) => setImmediate(resolve));
 		bodyController.abort();
 		await assert.rejects(
@@ -312,15 +380,9 @@ test("DeepSeek transport bounds timeout, cancellation, bodies, JSON, and redacte
 		assert.equal(cancelledBodies, 1);
 
 		fetchMock.mockResolvedValueOnce(new Response("x".repeat(70_000), { status: 200 }));
-		await assert.rejects(
-			() => queryProviderUsage(adapter, deepSeekAuth(), new AbortController().signal, 1_000),
-			/exceeded.*bytes/iu,
-		);
+		await assert.rejects(() => queryDeepSeek(), /exceeded.*bytes/iu);
 		fetchMock.mockResolvedValueOnce(new Response("{broken", { status: 200 }));
-		await assert.rejects(
-			() => queryProviderUsage(adapter, deepSeekAuth(), new AbortController().signal, 1_000),
-			/invalid JSON/iu,
-		);
+		await assert.rejects(() => queryDeepSeek(), /invalid JSON/iu);
 
 		for (const status of [401, 403]) {
 			fetchMock.mockResolvedValueOnce(
@@ -330,7 +392,7 @@ test("DeepSeek transport bounds timeout, cancellation, bodies, JSON, and redacte
 				}),
 			);
 			await assert.rejects(
-				() => queryProviderUsage(adapter, deepSeekAuth(), new AbortController().signal, 1_000),
+				() => queryDeepSeek(),
 				(error: unknown) =>
 					error instanceof Error &&
 					error.message.includes(String(status)) &&
