@@ -582,6 +582,58 @@ test("sends a queued main request to a running child and delivers one child resp
 	await cancelJob(mock, context, String(spawned.details.jobId));
 });
 
+test("aborts an in-flight main RPC send and rolls back its broker request", async () => {
+	let sendCount = 0;
+	let resolveSendStarted!: () => void;
+	const sendStarted = new Promise<void>((resolve) => {
+		resolveSendStarted = resolve;
+	});
+	const { mock, context } = await setup({
+		runChild: async (candidate) => {
+			candidate.onControl?.({
+				async send(_message, signal) {
+					sendCount++;
+					if (sendCount > 1) return;
+					assert.ok(signal);
+					resolveSendStarted();
+					await new Promise<void>((_resolve, reject) => {
+						signal.addEventListener(
+							"abort",
+							() => reject(new DOMException("Synthetic RPC cancellation", "AbortError")),
+							{ once: true },
+						);
+					});
+				},
+			});
+			return waitForCancellation(candidate);
+		},
+	});
+	const spawned = await spawnJob(mock, context, "Long RPC send");
+	const controller = new AbortController();
+	const pending = tool(mock, "subagent_send").execute(
+		"cancel-in-flight",
+		{ recipient: spawned.details.jobId, message: "Cancel this request" },
+		controller.signal,
+		undefined,
+		context.ctx,
+	);
+	await sendStarted;
+	controller.abort();
+	await assert.rejects(pending, (error: Error) => error.name === "AbortError");
+	for (let index = 0; index < 4; index++) {
+		const sent = await tool(mock, "subagent_send").execute(
+			`after-cancel-${index}`,
+			{ recipient: spawned.details.jobId, message: `Request ${index}` },
+			undefined,
+			undefined,
+			context.ctx,
+		);
+		assert.equal(sent.details.accepted, true);
+	}
+	assert.equal(sendCount, 5);
+	await cancelJob(mock, context, String(spawned.details.jobId));
+});
+
 test("rolls back failed or cancelled main sends and rejects invalid selectors", async () => {
 	let failDelivery = true;
 	let request!: ChildRequest;

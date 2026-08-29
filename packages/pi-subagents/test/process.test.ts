@@ -186,6 +186,52 @@ async function handle(command) {
 	assert.equal((await work).state, "cancelled");
 });
 
+test("runChild rejects asynchronous RPC stdin write errors without an unhandled error", async () => {
+	installFakePi(`
+async function handle(command) {
+  if (command.type !== "prompt") return;
+  process.stdin.on("error", () => undefined);
+  fs.closeSync(0);
+  respond(command);
+}
+setInterval(() => {}, 1000);
+`);
+	const controller = new AbortController();
+	let resolveControl!: (control: ChildControl) => void;
+	const controlReady = new Promise<ChildControl>((resolve) => {
+		resolveControl = resolve;
+	});
+	const work = runChild(childRequest({ signal: controller.signal, onControl: resolveControl }));
+	const control = await controlReady;
+	await assert.rejects(() => control.send("question after stdin closed"), /EPIPE|stdin|write/iu);
+	controller.abort();
+	assert.equal((await work).state, "cancelled");
+});
+
+test("runChild aborts an in-flight RPC steering command", async () => {
+	installFakePi(`
+async function handle(command) {
+  if (command.type === "prompt") respond(command);
+}
+setInterval(() => {}, 1000);
+`);
+	const processController = new AbortController();
+	let resolveControl!: (control: ChildControl) => void;
+	const controlReady = new Promise<ChildControl>((resolve) => {
+		resolveControl = resolve;
+	});
+	const work = runChild(
+		childRequest({ signal: processController.signal, onControl: resolveControl }),
+	);
+	const control = await controlReady;
+	const sendController = new AbortController();
+	const pending = control.send("unacknowledged question", sendController.signal);
+	sendController.abort();
+	await assert.rejects(pending, (error: Error) => error.name === "AbortError");
+	processController.abort();
+	assert.equal((await work).state, "cancelled");
+});
+
 test("runChild bounds child result text below the complete tool-output budget", async () => {
 	installFakePi(`
 async function handle(command) {

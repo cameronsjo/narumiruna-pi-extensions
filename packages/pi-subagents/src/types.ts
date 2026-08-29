@@ -57,7 +57,7 @@ export interface BrokerCredentials {
 }
 
 export interface ChildControl {
-	send(message: string): Promise<void>;
+	send(message: string, signal?: AbortSignal): Promise<void>;
 }
 
 export interface ChildRequest {

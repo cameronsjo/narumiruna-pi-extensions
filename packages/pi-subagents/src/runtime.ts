@@ -234,7 +234,8 @@ export class SubagentRuntime {
 			if (isTerminal(job.state) || job.stopRequest || job.generation !== this.generation) {
 				throw new Error("Subagent job is no longer active.");
 			}
-			await control.send(mainRequestMessage(job.jobId, acknowledgement.requestId, message));
+			await control.send(mainRequestMessage(job.jobId, acknowledgement.requestId, message), signal);
+			throwIfAborted(signal, "Subagent send was cancelled");
 		})();
 		job.sendQueue = operation.catch(() => undefined);
 		try {

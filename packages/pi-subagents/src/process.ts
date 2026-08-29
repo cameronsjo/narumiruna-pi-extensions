@@ -48,6 +48,8 @@ interface PendingRpcCommand {
 	reject: (error: Error) => void;
 	timer: NodeJS.Timeout;
 	onAccepted?: () => void;
+	signal?: AbortSignal;
+	onAbort?: () => void;
 }
 
 export function resolveTimeoutMs(timeout: number | undefined): number | undefined {
@@ -119,11 +121,44 @@ async function executeProcess(
 	let malformedEvents = 0;
 	let rpcCounter = 0;
 	const pendingCommands = new Map<string, PendingRpcCommand>();
+	let rpcInputError: Error | undefined;
 	let sendCommand: (
 		command: { type: "prompt" | "steer"; message: string },
 		onAccepted?: () => void,
+		signal?: AbortSignal,
 	) => Promise<void> = () => Promise.reject(new Error("Subagent RPC process is unavailable."));
 	let onAgentSettled: () => void = () => undefined;
+
+	const takePendingCommand = (id: string): PendingRpcCommand | undefined => {
+		const pending = pendingCommands.get(id);
+		if (!pending) return undefined;
+		pendingCommands.delete(id);
+		clearTimeout(pending.timer);
+		if (pending.signal && pending.onAbort) {
+			pending.signal.removeEventListener("abort", pending.onAbort);
+		}
+		return pending;
+	};
+	const rejectPendingCommand = (id: string, error: Error) => {
+		takePendingCommand(id)?.reject(error);
+	};
+	const rejectPendingCommands = (error: Error) => {
+		for (const id of [...pendingCommands.keys()]) rejectPendingCommand(id, error);
+	};
+	const resolvePendingCommand = (id: string) => {
+		const pending = takePendingCommand(id);
+		if (!pending) return;
+		try {
+			pending.onAccepted?.();
+			pending.resolve();
+		} catch (error) {
+			pending.reject(error instanceof Error ? error : new Error(String(error)));
+		}
+	};
+	const failRpcInput = (error: Error) => {
+		rpcInputError ??= error;
+		rejectPendingCommands(rpcInputError);
+	};
 
 	const decoder = new JsonLineDecoder(
 		(value) => {
@@ -131,17 +166,11 @@ async function executeProcess(
 			if (event.type === "response" && typeof event.id === "string") {
 				const pending = pendingCommands.get(event.id);
 				if (!pending) return;
-				pendingCommands.delete(event.id);
-				clearTimeout(pending.timer);
 				if (event.success === true) {
-					try {
-						pending.onAccepted?.();
-						pending.resolve();
-					} catch (error) {
-						pending.reject(error instanceof Error ? error : new Error(String(error)));
-					}
+					resolvePendingCommand(event.id);
 				} else {
-					pending.reject(
+					rejectPendingCommand(
+						event.id,
 						new Error(
 							typeof event.error === "string"
 								? event.error
@@ -200,13 +229,6 @@ async function executeProcess(
 		let escalation: NodeJS.Timeout | undefined;
 		let termination: Promise<void> | undefined;
 
-		const rejectPendingCommands = (error: Error) => {
-			for (const [id, pending] of pendingCommands) {
-				pendingCommands.delete(id);
-				clearTimeout(pending.timer);
-				pending.reject(error);
-			}
-		};
 		const finish = (code: number, launchError?: string) => {
 			if (settled || finishRequested) return;
 			finishRequested = true;
@@ -277,34 +299,53 @@ async function executeProcess(
 			return;
 		}
 
-		sendCommand = (command, onAccepted) => {
+		process.stdin?.on("error", failRpcInput);
+		sendCommand = (command, onAccepted, signal) => {
 			if (settled || terminating || process.exitCode !== null) {
 				return Promise.reject(new Error("Subagent RPC process is no longer active."));
 			}
+			if (signal?.aborted) {
+				return Promise.reject(abortError("Subagent RPC command was cancelled."));
+			}
+			if (rpcInputError) return Promise.reject(rpcInputError);
 			const stdin = process.stdin;
 			if (!stdin || stdin.destroyed || !stdin.writable) {
 				return Promise.reject(new Error("Subagent RPC stdin is unavailable."));
 			}
 			const id = `rpc_${++rpcCounter}`;
 			return new Promise<void>((resolveCommand, rejectCommand) => {
-				const timer = setTimeout(() => {
-					pendingCommands.delete(id);
-					rejectCommand(new Error(`Subagent RPC ${command.type} response timed out.`));
-				}, RPC_RESPONSE_TIMEOUT_MS);
+				const timer = setTimeout(
+					() =>
+						rejectPendingCommand(id, new Error(`Subagent RPC ${command.type} response timed out.`)),
+					RPC_RESPONSE_TIMEOUT_MS,
+				);
 				timer.unref();
-				pendingCommands.set(id, {
+				const pending: PendingRpcCommand = {
 					command: command.type,
 					resolve: resolveCommand,
 					reject: rejectCommand,
 					timer,
 					onAccepted,
-				});
+					signal,
+				};
+				if (signal) {
+					pending.onAbort = () =>
+						rejectPendingCommand(id, abortError("Subagent RPC command was cancelled."));
+				}
+				pendingCommands.set(id, pending);
+				if (signal && pending.onAbort) {
+					signal.addEventListener("abort", pending.onAbort, { once: true });
+					if (signal.aborted) {
+						pending.onAbort();
+						return;
+					}
+				}
 				try {
-					stdin.write(`${JSON.stringify({ id, ...command })}\n`);
+					stdin.write(`${JSON.stringify({ id, ...command })}\n`, (error) => {
+						if (error) failRpcInput(error);
+					});
 				} catch (error) {
-					pendingCommands.delete(id);
-					clearTimeout(timer);
-					rejectCommand(error instanceof Error ? error : new Error(String(error)));
+					failRpcInput(error instanceof Error ? error : new Error(String(error)));
 				}
 			});
 		};
@@ -314,28 +355,32 @@ async function executeProcess(
 		process.once("spawn", () => {
 			spawned = true;
 			if (settled || cancelled) return;
-			void sendCommand({ type: "prompt", message: `Task: ${request.task}` }, () => {
-				if (settled || terminating || request.signal.aborted) {
-					throw new Error("Subagent RPC prompt was superseded.");
-				}
-				ready = true;
-				if (timeoutMs !== undefined) {
-					deadline = setTimeout(() => {
-						timedOut = true;
-						terminate(124);
-					}, timeoutMs);
-					deadline.unref();
-				}
-				const control: ChildControl = {
-					send: async (message) => {
-						if (!ready || completed || terminating) {
-							throw new Error("Subagent job is no longer accepting messages.");
-						}
-						await sendCommand({ type: "steer", message });
-					},
-				};
-				request.onControl?.(control);
-			}).catch((error) => {
+			void sendCommand(
+				{ type: "prompt", message: `Task: ${request.task}` },
+				() => {
+					if (settled || terminating || request.signal.aborted) {
+						throw new Error("Subagent RPC prompt was superseded.");
+					}
+					ready = true;
+					if (timeoutMs !== undefined) {
+						deadline = setTimeout(() => {
+							timedOut = true;
+							terminate(124);
+						}, timeoutMs);
+						deadline.unref();
+					}
+					const control: ChildControl = {
+						send: async (message, signal) => {
+							if (!ready || completed || terminating) {
+								throw new Error("Subagent job is no longer accepting messages.");
+							}
+							await sendCommand({ type: "steer", message }, undefined, signal);
+						},
+					};
+					request.onControl?.(control);
+				},
+				request.signal,
+			).catch((error) => {
 				if (settled || terminating) return;
 				errorMessage = truncateText(
 					error instanceof Error ? error.message : String(error),
@@ -540,6 +585,12 @@ function killImmediateChild(process: ChildProcess): void {
 	} catch {
 		// The process may already be terminal.
 	}
+}
+
+function abortError(message: string): Error {
+	const error = new Error(message);
+	error.name = "AbortError";
+	return error;
 }
 
 function cancelledResult(
