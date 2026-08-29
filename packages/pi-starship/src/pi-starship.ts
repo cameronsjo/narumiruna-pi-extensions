@@ -5,7 +5,7 @@ import {
 	getAgentDir,
 	type ReadonlyFooterDataProvider,
 } from "@earendil-works/pi-coding-agent";
-import { wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { getCapabilities, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { completeStarshipArguments } from "./command-contract.js";
 import type { StarshipCommandOptions } from "./commands.js";
 import {
@@ -282,7 +282,7 @@ export default function piStarship(pi: ExtensionAPI, options: PiStarshipOptions 
 			runtime.renderPreview = (preview, width) => {
 				const snapshot = runtimeSnapshot(ctx, footerData, runtime);
 				return wrapFormattedStatusline(
-					renderStatusline(preview.config, snapshot, width).ansi,
+					renderStatusline(preview.config, snapshot, width, getCapabilities().trueColor).ansi,
 					width,
 				);
 			};
@@ -337,7 +337,7 @@ export default function piStarship(pi: ExtensionAPI, options: PiStarshipOptions 
 					if (!current) return [];
 					const snapshot = runtimeSnapshot(ctx, footerData, runtime);
 					return wrapFormattedStatusline(
-						renderStatusline(current.config, snapshot, width).ansi,
+						renderStatusline(current.config, snapshot, width, getCapabilities().trueColor).ansi,
 						width,
 					);
 				},

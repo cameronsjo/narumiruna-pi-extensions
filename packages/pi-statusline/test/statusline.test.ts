@@ -12,7 +12,7 @@ import fs, {
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { getCapabilities, setCapabilities, visibleWidth } from "@earendil-works/pi-tui";
 import { afterAll, test } from "vitest";
 import { createMockContext, createMockPi } from "../../../test/support.js";
 import { consumeStatuslineSettingsNotice } from "../src/settings.js";
@@ -148,9 +148,53 @@ test("statusline renders PR context inline only when a branch is available", asy
 
 		branch = "feature";
 		statuses.set("github-pr", "PR #123: checks failing (2), approved, 5 comments");
-		assert.match(footer.render(300).slice(1).join(" "), /PR/);
+		const plainLines = footer.render(300);
+		assert.ok(plainLines[0]?.includes("🌿 feature (#123 · 2 failing)"));
+		assert.equal(plainLines.length, 1);
 	} finally {
 		footer.dispose();
+	}
+});
+
+test("statusline honors the effective true-color capability", async () => {
+	const previousCapabilities = getCapabilities();
+	setCapabilities({ ...previousCapabilities, trueColor: false });
+	const mock = createMockPi();
+	statusline(mock.pi);
+	const context = createMockContext({ mode: "tui" });
+	let footer: { render(width: number): string[]; dispose(): void } | undefined;
+
+	try {
+		await emit(mock.events, "session_start", {}, context.ctx);
+		const footerFactory = context.footer as (
+			tui: { requestRender(): void },
+			theme: { fg(color: string, text: string): string; bold(text: string): string },
+			footerData: {
+				getGitBranch(): string | null;
+				getExtensionStatuses(): ReadonlyMap<string, string>;
+				onBranchChange(callback: () => void): () => void;
+			},
+		) => { render(width: number): string[]; dispose(): void };
+		footer = footerFactory(
+			{ requestRender() {} },
+			{ fg: (_color, text) => text, bold: (text) => text },
+			{
+				getGitBranch: () => null,
+				getExtensionStatuses: () => new Map(),
+				onBranchChange: () => () => undefined,
+			},
+		);
+		const rendered = footer.render(200).join("\n");
+		assert.equal(rendered.includes("\u001b[38;2;"), false);
+		assert.equal(rendered.includes("\u001b[48;2;"), false);
+		assert.equal(rendered.includes("\u001b[38;5;") || rendered.includes("\u001b[48;5;"), true);
+	} finally {
+		footer?.dispose();
+		try {
+			await emit(mock.events, "session_shutdown", {}, context.ctx);
+		} finally {
+			setCapabilities(previousCapabilities);
+		}
 	}
 });
 
@@ -614,6 +658,15 @@ test("prContextFromStatuses chooses one actionable state by precedence", () => {
 	assert.equal(context("checks passing"), `${link} · checks passing`);
 	assert.equal(context("no checks"), `${link} · no checks`);
 	assert.equal(context("unknown"), undefined);
+	assert.equal(
+		prContextFromStatuses(new Map([["github-pr", "PR #123: checks failing (2), approved"]])),
+		"#123 · 2 failing",
+	);
+	assert.equal(
+		prContextFromStatuses(new Map([["github-pr", "PR #123\u001b[31m: checks passing"]])),
+		undefined,
+	);
+	assert.equal(prContextFromStatuses(new Map([["github-pr", "PR gh missing"]])), undefined);
 });
 
 test("Git status remains available when repository-root discovery fails", async () => {

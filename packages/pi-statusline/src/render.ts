@@ -47,6 +47,7 @@ export function renderStatusline(
 	_theme: Theme,
 	config: StatuslineConfig,
 	runtime: RuntimeState,
+	trueColor = true,
 ): string {
 	if (width <= 0) return "";
 
@@ -76,7 +77,7 @@ export function renderStatusline(
 		segments.push(...row.segments);
 	}
 
-	return renderPowerlineStatusline(width, segments, config);
+	return renderPowerlineStatusline(width, segments, config, trueColor);
 }
 
 export function renderExtensionStatusline(
@@ -86,6 +87,7 @@ export function renderExtensionStatusline(
 	config: StatuslineConfig,
 	runtime: RuntimeState,
 	mainLine: string,
+	trueColor = true,
 ): string[] {
 	const statuses = footerData.getExtensionStatuses();
 	const prContext = prContextFromStatuses(statuses);
@@ -96,6 +98,7 @@ export function renderExtensionStatusline(
 		config,
 		runtime,
 		rendersPrInline ? GITHUB_PR_STATUS_KEYS : undefined,
+		trueColor,
 	);
 	return wrapExtensionStatusline(status, width);
 }
@@ -305,11 +308,17 @@ export function prLinkFromStatuses(statuses: ReadonlyMap<string, string>): strin
 
 export function prContextFromStatuses(statuses: ReadonlyMap<string, string>): string | undefined {
 	const value = statuses.get(GITHUB_PR_KEY);
+	if (!value) return undefined;
 	const link = prLinkFromStatuses(statuses);
-	if (!value || !link) return undefined;
+	const reference = link ?? plainPrReference(value);
+	if (!reference) return undefined;
 
-	const state = compactPrState(value.replace(link, ""));
-	return state ? `${link} · ${state}` : undefined;
+	const state = compactPrState(link ? value.replace(link, "") : value);
+	return state ? `${reference} · ${state}` : undefined;
+}
+
+function plainPrReference(value: string): string | undefined {
+	return /^PR\s+(#\d+):/u.exec(value)?.[1];
 }
 
 function compactPrState(value: string): string | undefined {

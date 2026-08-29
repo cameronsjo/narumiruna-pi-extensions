@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { getCapabilities, setCapabilities, visibleWidth } from "@earendil-works/pi-tui";
 import { createTuiHarness } from "@narumitw/pi-tui-kit/testing";
 import { afterAll, test, vi } from "vitest";
 import { createMockContext, createMockPi } from "../../../test/support.js";
@@ -103,6 +103,38 @@ test("non-TUI sessions install no footer and execute no Git or GitHub subprocess
 	await emit(mock.events, "tool_execution_end", { toolName: "read" }, context.ctx);
 	assert.equal(context.footer, undefined);
 	assert.equal(calls, 0);
+});
+
+test("the footer honors the effective true-color capability", async (t) => {
+	useLifecycleConfig(t, 'format = "[status](fg:#010203 bg:#a3aed2)"\n');
+	const previousCapabilities = getCapabilities();
+	setCapabilities({ ...previousCapabilities, trueColor: false });
+	const mock = createMockPi();
+	piStarship(mock.pi);
+	const context = createMockContext({ mode: "tui" });
+	let footer: ReturnType<FooterFactory> | undefined;
+
+	try {
+		await emit(mock.events, "session_start", {}, context.ctx);
+		const footerData = {
+			getGitBranch: () => null,
+			getExtensionStatuses: () => new Map<string, string>(),
+			onBranchChange: () => () => undefined,
+		};
+		footer = (context.footer as FooterFactory)({ requestRender() {} }, {}, footerData);
+		const rendered = footer.render(80).join("\n");
+		assert.equal(rendered.includes("\u001b[38;2;"), false);
+		assert.equal(rendered.includes("\u001b[48;2;"), false);
+		assert.equal(rendered.includes("\u001b[38;5;") || rendered.includes("\u001b[48;5;"), true);
+		assert.equal(stripAnsi(rendered), "status");
+	} finally {
+		footer?.dispose();
+		try {
+			await emit(mock.events, "session_shutdown", {}, context.ctx);
+		} finally {
+			setCapabilities(previousCapabilities);
+		}
+	}
 });
 
 test("UI prompt waiting state restores activity and rejects stale session events", async (t) => {

@@ -26,6 +26,7 @@ PR #123: checks pending (5), commented, 12 comments
 PR #123: no checks, draft, no comments
 ```
 
+The pull request number is an OSC 8 link when Pi's effective terminal capabilities enable hyperlinks and plain text otherwise.
 The check wording follows GitHub's Checks terminology.
 The trailing comment count is the combined comments + reviews count.
 When rendered by `pi-statusline`, the `github-pr` icon comes from pi-statusline icon settings.

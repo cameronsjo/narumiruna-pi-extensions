@@ -3,7 +3,8 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExecResult } from "@earendil-works/pi-coding-agent";
-import { afterAll, test, vi } from "vitest";
+import { getCapabilities, setCapabilities } from "@earendil-works/pi-tui";
+import { afterAll, beforeEach, test, vi } from "vitest";
 import { createMockContext, createMockPi } from "../../../test/support.js";
 import githubPr, {
 	formatCompactStatus,
@@ -19,8 +20,13 @@ type ExecCall = { command: string; args: string[]; options?: ExecOptions };
 type ExecFunction = (command: string, args: string[], options?: ExecOptions) => Promise<ExecResult>;
 
 const ambientGhHost = process.env.GH_HOST;
+const ambientCapabilities = getCapabilities();
 delete process.env.GH_HOST;
+beforeEach(() => {
+	setCapabilities({ ...ambientCapabilities, hyperlinks: true });
+});
 afterAll(() => {
+	setCapabilities(ambientCapabilities);
 	if (ambientGhHost !== undefined) process.env.GH_HOST = ambientGhHost;
 });
 
@@ -105,6 +111,15 @@ test("formatLinkedStatus falls back to plain text when the PR url is missing", (
 
 	assert.equal(status.url, "");
 	assert.equal(formatLinkedStatus(status), formatCompactStatus(status));
+});
+
+test("formatLinkedStatus honors disabled effective hyperlink capability", () => {
+	setCapabilities({ ...ambientCapabilities, hyperlinks: false });
+	const status = normalizeGhPrView(samplePr);
+	const rendered = formatLinkedStatus(status);
+
+	assert.equal(rendered, "PR #123: checks failing (1), approved, 5 comments");
+	assert.equal(rendered.includes("\u001b]8;;"), false);
 });
 
 test("formatLinkedStatus rejects invalid and non-http PR urls", () => {

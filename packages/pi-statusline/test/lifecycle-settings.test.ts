@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getKeybindings } from "@earendil-works/pi-tui";
+import { getCapabilities, getKeybindings, setCapabilities } from "@earendil-works/pi-tui";
 import { test } from "vitest";
 import { createMockContext, createMockPi } from "../../../test/support.js";
 import statusline from "../src/statusline.js";
@@ -61,7 +61,9 @@ test("session start uses defaults without materializing missing statusline setti
 test("palette picker previews the highlighted preset and restores on cancel", async () => {
 	const root = mkdtempSync(join(tmpdir(), "pi-statusline-lifecycle-"));
 	const previous = process.env.PI_CODING_AGENT_DIR;
+	const previousCapabilities = getCapabilities();
 	process.env.PI_CODING_AGENT_DIR = root;
+	setCapabilities({ ...previousCapabilities, trueColor: true });
 	try {
 		writeFileSync(
 			join(root, "pi-statusline.json"),
@@ -110,6 +112,7 @@ test("palette picker previews the highlighted preset and restores on cancel", as
 		footer.dispose();
 		await emit(mock.events, "session_shutdown", {}, context.ctx);
 	} finally {
+		setCapabilities(previousCapabilities);
 		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previous;
 		rmSync(root, { recursive: true, force: true });

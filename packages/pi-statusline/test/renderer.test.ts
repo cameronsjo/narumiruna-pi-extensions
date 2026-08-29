@@ -54,6 +54,20 @@ test("Tokyo Night default retains the exact powerline colors", () => {
 	);
 });
 
+test("powerline colors fall back to ANSI-256 when true color is disabled", () => {
+	const rendered = renderPowerlineStatusline(
+		300,
+		[segment("model", "model", "header")],
+		createDefaultConfig(),
+		false,
+	);
+	assert.equal(rendered.includes("\u001b[38;2;"), false);
+	assert.equal(rendered.includes("\u001b[48;2;"), false);
+	assert.equal(rendered.includes("\u001b[38;5;146m"), true);
+	assert.equal(rendered.includes("\u001b[38;5;16;48;5;146m"), true);
+	assert.equal(plain(rendered), "░▒▓ model");
+});
+
 test("configured palette joins reordered time to an adjacent header block", () => {
 	const config = createDefaultConfig();
 	config.palettePreset = "custom";

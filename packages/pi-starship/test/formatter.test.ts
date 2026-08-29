@@ -94,6 +94,18 @@ test("styles support named, ANSI, RGB, modifiers, none, and palettes", () => {
 	assert.ok(render("[x](bold fg:red bg:none)").includes("\u001b[31;1mx"));
 });
 
+test("RGB styles fall back to ANSI-256 when true color is disabled", () => {
+	const output = renderChunksToAnsi(
+		renderFormat(parseFormat("[status](fg:#010203 bg:#a3aed2 bold)"), { variables: {} }),
+		false,
+	);
+
+	assert.equal(output.includes("38;2"), false);
+	assert.equal(output.includes("48;2"), false);
+	assert.ok(output.includes("\u001b[38;5;16;48;5;146;1mstatus"));
+	assert.equal(stripAnsi(output), "status");
+});
+
 test("none and fg:none override the complete style expression", () => {
 	for (const style of [
 		"none fg:red bg:green bold",

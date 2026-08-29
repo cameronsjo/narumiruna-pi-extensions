@@ -14,6 +14,7 @@ export function renderStatusline(
 	config: StarshipConfig,
 	runtime: StarshipRuntimeSnapshot,
 	width = 80,
+	trueColor = true,
 ): RenderedStatusline<ModuleName> {
 	const palette = activePalette(config);
 	const modules = {} as Record<ModuleName, StyledChunk[]>;
@@ -61,7 +62,7 @@ export function renderStatusline(
 	const layout = renderFormat(config.formatAst, { variables: rootVariables, palette });
 	const chunks = resolveFillLayout(layout, width);
 	return {
-		ansi: renderChunksToAnsi(chunks),
+		ansi: renderChunksToAnsi(chunks, trueColor),
 		chunks,
 		modules,
 	};

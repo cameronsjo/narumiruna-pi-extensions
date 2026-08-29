@@ -208,7 +208,7 @@ interface ResolvedStyle
 	background?: ColorSpec;
 }
 
-export function renderChunksToAnsi(chunks: readonly LayoutChunk[]): string {
+export function renderChunksToAnsi(chunks: readonly LayoutChunk[], trueColor = true): string {
 	const runs: Array<{ text: string; style: ResolvedStyle }> = [];
 	let previous: ResolvedStyle | undefined;
 	for (const chunk of chunks) {
@@ -221,7 +221,7 @@ export function renderChunksToAnsi(chunks: readonly LayoutChunk[]): string {
 	}
 	return runs
 		.map(({ text, style }) => {
-			const codes = ansiCodes(style);
+			const codes = ansiCodes(style, trueColor);
 			return codes.length > 0 ? `\u001b[${codes.join(";")}m${text}\u001b[0m` : text;
 		})
 		.join("");
@@ -253,10 +253,10 @@ function resolveColor(
 	return source === "foreground" ? previous.foreground : previous.background;
 }
 
-function ansiCodes(style: ResolvedStyle): string[] {
+function ansiCodes(style: ResolvedStyle, trueColor: boolean): string[] {
 	const codes: string[] = [];
-	if (style.foreground) codes.push(...colorCodes(style.foreground, false));
-	if (style.background) codes.push(...colorCodes(style.background, true));
+	if (style.foreground) codes.push(...colorCodes(style.foreground, false, trueColor));
+	if (style.background) codes.push(...colorCodes(style.background, true, trueColor));
 	if (style.bold) codes.push("1");
 	if (style.dimmed) codes.push("2");
 	if (style.italic) codes.push("3");
@@ -268,11 +268,19 @@ function ansiCodes(style: ResolvedStyle): string[] {
 	return codes;
 }
 
-function colorCodes(color: ColorSpec, background: boolean): string[] {
+function colorCodes(color: ColorSpec, background: boolean, trueColor: boolean): string[] {
 	if (color.kind === "named") {
 		const foreground = FOREGROUND_CODES[color.name];
 		return [`${background ? foreground + 10 : foreground}`];
 	}
 	if (color.kind === "fixed") return [background ? "48" : "38", "5", `${color.value}`];
+	if (!trueColor) {
+		return [background ? "48" : "38", "5", `${rgbToAnsi256(color.red, color.green, color.blue)}`];
+	}
 	return [background ? "48" : "38", "2", `${color.red}`, `${color.green}`, `${color.blue}`];
+}
+
+function rgbToAnsi256(red: number, green: number, blue: number): number {
+	const channels = [red, green, blue].map((value) => Math.round((value / 255) * 5));
+	return 16 + 36 * (channels[0] ?? 0) + 6 * (channels[1] ?? 0) + (channels[2] ?? 0);
 }
