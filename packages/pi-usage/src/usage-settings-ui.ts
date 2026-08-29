@@ -47,6 +47,13 @@ export async function showUsageSettings(
 				values: [OFF, ON],
 			},
 			{
+				id: "codexStatusResetCountdown",
+				label: "Codex reset countdown",
+				description: "Show time remaining until each Codex usage limit resets.",
+				currentValue: state.settings.codexStatusResetCountdown ? ON : OFF,
+				values: [OFF, ON],
+			},
+			{
 				id: "xaiUsage",
 				label: "xAI usage",
 				description: "Report OAuth subscription allowance and credits.",

@@ -89,10 +89,10 @@ Successful, already-completed, not-needed, and no-credit outcomes are reported s
 
 ## ⚙️ Settings
 
-Choose **Settings** in `/usage` to edit Codex Fast mode and xAI usage through Pi's settings-list interaction in TUI mode.
+Choose **Settings** in `/usage` to edit Codex Fast mode, the Codex reset countdown, and xAI usage through Pi's settings-list interaction in TUI mode.
 RPC mode reports the active manual settings path instead of opening terminal UI.
 
-Both preferences live in `pi-usage.json` under Pi's user agent directory, normally `~/.pi/agent/pi-usage.json`.
+These preferences live in `pi-usage.json` under Pi's user agent directory, normally `~/.pi/agent/pi-usage.json`.
 The extension reloads this file at every session start and does not create it until the first successful save.
 Within one Pi process, changes save immediately in invocation order.
 Saves preserve unknown JSON fields and publish through a private temporary file plus rename.
@@ -120,7 +120,7 @@ Repair or remove an invalid file, then run `/reload` before trying the toggle ag
 
 The `codexStatusResetCountdown` preference defaults to `true`. It replaces the window labels with the time remaining until each returned limit resets.
 
-Set it to `false` in `pi-usage.json`, then run `/reload`, to restore the legacy `5h` and `wk` labels:
+Turn **Codex reset countdown** Off in the TUI Settings screen, or set it to `false` in `pi-usage.json` and run `/reload`, to restore the legacy `5h` and `wk` labels:
 
 ```json
 {

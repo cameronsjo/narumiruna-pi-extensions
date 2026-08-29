@@ -795,6 +795,16 @@ export default function usageExtension(
 							controller.signal,
 							() => statusGeneration === menuGeneration && !controller.signal.aborted,
 							(id, _previous, next) => {
+								if (id === "codexStatusResetCountdown") {
+									if (
+										stableCurrent &&
+										statusGeneration === menuGeneration &&
+										!controller.signal.aborted
+									) {
+										publishStableCurrent(ctx, stableCurrent);
+									}
+									return;
+								}
 								if (id !== "xaiUsage") return;
 								xaiSettingsGeneration += 1;
 								invalidateProviderState("xai");

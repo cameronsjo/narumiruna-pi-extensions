@@ -1932,10 +1932,10 @@ test("the Settings menu action gives RPC mode the active manual settings path", 
 	assert.match(notifications[0]?.message ?? "", /Edit settings manually: \/tmp\/pi-usage\.json/);
 });
 
-test("the TUI SettingsList describes and applies xAI changes immediately", async (t) => {
+test("the TUI SettingsList describes and applies usage preferences immediately", async (t) => {
 	const settings = memorySettingsRuntime(false);
 	const rendered: string[][] = [];
-	let applied = 0;
+	const applied = new Set<string>();
 	const controller = new AbortController();
 	const previousKeybindings = getKeybindings();
 	const remappedKeybindings = new KeybindingsManager(TUI_KEYBINDINGS, {
@@ -1978,7 +1978,11 @@ test("the TUI SettingsList describes and applies xAI changes immediately", async
 				rendered.push(component.render(100));
 				component.handleInput("j");
 				component.handleInput("x");
-				setImmediate(() => component.handleInput("q"));
+				setImmediate(() => {
+					component.handleInput("j");
+					component.handleInput("x");
+					setImmediate(() => component.handleInput("q"));
+				});
 			}),
 	});
 
@@ -1987,15 +1991,19 @@ test("the TUI SettingsList describes and applies xAI changes immediately", async
 		settings.runtime,
 		controller.signal,
 		() => true,
-		(id) => {
-			if (id === "xaiUsage") applied += 1;
-		},
+		(id) => applied.add(id),
 	);
 
 	assert.equal(changed, true);
+	assert.equal(settings.state().settings.codexStatusResetCountdown, true);
 	assert.equal(settings.state().settings.xaiUsage, true);
-	assert.equal(applied, 1);
+	assert.deepEqual(applied, new Set(["codexStatusResetCountdown", "xaiUsage"]));
 	const renderedSettings = rendered.map((lines) => lines.join("\n"));
+	assert.ok(
+		renderedSettings.some((frame) =>
+			/Show time remaining until each Codex usage limit resets/.test(frame),
+		),
+	);
 	assert.ok(
 		renderedSettings.some((frame) => /OAuth subscription allowance and credits/.test(frame)),
 	);
@@ -2197,6 +2205,7 @@ test("a durable settings save still applies lifecycle cleanup when disposal wins
 					done,
 				);
 				component.handleInput("\u001b[B");
+				component.handleInput("\u001b[B");
 				component.handleInput("\r");
 			}),
 	});
@@ -2249,6 +2258,7 @@ test("the TUI SettingsList rolls back its displayed and effective value after sa
 					{ matches: () => false },
 					done,
 				);
+				component.handleInput("\u001b[B");
 				component.handleInput("\u001b[B");
 				component.handleInput("\r");
 				setImmediate(() => component.handleInput("\u0003"));
