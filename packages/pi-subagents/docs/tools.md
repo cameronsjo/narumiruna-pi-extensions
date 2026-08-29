@@ -11,7 +11,7 @@
 
 Starts one task-specialized subagent job with the selected tool capabilities and returns its job ID immediately.
 
-The runtime always adds `subagent_ask` and `subagent_wait` to the selected tools.
+The runtime always adds `subagent_send` and `subagent_wait` to the selected tools.
 
 The child inherits the main agent's effective provider and model at spawn time.
 
@@ -44,40 +44,66 @@ No parameters.
 | `jobId` | `string` | Yes | Job ID to wait for. |
 | `timeout` | `number` | No | Seconds; `> 0` through `2,147,483.647`; no default and does not cancel the job. |
 
-Returns `{ jobId, state, timedOut: false, interrupted: true, reason: "subagent_message" }` without cancelling the job when any unanswered child question needs a main-agent response.
+Returns `{ jobId, state, timedOut: false, interrupted: true, reason: "subagent_message" }` without cancelling the job when a child request or response arrives.
 
 ### Subagent
 
 | Parameter | Type | Required | Constraint / default |
 | --- | --- | --- | --- |
-| `requestId` | `string` | Yes | Request ID returned by `subagent_ask`. |
+| `requestId` | `string` | Yes | Request ID returned by a child-originated `subagent_send`. |
 | `timeout` | `number` | No | Seconds; `> 0` through `2,147,483.647`; no default and does not cancel the request. |
 
 Returns the main agent's response as plain text.
 
-A timeout or caller cancellation throws and stops only that wait, so the child may wait for the same request again.
+A timeout, caller cancellation, or incoming main-agent request throws and stops only that wait, so the child may wait for the same request again.
 
-## `subagent_ask`
+The runtime interrupts an active child wait only after Pi RPC accepts the incoming main request for steering.
 
-Available only to subagents.
+## `subagent_send`
 
-| Parameter | Type | Required | Constraint / default |
-| --- | --- | --- | --- |
-| `message` | `string` | Yes | Self-contained question for the main agent, up to 50 KiB of UTF-8 text. |
+Main and child processes receive separate provider-visible definitions for their own context.
 
-Returns a request ID immediately.
-
-Each job may have up to four unanswered or answered-but-not-consumed requests.
-
-## `subagent_reply`
-
-Available only to the main agent.
+### Main agent
 
 | Parameter | Type | Required | Constraint / default |
 | --- | --- | --- | --- |
-| `requestId` | `string` | Yes | Pending request ID received from a subagent. |
-| `message` | `string` | Yes | Plain-text response, up to 50 KiB of UTF-8 text and 2,000 lines. |
+| `recipient` | `string` | Conditional | Active job ID for a new request. |
+| `requestId` | `string` | Conditional | Pending child request to answer. |
+| `message` | `string` | Yes | Plain-text request or response, up to 48 KiB of UTF-8 text and 1,992 lines. |
 
-The first accepted response wins.
+Provide exactly one of `recipient` or `requestId`.
 
-Returns an acknowledgement without replacing an earlier response.
+A new request provides an active queued or running job ID as `recipient` and omits `requestId`.
+
+A response provides `requestId` and omits `recipient`.
+
+### Subagent
+
+| Parameter | Type | Required | Constraint / default |
+| --- | --- | --- | --- |
+| `requestId` | `string` | No | Pending main-agent request to answer; omit to start a new request to main. |
+| `message` | `string` | Yes | Plain-text request or response, up to 48 KiB of UTF-8 text and 1,992 lines. |
+
+A new request omits `requestId` and returns a request ID immediately for an optional `subagent_wait` call.
+
+A response provides the pending main-agent `requestId`.
+
+A main-originated request waits for the child RPC prompt to be accepted and then uses Pi steering to reach the running child.
+
+After steering is queued, the runtime interrupts active child response waits without consuming their original requests.
+
+Caller cancellation before RPC delivery starts rolls the request back.
+
+Once RPC delivery starts, cancellation stops only the caller's wait; the request may still arrive and remains answerable until delivery fails or the job terminates.
+
+A child response arrives asynchronously in the main session and interrupts the next active main-agent `subagent_wait`, including when the response arrived immediately before the wait started.
+
+The first accepted response wins, and repeated responses acknowledge the existing response without replacing it.
+
+Each job may have up to four unresolved or answered-but-not-consumed requests across both directions.
+
+Requests and responses are limited to 1,992 lines so their protocol envelopes fit Pi's 2,000-line model-text bound.
+
+Terminal jobs, unknown requests, cross-job responses, responses from the request originator, and stale session credentials throw.
+
+A successful call returns `{ requestId, accepted, duplicate }`.

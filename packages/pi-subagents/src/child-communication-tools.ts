@@ -1,21 +1,29 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 import {
+	type BrokerSendAcknowledgement,
 	MAX_IDENTIFIER_LENGTH,
 	MAX_MESSAGE_BYTES,
 	sanitizeTerminalText,
 	validateMessage,
 } from "./message-broker.js";
 
-export const CHILD_COMMUNICATION_TOOL_NAMES = ["subagent_ask", "subagent_wait"] as const;
+export const CHILD_COMMUNICATION_TOOL_NAMES = ["subagent_send", "subagent_wait"] as const;
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
 const MAX_TIMEOUT_SECONDS = MAX_TIMEOUT_MS / 1000;
 
-const AskParameters = Type.Object(
+const SendParameters = Type.Object(
 	{
+		requestId: Type.Optional(
+			Type.String({
+				description: "Pending main-agent request to answer. Omit when starting a new request.",
+				minLength: 1,
+				maxLength: MAX_IDENTIFIER_LENGTH,
+			}),
+		),
 		message: Type.String({
-			description: "Self-contained question for the main agent. Maximum 50 KiB.",
+			description: "Plain-text request or response. Maximum 48 KiB of UTF-8 text and 1,992 lines.",
 			minLength: 1,
 			maxLength: MAX_MESSAGE_BYTES,
 		}),
@@ -26,7 +34,7 @@ const AskParameters = Type.Object(
 const WaitParameters = Type.Object(
 	{
 		requestId: Type.String({
-			description: "Request ID returned by subagent_ask.",
+			description: "Request ID returned by subagent_send.",
 			minLength: 1,
 			maxLength: MAX_IDENTIFIER_LENGTH,
 		}),
@@ -37,10 +45,14 @@ const WaitParameters = Type.Object(
 	{ additionalProperties: false },
 );
 
+type ChildBrokerSendArguments =
+	| { recipient: "main"; message: string }
+	| { requestId: string; message: string };
+
 type WaitArguments = Static<typeof WaitParameters>;
 
 export interface ChildCommunicationClient {
-	ask(message: string, signal?: AbortSignal): Promise<string>;
+	send(params: ChildBrokerSendArguments, signal?: AbortSignal): Promise<BrokerSendAcknowledgement>;
 	wait(requestId: string, timeoutMs: number | undefined, signal?: AbortSignal): Promise<string>;
 }
 
@@ -49,18 +61,24 @@ export function createChildCommunicationExtension(
 ): ExtensionFactory {
 	return (pi) => {
 		pi.registerTool({
-			name: "subagent_ask",
-			label: "Subagent · Ask Main Agent",
+			name: "subagent_send",
+			label: "Subagent · Send to Main",
 			description:
-				"Use subagent_ask to send one self-contained question to the main agent. It returns a request ID immediately; call subagent_wait with that ID to receive the plain-text reply.",
-			promptSnippet: "Use subagent_ask to ask the main agent one necessary question",
-			parameters: AskParameters,
+				"Use subagent_send to send one request to the main agent or answer one pending main-agent request. Omit requestId to start a request. Provide requestId to answer that request.",
+			promptSnippet: "Use subagent_send to send or answer one main-agent message",
+			parameters: SendParameters,
 			async execute(_toolCallId, params, signal) {
-				validateMessage(params.message, "Subagent question");
-				const requestId = await client.ask(params.message, signal);
+				validateMessage(params.message, "Subagent message");
+				const requestId = optionalIdentifier(params.requestId, "requestId");
+				const acknowledgement = await client.send(
+					requestId === undefined
+						? { recipient: "main", message: params.message }
+						: { requestId, message: params.message },
+					signal,
+				);
 				return {
-					content: [{ type: "text" as const, text: requestId }],
-					details: { requestId },
+					content: [{ type: "text" as const, text: JSON.stringify(acknowledgement) }],
+					details: acknowledgement,
 				};
 			},
 		});
@@ -69,8 +87,8 @@ export function createChildCommunicationExtension(
 			name: "subagent_wait",
 			label: "Subagent · Wait for Main Agent",
 			description:
-				"Use subagent_wait with a request ID from subagent_ask to wait for the main agent's plain-text reply. A timeout or caller cancellation stops only this wait and does not cancel the request.",
-			promptSnippet: "Use subagent_wait to receive a requested main-agent reply",
+				"Use subagent_wait with a request ID from subagent_send to wait for the main agent's plain-text response. A timeout, caller cancellation, or incoming main-agent request stops only this wait and does not cancel the original request. Retry the wait when its response is still needed.",
+			promptSnippet: "Use subagent_wait to receive a requested main-agent response",
 			parameters: WaitParameters,
 			prepareArguments: prepareWaitArguments,
 			async execute(_toolCallId, params, signal) {
@@ -107,6 +125,10 @@ function prepareWaitArguments(args: unknown): WaitArguments {
 		return { ...prepared, timeout: timeoutMs / 1000 } as WaitArguments;
 	}
 	return prepared as WaitArguments;
+}
+
+function optionalIdentifier(value: unknown, field: string): string | undefined {
+	return value === undefined ? undefined : requiredIdentifier(value, field);
 }
 
 function requiredIdentifier(value: unknown, field: string): string {

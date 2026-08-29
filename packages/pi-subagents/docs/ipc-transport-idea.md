@@ -26,18 +26,18 @@ spawn(command, args, {
 
 Bind the channel to the job represented by that child process rather than accepting a job identifier or authentication token from the child.
 
-Send question events from the child to the parent and reply events from the parent to the child over the same persistent channel.
+Send request and response events in either direction over the same persistent channel.
 
 Keep request state in a small session-owned registry in the parent and keep child wait promises in the child bridge.
 
 A possible exchange is:
 
 ```text
-child -> parent: ask(message)
-parent -> child: accepted(requestId)
-child -> parent: wait(requestId)
-main agent -> parent: reply(requestId, message)
-parent -> child: response(requestId, message)
+sender -> parent: send(recipient, message)
+parent -> sender: accepted(requestId)
+responder -> parent: send(requestId, message)
+parent -> requester: response(requestId, message)
+child requester -> parent: wait(requestId)
 ```
 
 The exact wire messages and ownership boundaries remain undecided.
@@ -59,14 +59,16 @@ A successful IPC design may remove:
 Any replacement must preserve:
 
 - A fresh child Pi process with no inherited main-agent conversation history.
-- Fixed `subagent_ask` and child `subagent_wait` tools.
-- Main-agent `subagent_reply` behavior.
-- Plain-text replies.
-- At most four outstanding requests per job.
-- The 50 KiB UTF-8 message limit and 2,000-line reply limit.
-- First-reply-wins semantics.
+- Context-specific provider-visible `subagent_send` definitions for main and child processes.
+- The child `subagent_wait` tool for child-originated requests.
+- Plain-text requests and responses in either direction.
+- At most four unresolved requests per job across both directions.
+- The 48 KiB and 1,992-line message limits that reserve space for protocol envelopes.
+- First-response-wins semantics.
 - Retryable waits after timeout.
 - Caller cancellation that stops only the current wait.
+- One-shot replay of a child response that arrives immediately before a main-agent job wait.
+- Interruption of active child response waits after a main-agent request is accepted, without consuming the original child requests.
 - Immediate rejection of pending waits after job cancellation, child exit, session replacement, reload, or shutdown.
 - Retention-limited state and terminal-safe cleanup.
 - Untrusted-content handling and terminal sanitization.
@@ -80,7 +82,7 @@ Exercise the spike with npm-installed Node.js Pi, Bun execution, and the Pi stan
 
 Include Linux and macOS, and include Windows before claiming Windows compatibility.
 
-Verify that the IPC channel does not interfere with Pi JSON output, subprocess termination, detached process-group cleanup, or extension loading.
+Verify that the IPC channel does not interfere with Pi RPC framing, subprocess termination, detached process-group cleanup, or extension loading.
 
 Reject the IPC design if any supported runtime cannot expose a reliable private channel without runtime-specific branches or substantial fallback code.
 
@@ -92,7 +94,7 @@ Inherited pipes can still remove TCP addressing and authentication, but they req
 
 HTTP loopback may simplify framing incrementally, but it retains the server, port, token, and network lifecycle and therefore offers a smaller reduction.
 
-Do not use filesystem polling or share Pi's normal stdin and stdout unless evidence shows that their additional coupling and cleanup remain simpler than the current transport.
+Do not use filesystem polling or add an ad hoc messaging protocol to Pi's RPC stdin and stdout unless evidence shows that its additional coupling and cleanup remain simpler than the current transport.
 
 ## Decision criteria
 

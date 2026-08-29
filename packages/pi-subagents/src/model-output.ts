@@ -5,6 +5,17 @@ export const MAX_MODEL_TEXT_LINES = 2_000;
 
 const TRUNCATION_MARKER = "… [truncated]";
 
+export function requireBoundedModelText(text: string, label: string): string {
+	const result = sanitizeTerminalText(text);
+	if (Buffer.byteLength(result, "utf8") > MAX_MODEL_TEXT_BYTES) {
+		throw new Error(`${label} exceeds Pi's ${MAX_MODEL_TEXT_BYTES}-byte model-text limit.`);
+	}
+	if (result.split("\n").length > MAX_MODEL_TEXT_LINES) {
+		throw new Error(`${label} exceeds Pi's ${MAX_MODEL_TEXT_LINES}-line model-text limit.`);
+	}
+	return result;
+}
+
 export function truncateModelText(text: string): string {
 	let result = sanitizeTerminalText(text);
 	const bytes = Buffer.from(result, "utf8");

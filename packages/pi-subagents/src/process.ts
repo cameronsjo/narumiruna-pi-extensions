@@ -10,7 +10,7 @@ import {
 	serializeBrokerCredentials,
 } from "./broker-credentials.js";
 import { CHILD_COMMUNICATION_TOOL_NAMES } from "./child-communication-tools.js";
-import type { ChildRequest, ChildResult } from "./types.js";
+import type { ChildControl, ChildRequest, ChildResult } from "./types.js";
 
 const CORE_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 const MAX_TIMEOUT_MS = 2_147_483_647;
@@ -18,13 +18,38 @@ const MAX_TIMEOUT_SECONDS = MAX_TIMEOUT_MS / 1000;
 const MAX_OUTPUT_BYTES = 32 * 1024;
 const MAX_ERROR_BYTES = 8 * 1024;
 const MAX_EVENT_LINE_BYTES = 256 * 1024;
+const RPC_RESPONSE_TIMEOUT_MS = 30_000;
 const KILL_GRACE_MS = 1_000;
 
 interface ProcessSettlement {
 	code: number;
 	cancelled: boolean;
 	timedOut: boolean;
+	completed: boolean;
 	launchError?: string;
+}
+
+interface AssistantEvent {
+	type?: string;
+	id?: string;
+	success?: boolean;
+	error?: string;
+	message?: {
+		role?: string;
+		content?: Array<{ type?: string; text?: string }>;
+		stopReason?: string;
+		errorMessage?: string;
+	};
+}
+
+interface PendingRpcCommand {
+	command: string;
+	resolve: () => void;
+	reject: (error: Error) => void;
+	timer: NodeJS.Timeout;
+	onAccepted?: () => void;
+	signal?: AbortSignal;
+	onAbort?: () => void;
 }
 
 export function resolveTimeoutMs(timeout: number | undefined): number | undefined {
@@ -37,16 +62,6 @@ export function resolveTimeoutMs(timeout: number | undefined): number | undefine
 		throw new Error(`Invalid timeout: maximum is ${MAX_TIMEOUT_SECONDS} seconds`);
 	}
 	return timeoutMs;
-}
-
-interface AssistantEvent {
-	type?: string;
-	message?: {
-		role?: string;
-		content?: Array<{ type?: string; text?: string }>;
-		stopReason?: string;
-		errorMessage?: string;
-	};
 }
 
 export async function runChild(request: ChildRequest): Promise<ChildResult> {
@@ -69,8 +84,7 @@ export async function runChild(request: ChildRequest): Promise<ChildResult> {
 export function buildPiArgs(request: ChildRequest): string[] {
 	const args = [
 		"--mode",
-		"json",
-		"-p",
+		"rpc",
 		"--no-session",
 		"--no-extensions",
 		"--no-skills",
@@ -85,7 +99,6 @@ export function buildPiArgs(request: ChildRequest): string[] {
 	];
 	const tools = [...new Set([...request.tools, ...CHILD_COMMUNICATION_TOOL_NAMES])];
 	args.push("--tools", tools.join(","));
-	args.push(`Task: ${request.task}`);
 	return args;
 }
 
@@ -106,31 +119,94 @@ async function executeProcess(
 	let stderr = "";
 	let truncated = false;
 	let malformedEvents = 0;
+	let rpcCounter = 0;
+	const pendingCommands = new Map<string, PendingRpcCommand>();
+	let rpcInputError: Error | undefined;
+	let sendCommand: (
+		command: { type: "prompt" | "steer"; message: string },
+		onAccepted?: () => void,
+		signal?: AbortSignal,
+	) => Promise<void> = () => Promise.reject(new Error("Subagent RPC process is unavailable."));
+	let onAgentSettled: () => void = () => undefined;
+
+	const takePendingCommand = (id: string): PendingRpcCommand | undefined => {
+		const pending = pendingCommands.get(id);
+		if (!pending) return undefined;
+		pendingCommands.delete(id);
+		clearTimeout(pending.timer);
+		if (pending.signal && pending.onAbort) {
+			pending.signal.removeEventListener("abort", pending.onAbort);
+		}
+		return pending;
+	};
+	const rejectPendingCommand = (id: string, error: Error) => {
+		takePendingCommand(id)?.reject(error);
+	};
+	const rejectPendingCommands = (error: Error) => {
+		for (const id of [...pendingCommands.keys()]) rejectPendingCommand(id, error);
+	};
+	const resolvePendingCommand = (id: string) => {
+		const pending = takePendingCommand(id);
+		if (!pending) return;
+		try {
+			pending.onAccepted?.();
+			pending.resolve();
+		} catch (error) {
+			pending.reject(error instanceof Error ? error : new Error(String(error)));
+		}
+	};
+	const failRpcInput = (error: Error) => {
+		rpcInputError ??= error;
+		rejectPendingCommands(rpcInputError);
+	};
+
 	const decoder = new JsonLineDecoder(
 		(value) => {
 			const event = value as AssistantEvent;
-			if (event.type !== "message_end" || event.message?.role !== "assistant") return;
-			const text = (event.message.content ?? [])
-				.filter((part) => part.type === "text" && typeof part.text === "string")
-				.map((part) => part.text)
-				.join("\n")
-				.trim();
-			if (text) {
-				const limited = truncateText(text, MAX_OUTPUT_BYTES);
-				latestOutput = limited.text;
-				truncated ||= limited.truncated;
-				if (event.message.stopReason === "stop" || event.message.stopReason === "length") {
-					terminalOutput = limited.text;
-					terminalStopReason = event.message.stopReason;
+			if (event.type === "response" && typeof event.id === "string") {
+				const pending = pendingCommands.get(event.id);
+				if (!pending) return;
+				if (event.success === true) {
+					resolvePendingCommand(event.id);
+				} else {
+					rejectPendingCommand(
+						event.id,
+						new Error(
+							typeof event.error === "string"
+								? event.error
+								: `Subagent RPC ${pending.command} command failed.`,
+						),
+					);
 				}
+				return;
 			}
-			if (event.message.stopReason === "error" || event.message.stopReason === "aborted") {
-				assistantFailed = true;
+			if (event.type === "agent_settled") {
+				onAgentSettled();
+				return;
 			}
-			if (event.message.errorMessage) {
-				const limited = truncateText(event.message.errorMessage, MAX_ERROR_BYTES);
-				errorMessage = limited.text;
-				truncated ||= limited.truncated;
+			if (event.type === "message_end" && event.message?.role === "assistant") {
+				const text = (event.message.content ?? [])
+					.filter((part) => part.type === "text" && typeof part.text === "string")
+					.map((part) => part.text)
+					.join("\n")
+					.trim();
+				if (text) {
+					const limited = truncateText(text, MAX_OUTPUT_BYTES);
+					latestOutput = limited.text;
+					truncated ||= limited.truncated;
+					if (event.message.stopReason === "stop" || event.message.stopReason === "length") {
+						terminalOutput = limited.text;
+						terminalStopReason = event.message.stopReason;
+					}
+				}
+				if (event.message.stopReason === "error" || event.message.stopReason === "aborted") {
+					assistantFailed = true;
+				}
+				if (event.message.errorMessage) {
+					const limited = truncateText(event.message.errorMessage, MAX_ERROR_BYTES);
+					errorMessage = limited.text;
+					truncated ||= limited.truncated;
+				}
 			}
 		},
 		() => {
@@ -146,10 +222,13 @@ async function executeProcess(
 		let terminating = false;
 		let cancelled = false;
 		let timedOut = false;
+		let completed = false;
+		let ready = false;
 		let deadline: NodeJS.Timeout | undefined;
 		let forceClose: NodeJS.Timeout | undefined;
 		let escalation: NodeJS.Timeout | undefined;
 		let termination: Promise<void> | undefined;
+
 		const finish = (code: number, launchError?: string) => {
 			if (settled || finishRequested) return;
 			finishRequested = true;
@@ -160,7 +239,8 @@ async function executeProcess(
 				if (forceClose) clearTimeout(forceClose);
 				if (escalation) clearTimeout(escalation);
 				request.signal.removeEventListener("abort", onAbort);
-				resolve({ code, cancelled, timedOut, launchError });
+				rejectPendingCommands(new Error("Subagent RPC process closed."));
+				resolve({ code, cancelled, timedOut, completed, launchError });
 			};
 			if (termination) void termination.then(complete, complete);
 			else complete();
@@ -181,6 +261,7 @@ async function executeProcess(
 			}
 			forceClose = setTimeout(() => {
 				decoder.finish();
+				process.stdin?.destroy();
 				process.stdout?.destroy();
 				process.stderr?.destroy();
 				finish(code);
@@ -192,13 +273,19 @@ async function executeProcess(
 			cancelled = true;
 			terminate(130);
 		};
+		const completeNormally = () => {
+			if (settled || terminating || !ready) return;
+			completed = true;
+			terminate(0);
+		};
+		onAgentSettled = completeNormally;
 
 		try {
 			process = spawn(invocation.command, invocation.args, {
 				cwd: request.cwd,
 				detached: globalThis.process.platform !== "win32",
 				shell: false,
-				stdio: ["ignore", "pipe", "pipe", "pipe"],
+				stdio: ["pipe", "pipe", "pipe", "pipe"],
 				env: {
 					...globalThis.process.env,
 					...brokerCredentialEnvironment(),
@@ -211,16 +298,96 @@ async function executeProcess(
 			finish(1, error instanceof Error ? error.message : String(error));
 			return;
 		}
+
+		process.stdin?.on("error", failRpcInput);
+		sendCommand = (command, onAccepted, signal) => {
+			if (settled || terminating || process.exitCode !== null) {
+				return Promise.reject(new Error("Subagent RPC process is no longer active."));
+			}
+			if (signal?.aborted) {
+				return Promise.reject(abortError("Subagent RPC command was cancelled."));
+			}
+			if (rpcInputError) return Promise.reject(rpcInputError);
+			const stdin = process.stdin;
+			if (!stdin || stdin.destroyed || !stdin.writable) {
+				return Promise.reject(new Error("Subagent RPC stdin is unavailable."));
+			}
+			const id = `rpc_${++rpcCounter}`;
+			return new Promise<void>((resolveCommand, rejectCommand) => {
+				const timer = setTimeout(
+					() =>
+						rejectPendingCommand(id, new Error(`Subagent RPC ${command.type} response timed out.`)),
+					RPC_RESPONSE_TIMEOUT_MS,
+				);
+				timer.unref();
+				const pending: PendingRpcCommand = {
+					command: command.type,
+					resolve: resolveCommand,
+					reject: rejectCommand,
+					timer,
+					onAccepted,
+					signal,
+				};
+				if (signal) {
+					pending.onAbort = () =>
+						rejectPendingCommand(id, abortError("Subagent RPC command was cancelled."));
+				}
+				pendingCommands.set(id, pending);
+				if (signal && pending.onAbort) {
+					signal.addEventListener("abort", pending.onAbort, { once: true });
+					if (signal.aborted) {
+						pending.onAbort();
+						return;
+					}
+				}
+				try {
+					stdin.write(`${JSON.stringify({ id, ...command })}\n`, (error) => {
+						if (error) failRpcInput(error);
+					});
+				} catch (error) {
+					failRpcInput(error instanceof Error ? error : new Error(String(error)));
+				}
+			});
+		};
+
 		request.signal.addEventListener("abort", onAbort, { once: true });
 		if (request.signal.aborted) onAbort();
 		process.once("spawn", () => {
 			spawned = true;
-			if (settled || cancelled || timeoutMs === undefined) return;
-			deadline = setTimeout(() => {
-				timedOut = true;
-				terminate(124);
-			}, timeoutMs);
-			deadline.unref();
+			if (settled || cancelled) return;
+			void sendCommand(
+				{ type: "prompt", message: `Task: ${request.task}` },
+				() => {
+					if (settled || terminating || request.signal.aborted) {
+						throw new Error("Subagent RPC prompt was superseded.");
+					}
+					ready = true;
+					if (timeoutMs !== undefined) {
+						deadline = setTimeout(() => {
+							timedOut = true;
+							terminate(124);
+						}, timeoutMs);
+						deadline.unref();
+					}
+					const control: ChildControl = {
+						send: async (message, signal) => {
+							if (!ready || completed || terminating) {
+								throw new Error("Subagent job is no longer accepting messages.");
+							}
+							await sendCommand({ type: "steer", message }, undefined, signal);
+						},
+					};
+					request.onControl?.(control);
+				},
+				request.signal,
+			).catch((error) => {
+				if (settled || terminating) return;
+				errorMessage = truncateText(
+					error instanceof Error ? error.message : String(error),
+					MAX_ERROR_BYTES,
+				).text;
+				terminate(1);
+			});
 		});
 		process.stdout?.on("data", (chunk) => decoder.push(chunk));
 		process.stderr?.on("data", (chunk) => {
@@ -230,7 +397,7 @@ async function executeProcess(
 		});
 		process.once("close", (code) => {
 			decoder.finish();
-			finish(cancelled ? 130 : timedOut ? 124 : (code ?? 1));
+			finish(cancelled ? 130 : timedOut ? 124 : completed ? 0 : (code ?? 1));
 		});
 		process.once("error", (error) => {
 			const limited = truncateText(error.message, MAX_ERROR_BYTES);
@@ -283,7 +450,7 @@ async function executeProcess(
 		};
 	}
 	const error = settlement.launchError || errorMessage || stderr.trim();
-	if (settlement.code === 0 && terminalStopReason === "stop" && !assistantFailed && !errorMessage) {
+	if (settlement.completed && terminalStopReason === "stop" && !assistantFailed && !errorMessage) {
 		return {
 			state: "completed",
 			result: terminalOutput,
@@ -297,9 +464,11 @@ async function executeProcess(
 			? "Subagent output reached the model limit."
 			: assistantFailed
 				? "Subagent model turn failed."
-				: settlement.code === 0
-					? "Subagent exited without a terminal assistant result."
-					: `Subagent exited with code ${settlement.code}.`);
+				: settlement.completed
+					? "Subagent settled without a terminal assistant result."
+					: settlement.code === 0
+						? "Subagent exited without settling."
+						: `Subagent exited with code ${settlement.code}.`);
 	if (output) {
 		return {
 			state: "partial",
@@ -416,6 +585,12 @@ function killImmediateChild(process: ChildProcess): void {
 	} catch {
 		// The process may already be terminal.
 	}
+}
+
+function abortError(message: string): Error {
+	const error = new Error(message);
+	error.name = "AbortError";
+	return error;
 }
 
 function cancelledResult(

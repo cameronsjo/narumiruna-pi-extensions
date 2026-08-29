@@ -56,6 +56,10 @@ export interface BrokerCredentials {
 	token: string;
 }
 
+export interface ChildControl {
+	send(message: string, signal?: AbortSignal): Promise<void>;
+}
+
 export interface ChildRequest {
 	task: string;
 	tools: string[];
@@ -66,6 +70,7 @@ export interface ChildRequest {
 	projectTrusted: boolean;
 	communication: BrokerCredentials;
 	signal: AbortSignal;
+	onControl?: (control: ChildControl) => void;
 }
 
 export interface JobSummary {
