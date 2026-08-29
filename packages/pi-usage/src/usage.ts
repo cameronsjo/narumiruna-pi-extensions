@@ -56,6 +56,7 @@ import {
 import { showUsageSettings } from "./usage-settings-ui.js";
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
+const STATUS_COUNTDOWN_REFRESH_MS = 60 * 1000;
 const DEFAULT_TIMEOUT_MS = 15_000;
 const ALL_PROVIDER_CONCURRENCY = 2;
 const FAILURE_BACKOFF_MS = 30_000;
@@ -105,6 +106,7 @@ export default function usageExtension(
 	let sessionGeneration = 0;
 	let xaiSettingsGeneration = 0;
 	let statusRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+	let statusCountdownTimer: ReturnType<typeof setTimeout> | undefined;
 	let statusController: AbortController | undefined;
 	let fastRuntime: ReturnType<typeof registerCodexFastMode>;
 
@@ -115,9 +117,19 @@ export default function usageExtension(
 	const activeAdapterForProvider = (providerId: string | undefined) =>
 		adapterForProvider(providerId, xaiUsageEnabled());
 
-	const clearStatusTimer = () => {
+	const clearStatusRefreshTimer = () => {
 		if (statusRefreshTimer) clearTimeout(statusRefreshTimer);
 		statusRefreshTimer = undefined;
+	};
+
+	const clearStatusCountdownTimer = () => {
+		if (statusCountdownTimer) clearTimeout(statusCountdownTimer);
+		statusCountdownTimer = undefined;
+	};
+
+	const clearStatusTimers = () => {
+		clearStatusRefreshTimer();
+		clearStatusCountdownTimer();
 	};
 
 	const safeSetStatus = (ctx: ExtensionContext, value: string | undefined): boolean => {
@@ -134,12 +146,12 @@ export default function usageExtension(
 		statusGeneration += 1;
 		statusController?.abort();
 		statusController = undefined;
-		clearStatusTimer();
+		clearStatusTimers();
 		safeSetStatus(ctx, undefined);
 	};
 
 	const scheduleStatusRefresh = (ctx: ExtensionContext, model: PiModel) => {
-		clearStatusTimer();
+		clearStatusRefreshTimer();
 		const generation = statusGeneration;
 		statusRefreshTimer = setTimeout(() => {
 			statusRefreshTimer = undefined;
@@ -155,13 +167,14 @@ export default function usageExtension(
 		model: PiModel,
 		shouldSchedule: boolean,
 	) => {
+		clearStatusCountdownTimer();
 		if (activeAdapterForProvider(model.provider)?.publishesStatusline === false) {
-			clearStatusTimer();
+			clearStatusRefreshTimer();
 			safeSetStatus(ctx, undefined);
 			return;
 		}
 		if (outcome.state.status === "unsupported") {
-			clearStatusTimer();
+			clearStatusRefreshTimer();
 			safeSetStatus(ctx, undefined);
 			return;
 		}
@@ -176,10 +189,43 @@ export default function usageExtension(
 			}
 			return;
 		}
-		const rawValue = formatUsageStatusline(outcome.state.report, model);
+		const showCodexResetCountdown =
+			outcome.state.report.providerId === "openai-codex" &&
+			settingsRuntime.get().settings.codexStatusResetCountdown;
+		const now = Date.now();
+		const rawValue = formatUsageStatusline(
+			outcome.state.report,
+			model,
+			now,
+			showCodexResetCountdown,
+		);
 		const value = rawValue ? fastRuntime.decorateStatus(model, rawValue) : undefined;
 		if (!safeSetStatus(ctx, value)) return;
 		if (shouldSchedule && sessionActive) scheduleStatusRefresh(ctx, model);
+		if (
+			sessionActive &&
+			showCodexResetCountdown &&
+			outcome.state.report.buckets.some(
+				(bucket) =>
+					bucket.resetsAt !== undefined &&
+					Number.isFinite(bucket.resetsAt) &&
+					bucket.resetsAt * 1_000 > now,
+			)
+		) {
+			const generation = statusGeneration;
+			statusCountdownTimer = setTimeout(() => {
+				statusCountdownTimer = undefined;
+				if (
+					!sessionActive ||
+					generation !== statusGeneration ||
+					modelIdentity(ctx.model) !== modelIdentity(model)
+				) {
+					return;
+				}
+				publishStatus(ctx, outcome, model, false);
+			}, STATUS_COUNTDOWN_REFRESH_MS);
+			statusCountdownTimer.unref?.();
+		}
 	};
 
 	const invalidateProviderState = (providerId: string) => {
@@ -430,6 +476,7 @@ export default function usageExtension(
 		}
 		statusGeneration += 1;
 		const generation = statusGeneration;
+		clearStatusCountdownTimer();
 		statusController?.abort();
 		const controller = new AbortController();
 		statusController = controller;
@@ -574,7 +621,7 @@ export default function usageExtension(
 		const menuGeneration = statusGeneration;
 		statusController?.abort();
 		statusController = undefined;
-		clearStatusTimer();
+		clearStatusTimers();
 		const controller = new AbortController();
 		activeControllers.add(controller);
 		try {
@@ -748,6 +795,16 @@ export default function usageExtension(
 							controller.signal,
 							() => statusGeneration === menuGeneration && !controller.signal.aborted,
 							(id, _previous, next) => {
+								if (id === "codexStatusResetCountdown") {
+									if (
+										stableCurrent &&
+										statusGeneration === menuGeneration &&
+										!controller.signal.aborted
+									) {
+										publishStableCurrent(ctx, stableCurrent);
+									}
+									return;
+								}
 								if (id !== "xaiUsage") return;
 								xaiSettingsGeneration += 1;
 								invalidateProviderState("xai");
@@ -1074,7 +1131,7 @@ export default function usageExtension(
 		sessionGeneration += 1;
 		xaiSettingsGeneration += 1;
 		statusGeneration += 1;
-		clearStatusTimer();
+		clearStatusTimers();
 		for (const controller of activeControllers) controller.abort();
 		activeControllers.clear();
 		statusController = undefined;
@@ -1095,7 +1152,7 @@ export default function usageExtension(
 		sessionGeneration += 1;
 		xaiSettingsGeneration += 1;
 		statusGeneration += 1;
-		clearStatusTimer();
+		clearStatusTimers();
 		for (const controller of activeControllers) controller.abort();
 		activeControllers.clear();
 		statusController = undefined;

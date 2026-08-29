@@ -6,7 +6,7 @@ import {
 	setKeybindings,
 	TUI_KEYBINDINGS,
 } from "@earendil-works/pi-tui";
-import { test } from "vitest";
+import { test, vi } from "vitest";
 import { createMockContext, createMockPi } from "../../../test/support.js";
 import { OAUTH_CREDENTIAL_SOURCE_CHANNEL } from "../src/oauth-credential-source.js";
 import type { UsageSettingsRuntime, UsageSettingsState } from "../src/settings.js";
@@ -71,11 +71,12 @@ function memorySettingsRuntime(
 	xaiUsage = true,
 	failUpdates = false,
 	kind: UsageSettingsState["kind"] = "loaded",
+	codexStatusResetCountdown = false,
 ): { runtime: UsageSettingsRuntime; state: () => UsageSettingsState } {
 	let state: UsageSettingsState = {
 		kind,
 		path: "/tmp/pi-usage.json",
-		settings: { codexFastMode: false, xaiUsage },
+		settings: { codexFastMode: false, codexStatusResetCountdown, xaiUsage },
 		...(kind === "invalid"
 			? { issue: "invalid test settings" }
 			: { document: { codexFastMode: false, xaiUsage } }),
@@ -1291,6 +1292,73 @@ test("session shutdown clears status through the shutdown context", async (t) =>
 	assert.equal(statuses.get("usage"), undefined);
 });
 
+test("Codex reset countdown repaints locally and stops across replacement and shutdown", async (t) => {
+	const originalFetch = globalThis.fetch;
+	vi.useFakeTimers();
+	t.onTestFinished(() => {
+		globalThis.fetch = originalFetch;
+		vi.useRealTimers();
+	});
+	const now = Date.parse("2026-08-29T00:00:00Z");
+	vi.setSystemTime(now);
+	let fetches = 0;
+	globalThis.fetch = async () => {
+		fetches += 1;
+		return new Response(
+			JSON.stringify({
+				rate_limit: {
+					primary_window: {
+						used_percent: 20,
+						limit_window_seconds: 18_000,
+						reset_at: (now + 150_000) / 1_000,
+					},
+				},
+			}),
+			{ status: 200 },
+		);
+	};
+	const settings = memorySettingsRuntime(false, false, "loaded", true);
+	const mock = createMockPi();
+	usageExtension(mock.pi, { settingsRuntime: settings.runtime });
+	const { ctx, statuses } = createMockContext({
+		model: codexModel,
+		modelRegistry: {
+			getProviderAuth: async () => ({ auth: { apiKey: codexToken } }),
+			getAvailable: () => [codexModel],
+			getAll: () => [codexModel],
+			getProviderAuthStatus: () => ({ configured: true }),
+			getProviderDisplayName: (provider: string) => provider,
+		},
+	});
+
+	mock.events.get("session_start")?.[0]?.({}, ctx);
+	await vi.advanceTimersByTimeAsync(0);
+	assert.equal(statuses.get("usage"), "codex 80% ↻ 3m");
+	assert.equal(fetches, 1);
+
+	await vi.advanceTimersByTimeAsync(60_000);
+	assert.equal(statuses.get("usage"), "codex 80% ↻ 2m");
+	assert.equal(fetches, 1);
+
+	Object.assign(ctx, { model: undefined });
+	mock.events.get("session_start")?.[0]?.({}, ctx);
+	await vi.advanceTimersByTimeAsync(60_000);
+	assert.equal(statuses.get("usage"), undefined);
+	assert.equal(fetches, 1);
+
+	Object.assign(ctx, { model: codexModel });
+	mock.events.get("model_select")?.[0]?.({ model: codexModel }, ctx);
+	await vi.advanceTimersByTimeAsync(0);
+	assert.equal(statuses.get("usage"), "codex 80% ↻ 1m");
+	assert.equal(fetches, 2);
+
+	mock.events.get("session_shutdown")?.[0]?.({}, ctx);
+	assert.equal(statuses.get("usage"), undefined);
+	await vi.advanceTimersByTimeAsync(60_000);
+	assert.equal(statuses.get("usage"), undefined);
+	assert.equal(fetches, 2);
+});
+
 test("a slow command cannot overwrite status after the selected model changes", async (t) => {
 	const originalFetch = globalThis.fetch;
 	t.onTestFinished(() => {
@@ -1864,10 +1932,10 @@ test("the Settings menu action gives RPC mode the active manual settings path", 
 	assert.match(notifications[0]?.message ?? "", /Edit settings manually: \/tmp\/pi-usage\.json/);
 });
 
-test("the TUI SettingsList describes and applies xAI changes immediately", async (t) => {
+test("the TUI SettingsList describes and applies usage preferences immediately", async (t) => {
 	const settings = memorySettingsRuntime(false);
 	const rendered: string[][] = [];
-	let applied = 0;
+	const applied = new Set<string>();
 	const controller = new AbortController();
 	const previousKeybindings = getKeybindings();
 	const remappedKeybindings = new KeybindingsManager(TUI_KEYBINDINGS, {
@@ -1910,7 +1978,11 @@ test("the TUI SettingsList describes and applies xAI changes immediately", async
 				rendered.push(component.render(100));
 				component.handleInput("j");
 				component.handleInput("x");
-				setImmediate(() => component.handleInput("q"));
+				setImmediate(() => {
+					component.handleInput("j");
+					component.handleInput("x");
+					setImmediate(() => component.handleInput("q"));
+				});
 			}),
 	});
 
@@ -1919,15 +1991,19 @@ test("the TUI SettingsList describes and applies xAI changes immediately", async
 		settings.runtime,
 		controller.signal,
 		() => true,
-		(id) => {
-			if (id === "xaiUsage") applied += 1;
-		},
+		(id) => applied.add(id),
 	);
 
 	assert.equal(changed, true);
+	assert.equal(settings.state().settings.codexStatusResetCountdown, true);
 	assert.equal(settings.state().settings.xaiUsage, true);
-	assert.equal(applied, 1);
+	assert.deepEqual(applied, new Set(["codexStatusResetCountdown", "xaiUsage"]));
 	const renderedSettings = rendered.map((lines) => lines.join("\n"));
+	assert.ok(
+		renderedSettings.some((frame) =>
+			/Show time remaining until each Codex usage limit resets/.test(frame),
+		),
+	);
 	assert.ok(
 		renderedSettings.some((frame) => /OAuth subscription allowance and credits/.test(frame)),
 	);
@@ -1992,6 +2068,7 @@ test("Ctrl+C hard-cancels Settings before conflicting configurable actions", asy
 	assert.equal(changed, false);
 	assert.deepEqual(settings.state().settings, {
 		codexFastMode: false,
+		codexStatusResetCountdown: false,
 		xaiUsage: false,
 	});
 	assert.equal(applied, 0);
@@ -2128,6 +2205,7 @@ test("a durable settings save still applies lifecycle cleanup when disposal wins
 					done,
 				);
 				component.handleInput("\u001b[B");
+				component.handleInput("\u001b[B");
 				component.handleInput("\r");
 			}),
 	});
@@ -2180,6 +2258,7 @@ test("the TUI SettingsList rolls back its displayed and effective value after sa
 					{ matches: () => false },
 					done,
 				);
+				component.handleInput("\u001b[B");
 				component.handleInput("\u001b[B");
 				component.handleInput("\r");
 				setImmediate(() => component.handleInput("\u0003"));

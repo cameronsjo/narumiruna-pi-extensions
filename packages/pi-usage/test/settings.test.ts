@@ -38,10 +38,12 @@ test("normalizes the default-enabled xAI setting and rejects invalid values", ()
 	assert.deepEqual(normalizeUsageSettings({}), DEFAULT_USAGE_SETTINGS);
 	assert.deepEqual(normalizeUsageSettings({ codexFastMode: true }), {
 		codexFastMode: true,
+		codexStatusResetCountdown: true,
 		xaiUsage: true,
 	});
 	assert.deepEqual(normalizeUsageSettings({ xaiUsage: false }), {
 		codexFastMode: false,
+		codexStatusResetCountdown: true,
 		xaiUsage: false,
 	});
 	assert.equal(normalizeUsageSettings({ codexFastMode: "true" }), undefined);
@@ -184,4 +186,13 @@ test("failed saves retain prior runtime state, clean up, and do not poison retri
 	rejectRename = false;
 	await runtime.update({ codexFastMode: true });
 	assert.equal(runtime.get().settings.codexFastMode, true);
+});
+
+test("normalizes the Codex reset countdown status preference", () => {
+	assert.deepEqual(normalizeUsageSettings({ codexStatusResetCountdown: false }), {
+		codexFastMode: false,
+		xaiUsage: true,
+		codexStatusResetCountdown: false,
+	});
+	assert.equal(normalizeUsageSettings({ codexStatusResetCountdown: "false" }), undefined);
 });
