@@ -16,6 +16,8 @@ concurrency:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    env:
+      PI_EXTENSIONS_AFFECTED_BASE: ${{ github.event.pull_request.base.sha || '' }}
 
     steps:
       - name: Check out repository
@@ -40,10 +42,10 @@ jobs:
           test "$installed_version" = "$expected_version"
           test "$cli_version" = "$expected_version"
 
-      - name: Run checks
+      - name: Run affected checks
         run: npm run check
 
       - name: Run affected tests
         env:
-          PI_EXTENSIONS_TEST_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          PI_EXTENSIONS_BUILD_READY: "1"
         run: npm test

@@ -65,6 +65,10 @@ function gitPaths(root, args) {
 }
 
 export function selectStagedTypechecks(root, changedFiles) {
+	return selectAffectedTypechecks(root, changedFiles, "staged");
+}
+
+export function selectAffectedTypechecks(root, changedFiles, changeLabel = "changed") {
 	const workspaces = readWorkspaces(root);
 	const workspaceByDirectory = new Map(
 		workspaces.map((workspace) => [workspace.directoryName, workspace]),
@@ -75,7 +79,7 @@ export function selectStagedTypechecks(root, changedFiles) {
 	for (const changedFile of changedFiles) {
 		const normalized = changedFile.split(path.sep).join("/").replace(/^\.\//u, "");
 		if (!normalized || normalized.startsWith("../") || path.posix.isAbsolute(normalized)) {
-			fullReason = `unsafe staged path: ${changedFile}`;
+			fullReason = `unsafe ${changeLabel} path: ${changedFile}`;
 			break;
 		}
 
@@ -94,13 +98,13 @@ export function selectStagedTypechecks(root, changedFiles) {
 		}
 
 		if (ROOT_FULL_TYPECHECK_FILES.has(normalized) || normalized.startsWith("scripts/")) {
-			fullReason = `shared typecheck input staged: ${normalized}`;
+			fullReason = `shared typecheck input ${changeLabel}: ${normalized}`;
 			break;
 		}
 
 		if (isIgnoredRootFile(normalized)) continue;
 		if (/\.(?:[cm]?[jt]sx?|json)$/u.test(normalized)) {
-			fullReason = `unscoped code or configuration staged: ${normalized}`;
+			fullReason = `unscoped code or configuration ${changeLabel}: ${normalized}`;
 			break;
 		}
 	}
@@ -114,7 +118,7 @@ export function selectStagedTypechecks(root, changedFiles) {
 			buildWorkspaceNames: [],
 			workspaceDirectories: [],
 			workspaceNames: [],
-			reason: "no typecheck-relevant files are staged",
+			reason: `no typecheck-relevant files ${changeLabel}`,
 		};
 	}
 
@@ -133,7 +137,7 @@ export function selectStagedTypechecks(root, changedFiles) {
 			.filter(({ name }) => affectedNames.has(name))
 			.map(({ directoryName }) => directoryName),
 		workspaceNames: orderDependenciesFirst(workspaces, affectedNames),
-		reason: `${directlyAffected.size} directly staged workspace(s), ${affectedNames.size} affected workspace(s)`,
+		reason: `${directlyAffected.size} directly ${changeLabel} workspace(s), ${affectedNames.size} affected workspace(s)`,
 	};
 }
 

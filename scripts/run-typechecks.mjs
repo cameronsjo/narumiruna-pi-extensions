@@ -3,22 +3,44 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { selectStagedTypechecks, stagedFiles } from "./select-staged-typechecks.mjs";
+import { changedFilesSince } from "./select-affected-tests.mjs";
+import {
+	selectAffectedTypechecks,
+	selectStagedTypechecks,
+	stagedFiles,
+} from "./select-staged-typechecks.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const stagedOnly = process.argv.slice(2).includes("--staged");
+const args = process.argv.slice(2);
+const stagedOnly = args.includes("--staged");
+const affectedOnly = args.includes("--affected");
 
-if (!stagedOnly) {
+if (!stagedOnly && !affectedOnly) {
 	runFullTypechecks();
 	process.exit(0);
 }
+if (stagedOnly && affectedOnly) {
+	console.error("Choose either --staged or --affected, not both.");
+	process.exit(2);
+}
 
 let selection;
+let selectionLabel;
 try {
-	selection = selectStagedTypechecks(root, stagedFiles(root));
+	if (affectedOnly) {
+		const base = process.env.PI_EXTENSIONS_AFFECTED_BASE;
+		if (!base) throw new Error("PI_EXTENSIONS_AFFECTED_BASE is not set");
+		selection = selectAffectedTypechecks(root, changedFilesSince(root, base));
+		selectionLabel = "affected";
+	} else {
+		selection = selectStagedTypechecks(root, stagedFiles(root));
+		selectionLabel = "staged";
+	}
 } catch (error) {
 	const message = error instanceof Error ? error.message : String(error);
-	console.warn(`Could not select staged typechecks (${message}); falling back to all workspaces.`);
+	console.warn(
+		`Could not select ${selectionLabel ?? "requested"} typechecks (${message}); falling back to all workspaces.`,
+	);
 	runFullTypechecks();
 	process.exit(0);
 }
@@ -34,7 +56,7 @@ if (selection.mode === "full") {
 }
 
 console.log(
-	`Running affected workspace typechecks for ${selection.workspaceDirectories.join(", ")}: ${selection.reason}.`,
+	`Running ${selectionLabel} workspace typechecks for ${selection.workspaceDirectories.join(", ")}: ${selection.reason}.`,
 );
 if (process.env.PI_EXTENSIONS_BUILD_READY !== "1" && selection.buildWorkspaceNames.length > 0) {
 	runWorkspaceScript("build", selection.buildWorkspaceNames, true);

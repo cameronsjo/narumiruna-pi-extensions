@@ -31,6 +31,17 @@ test("check and test remain separate CI gates", () => {
 	assert.ok(testIndex > checkIndex, "CI must run tests after checks");
 });
 
+test("pull requests scope checks and tests to their base revision", () => {
+	const ciWorkflow = read(".github/workflows/ci.yml");
+	assert.match(
+		ciWorkflow,
+		/PI_EXTENSIONS_AFFECTED_BASE: \$\{\{ github\.event\.pull_request\.base\.sha \|\| '' \}\}/u,
+	);
+	assert.match(ciWorkflow, /PI_EXTENSIONS_BUILD_READY: "1"/u);
+	assert.match(read("scripts/run-checks.mjs"), /PI_EXTENSIONS_AFFECTED_BASE/u);
+	assert.match(read("scripts/run-tests.mjs"), /PI_EXTENSIONS_AFFECTED_BASE/u);
+});
+
 test("publish releases only the revision from a successful main CI push", () => {
 	const publishWorkflow = read(".github/workflows/publish.yml");
 	assert.match(

@@ -37,9 +37,6 @@ console.log(
 );
 
 if (process.env.PI_EXTENSIONS_BUILD_READY !== "1") runNpm(["run", "build"]);
-fs.rmSync(outDir, { recursive: true, force: true });
-run(tsc, ["-p", "tsconfig.test.json"]);
-
 const sourceTestFiles = [
 	...findFiles(path.join(root, "test"), ".test.ts"),
 	...findFiles(path.join(root, "packages"), ".test.ts"),
@@ -48,6 +45,27 @@ const testFiles = sourceTestFiles.filter((testFile) => selectedTestFile(testFile
 if (testFiles.length === 0) {
 	console.error("No selected test files found.");
 	process.exit(1);
+}
+
+fs.rmSync(outDir, { recursive: true, force: true });
+if (selection.mode === "full") {
+	run(tsc, ["-p", "tsconfig.test.json"]);
+} else {
+	fs.mkdirSync(outDir, { recursive: true });
+	const selectedTsconfig = path.join(outDir, "tsconfig.selected.json");
+	fs.writeFileSync(
+		selectedTsconfig,
+		`${JSON.stringify({
+			extends: path.join(root, "tsconfig.test.json"),
+			files: testFiles,
+			include: [
+				path.join(root, "packages/*/src/**/*.d.ts"),
+				path.join(root, "packages/*/test/**/*.d.ts"),
+				path.join(root, "test/**/*.d.ts"),
+			],
+		})}\n`,
+	);
+	run(tsc, ["-p", selectedTsconfig]);
 }
 
 const canonicalTempDir = fs.realpathSync(os.tmpdir());
@@ -59,7 +77,7 @@ run(process.execPath, [vitest, "run", ...testFiles], {
 });
 
 function testSelection() {
-	const base = process.env.PI_EXTENSIONS_TEST_BASE;
+	const base = process.env.PI_EXTENSIONS_AFFECTED_BASE || process.env.PI_EXTENSIONS_TEST_BASE;
 	if (!base) {
 		return {
 			mode: "full",
