@@ -1,3 +1,4 @@
+import type { UIPromptKind } from "@earendil-works/pi-coding-agent";
 import type { StyledChunk } from "../format/style.js";
 
 export interface GitBranchSnapshot {
@@ -86,6 +87,7 @@ export interface StarshipRuntimeSnapshot {
 	turnCount: number;
 	activeTools: ReadonlyMap<string, number>;
 	isStreaming: boolean;
+	uiPrompt?: { kind: UIPromptKind; title?: string };
 	lastCompletedTool?: string;
 	contextUsage?: {
 		percent?: number | null;

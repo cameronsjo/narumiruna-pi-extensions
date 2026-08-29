@@ -4,7 +4,9 @@ import type {
 	ReadonlyFooterDataProvider,
 	Theme,
 	ThemeColor,
+	UIPromptKind,
 } from "@earendil-works/pi-coding-agent";
+import { sliceByColumn, visibleWidth } from "@earendil-works/pi-tui";
 import { sanitizeTerminalText } from "@narumitw/pi-tui-kit/terminal-text";
 import { formatDirectoryPath } from "./directory.js";
 import {
@@ -31,6 +33,7 @@ export interface RuntimeState extends ExtensionStatusRuntime {
 	turnCount: number;
 	activeTools: Map<string, number>;
 	isStreaming: boolean;
+	uiPrompt?: { kind: UIPromptKind; title?: string };
 	thinkingLevel: ThinkingLevel;
 	gitStatus?: GitStatusSummary;
 	requestRender?: () => void;
@@ -248,7 +251,20 @@ export function contextColor(percent: number | null | undefined): ThemeColor {
 	return "success";
 }
 
+const MAX_UI_PROMPT_TITLE_WIDTH = 40;
+
+function formatUIPromptTitle(title: string | undefined): string {
+	const safeTitle = title ? sanitizeTerminalText(title).trim() : "";
+	if (visibleWidth(safeTitle) <= MAX_UI_PROMPT_TITLE_WIDTH) return safeTitle;
+	return `${sliceByColumn(safeTitle, 0, MAX_UI_PROMPT_TITLE_WIDTH - 1, true)}…`;
+}
+
 export function formatToolActivity(runtime: RuntimeState): string | undefined {
+	if (runtime.uiPrompt) {
+		const title = formatUIPromptTitle(runtime.uiPrompt.title);
+		return `⌨ waiting for ${runtime.uiPrompt.kind}${title ? ` · ${title}` : ""}`;
+	}
+
 	const active = [...runtime.activeTools.entries()];
 	if (active.length > 0) {
 		const [name, count] = active[0] ?? ["tool", 1];

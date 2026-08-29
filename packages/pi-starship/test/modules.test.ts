@@ -953,25 +953,47 @@ test("first-wave workspace modules render documented snapshot variables", () => 
 	assert.equal(rendered.split("|").length, names.length);
 });
 
-test("activity handles parallel active tools, thinking, completed, and idle", () => {
-	const text = (runtime: Partial<StarshipRuntimeSnapshot>) => {
+test("activity handles UI prompts, tools, thinking, completed, and idle", () => {
+	const text = (runtime: Partial<StarshipRuntimeSnapshot>, format = "$text") => {
 		const config = structuredClone(BUILT_IN_CONFIG);
 		config.format = "$activity";
 		config.formatAst = [{ type: "variable", name: "activity" }];
+		config.modules.activity.format = format;
+		config.modules.activity.formatAst = parseFormat(format);
 		return stripAnsi(renderStatusline(config, fixture(runtime)).ansi);
 	};
-	assert.match(
-		text({
-			activeTools: new Map([
-				["read", 2],
-				["bash", 1],
-			]),
-		}),
-		/read×2\+1/,
-	);
+	const activeTools = new Map([
+		["read", 2],
+		["bash", 1],
+	]);
+	assert.match(text({ activeTools }), /read×2\+1/);
 	assert.match(text({ isStreaming: true, lastCompletedTool: undefined }), /thinking/);
 	assert.match(text({ lastCompletedTool: "bash" }), /completed bash/);
 	assert.match(text({ lastCompletedTool: undefined }), /idle/);
+
+	const kinds = ["select", "confirm", "input", "editor", "custom"] as const;
+	for (const kind of kinds) {
+		assert.match(
+			text({ uiPrompt: { kind }, activeTools, isStreaming: true }),
+			new RegExp(`waiting for ${kind}`, "u"),
+		);
+	}
+	assert.equal(
+		text({ uiPrompt: { kind: "confirm", title: "Deploy production?" } }, "$state|$kind|$title"),
+		"waiting|confirm|Deploy production?",
+	);
+	const unsafeTitle = `Deploy\n\x1b[31mproduction\x1b[0m\u202e ${"界".repeat(30)}`;
+	const safeTitle = text({ uiPrompt: { kind: "confirm", title: unsafeTitle } }, "$title");
+	assert.equal(safeTitle.includes("\n"), false);
+	assert.equal(safeTitle.includes(ESC), false);
+	assert.equal(safeTitle.includes("\u202e"), false);
+	assert.match(safeTitle, /^Deploy production/u);
+	assert.ok(visibleWidth(safeTitle) <= 40);
+	assert.match(safeTitle, /…$/u);
+	assert.match(
+		text({ uiPrompt: { kind: "custom", title: "\x1b[31m\u202e" } }),
+		/waiting for custom$/u,
+	);
 });
 
 test("extension status icons match arbitrary exact keys and explicit namespace wildcards", () => {

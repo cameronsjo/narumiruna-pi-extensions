@@ -7,6 +7,7 @@ import { createMockContext } from "../../../test/support.js";
 import { powerlineExtensionSeparator, renderPowerlineStatusline } from "../src/powerline.js";
 import {
 	formatConfiguredSegment,
+	formatToolActivity,
 	type RuntimeState,
 	renderStatusline,
 	truncateModel,
@@ -147,6 +148,37 @@ test("idle contextual activity rows collapse while explicit empty rows remain", 
 		renderStatusline(300, context.ctx, footerData, {} as Theme, config, runtime),
 	);
 	assert.deepEqual(explicitEmptyRows.split("\n"), ["", "░▒▓ 🤖 sonnet-4", ""]);
+});
+
+test("UI prompt activity sanitizes and bounds titles with kind-only fallbacks", () => {
+	const runtime: RuntimeState = {
+		turnCount: 0,
+		activeTools: new Map([["read", 2]]),
+		isStreaming: true,
+		thinkingLevel: "off",
+		duplicateExtensions: [],
+		extensionStatusIconAliases: new Map(),
+	};
+	const kinds = ["select", "confirm", "input", "editor", "custom"] as const;
+	for (const kind of kinds) {
+		runtime.uiPrompt = { kind };
+		assert.equal(formatToolActivity(runtime), `⌨ waiting for ${kind}`);
+	}
+
+	runtime.uiPrompt = {
+		kind: "confirm",
+		title: `Deploy\n\x1b[31mproduction\x1b[0m\u202e ${"界".repeat(30)}`,
+	};
+	const titled = formatToolActivity(runtime) ?? "";
+	assert.equal(titled.includes("\n"), false);
+	assert.equal(titled.includes(ESCAPE), false);
+	assert.equal(titled.includes("\u202e"), false);
+	assert.match(titled, /^⌨ waiting for confirm · Deploy production/u);
+	assert.ok(visibleWidth(titled) <= visibleWidth("⌨ waiting for confirm · ") + 40);
+	assert.match(titled, /…$/u);
+
+	runtime.uiPrompt = { kind: "custom", title: "\x1b[31m\u202e" };
+	assert.equal(formatToolActivity(runtime), "⌨ waiting for custom");
 });
 
 test("cwd uses Starship repository and three-component directory defaults", () => {

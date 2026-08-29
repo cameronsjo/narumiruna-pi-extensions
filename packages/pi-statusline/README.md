@@ -14,7 +14,7 @@ A representative uncolored layout:
 
 - Works immediately with a balanced default for model, thinking, workspace, Git, context, activity, and time.
 - Removes lower-priority segments before important information is clipped.
-- Shows activity only while Pi is streaming or running tools.
+- Shows when Pi is waiting for an extension UI prompt, streaming, or running tools.
 - Adds optional token, prompt-cache, provider usage, and cost details.
 - Offers three information levels, seven previewable palettes, and advanced custom layouts.
 - Loads a generated split runtime to reduce Pi package startup work.
@@ -119,7 +119,9 @@ If the last remaining segment is itself wider than the row, that row renders emp
 - `cwd` uses Starship's directory presentation defaults: contract the home directory to `~`, contract to the Git repository root when available, then retain at most the last three path components.
   This changes display only; the configured segment list and Pi working directory are untouched.
 - Repository-root discovery is cached with Git status outside footer rendering; a failed root query falls back to home/path-component contraction without hiding the segment.
-- During active work, `tools` shows `💭 thinking` or `⚙ <tool>` with parallel counts.
+- During active work, `tools` shows `⌨ waiting for <kind>`, `💭 thinking`, or `⚙ <tool>` with parallel counts.
+- A sanitized prompt title follows the prompt kind when available.
+- Prompt waiting takes precedence without losing the underlying tool or streaming state, which returns when the prompt closes.
 - Activity disappears after the agent settles and resets across session replacement or shutdown.
 - Clean repositories show no Git counters.
 - Dirty counters are `⇡` ahead, `⇣` behind, `+` staged, `~` modified/deleted, `?` untracked, and `!`
