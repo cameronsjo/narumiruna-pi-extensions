@@ -3,8 +3,8 @@ import { sanitizeDisplayText } from "./core.js";
 import { providerIsConfigured, usageAdapters } from "./query.js";
 import type { PiModel, UsageProviderAdapter } from "./types.js";
 
-export function configuredAdapters(ctx: ExtensionContext, xaiUsage = true): UsageProviderAdapter[] {
-	return usageAdapters(xaiUsage).filter(
+export function configuredAdapters(ctx: ExtensionContext): UsageProviderAdapter[] {
+	return usageAdapters().filter(
 		(adapter) => adapter.id === ctx.model?.provider || providerIsConfigured(ctx, adapter.id),
 	);
 }

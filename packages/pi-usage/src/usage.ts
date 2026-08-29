@@ -104,18 +104,10 @@ export default function usageExtension(
 	let sessionActive = false;
 	let statusGeneration = 0;
 	let sessionGeneration = 0;
-	let xaiSettingsGeneration = 0;
 	let statusRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 	let statusCountdownTimer: ReturnType<typeof setTimeout> | undefined;
 	let statusController: AbortController | undefined;
 	let fastRuntime: ReturnType<typeof registerCodexFastMode>;
-
-	const xaiUsageEnabled = () => {
-		const state = settingsRuntime.get();
-		return state.kind !== "invalid" && state.settings.xaiUsage;
-	};
-	const activeAdapterForProvider = (providerId: string | undefined) =>
-		adapterForProvider(providerId, xaiUsageEnabled());
 
 	const clearStatusRefreshTimer = () => {
 		if (statusRefreshTimer) clearTimeout(statusRefreshTimer);
@@ -168,7 +160,7 @@ export default function usageExtension(
 		shouldSchedule: boolean,
 	) => {
 		clearStatusCountdownTimer();
-		if (activeAdapterForProvider(model.provider)?.publishesStatusline === false) {
+		if (adapterForProvider(model.provider)?.publishesStatusline === false) {
 			clearStatusRefreshTimer();
 			safeSetStatus(ctx, undefined);
 			return;
@@ -260,7 +252,6 @@ export default function usageExtension(
 		deadlineAt = Date.now() + DEFAULT_TIMEOUT_MS,
 	): Promise<QueryOutcome> => {
 		const expectedSessionGeneration = sessionGeneration;
-		const expectedXaiSettingsGeneration = xaiSettingsGeneration;
 		const expectedSessionId = ctx.sessionManager.getSessionId();
 		const expectedModelIdentity = modelIdentity(ctx.model);
 		let auth: ResolvedUsageAuth | undefined;
@@ -290,9 +281,7 @@ export default function usageExtension(
 		const requestContextChanged = () =>
 			expectedSessionGeneration !== sessionGeneration ||
 			ctx.sessionManager.getSessionId() !== expectedSessionId ||
-			modelIdentity(ctx.model) !== expectedModelIdentity ||
-			(adapter.id === "xai" &&
-				(expectedXaiSettingsGeneration !== xaiSettingsGeneration || !xaiUsageEnabled()));
+			modelIdentity(ctx.model) !== expectedModelIdentity;
 		if (requiresRequestBoundaryGuard && requestContextChanged()) throw abortError();
 		if (!auth) {
 			if (displayState === "current") {
@@ -436,7 +425,7 @@ export default function usageExtension(
 		force: boolean,
 		signal: AbortSignal,
 	): Promise<QueryOutcome> => {
-		const adapter = activeAdapterForProvider(model?.provider);
+		const adapter = adapterForProvider(model?.provider);
 		if (!adapter) {
 			const providerId = model?.provider ?? "none";
 			transitionCurrentIdentity(`unsupported:${providerId}`, providerId);
@@ -446,12 +435,9 @@ export default function usageExtension(
 					providerName: providerDisplayName(ctx, providerId),
 					displayState: "current",
 					status: "unsupported",
-					message:
-						providerId === "xai" && !xaiUsageEnabled()
-							? "xAI usage is disabled. Open Settings to enable it."
-							: model
-								? `Usage reporting is not supported for ${providerDisplayName(ctx, providerId)}.`
-								: "No model is selected.",
+					message: model
+						? `Usage reporting is not supported for ${providerDisplayName(ctx, providerId)}.`
+						: "No model is selected.",
 				},
 			};
 		}
@@ -463,7 +449,7 @@ export default function usageExtension(
 		model: PiModel | undefined,
 		force: boolean,
 	) => {
-		const adapter = activeAdapterForProvider(model?.provider);
+		const adapter = adapterForProvider(model?.provider);
 		if (!adapter || !model) {
 			const providerId = model?.provider ?? "none";
 			transitionCurrentIdentity(`unsupported:${providerId}`, providerId);
@@ -546,7 +532,7 @@ export default function usageExtension(
 		if (generation !== statusGeneration || modelIdentity(ctx.model) !== modelIdentity(model)) {
 			return false;
 		}
-		const adapter = activeAdapterForProvider(model?.provider);
+		const adapter = adapterForProvider(model?.provider);
 		if (outcome.authState === "unavailable") {
 			if (!adapter) return false;
 			try {
@@ -720,7 +706,7 @@ export default function usageExtension(
 					providers: () => ({
 						kind: "actions",
 						title: "Select a configured provider",
-						items: configuredAdapters(ctx, xaiUsageEnabled())
+						items: configuredAdapters(ctx)
 							.filter((adapter) => adapter.id !== ctx.model?.provider)
 							.map((adapter) => ({
 								id: adapter.id,
@@ -794,24 +780,14 @@ export default function usageExtension(
 							settingsRuntime,
 							controller.signal,
 							() => statusGeneration === menuGeneration && !controller.signal.aborted,
-							(id, _previous, next) => {
-								if (id === "codexStatusResetCountdown") {
-									if (
-										stableCurrent &&
-										statusGeneration === menuGeneration &&
-										!controller.signal.aborted
-									) {
-										publishStableCurrent(ctx, stableCurrent);
-									}
-									return;
-								}
-								if (id !== "xaiUsage") return;
-								xaiSettingsGeneration += 1;
-								invalidateProviderState("xai");
-								if (!next) {
-									for (const active of activeControllers) {
-										if (active !== controller) active.abort();
-									}
+							(id) => {
+								if (
+									id === "codexStatusResetCountdown" &&
+									stableCurrent &&
+									statusGeneration === menuGeneration &&
+									!controller.signal.aborted
+								) {
+									publishStableCurrent(ctx, stableCurrent);
 								}
 							},
 						);
@@ -1008,7 +984,7 @@ export default function usageExtension(
 						return { kind: "stay" };
 					},
 					another: async () => {
-						const others = configuredAdapters(ctx, xaiUsageEnabled()).filter(
+						const others = configuredAdapters(ctx).filter(
 							(adapter) => adapter.id !== ctx.model?.provider,
 						);
 						if (others.length === 0) {
@@ -1018,7 +994,7 @@ export default function usageExtension(
 						return { kind: "to", screen: "providers" };
 					},
 					provider: async ({ itemId }) => {
-						const adapter = configuredAdapters(ctx, xaiUsageEnabled()).find(
+						const adapter = configuredAdapters(ctx).find(
 							(candidate) => candidate.id === itemId && candidate.id !== ctx.model?.provider,
 						);
 						if (!adapter) return { kind: "back" };
@@ -1046,7 +1022,7 @@ export default function usageExtension(
 						return { kind: "back" };
 					},
 					all: async () => {
-						const adapters = configuredAdapters(ctx, xaiUsageEnabled());
+						const adapters = configuredAdapters(ctx);
 						const currentProviderId = ctx.model?.provider;
 						const settled = await runMenuOperation(
 							ctx,
@@ -1129,7 +1105,6 @@ export default function usageExtension(
 	});
 	pi.on("session_start", (_event, ctx) => {
 		sessionGeneration += 1;
-		xaiSettingsGeneration += 1;
 		statusGeneration += 1;
 		clearStatusTimers();
 		for (const controller of activeControllers) controller.abort();
@@ -1150,7 +1125,6 @@ export default function usageExtension(
 	pi.on("session_shutdown", (_event, ctx) => {
 		sessionActive = false;
 		sessionGeneration += 1;
-		xaiSettingsGeneration += 1;
 		statusGeneration += 1;
 		clearStatusTimers();
 		for (const controller of activeControllers) controller.abort();
