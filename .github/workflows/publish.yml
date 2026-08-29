@@ -48,7 +48,7 @@ jobs:
         with:
           github-token: ${{ secrets.PAT_TOKEN }}
           version-script: npm run version-packages
-          publish-script: npm run publish-packages
+          publish-script: npm run publish-packages:sequential
           commit-message: "chore(release): version packages"
           pr-title: "chore(release): version packages"
           create-github-releases: true

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
 	copyFileSync,
 	existsSync,
@@ -83,6 +83,133 @@ test("Changesets bumps selected packages independently and preserves ordinary in
 			/## 1\.2\.4/u,
 		);
 		assert.deepEqual(readdirSync(path.join(fixture, ".changeset")).sort(), ["config.json"]);
+	} finally {
+		rmSync(fixture, { recursive: true, force: true });
+	}
+});
+
+test("sequential publishing reports a failure and continues with later packages", () => {
+	const fixture = mkdtempSync(path.join(tmpdir(), "pi-sequential-publish-"));
+	try {
+		const plan = {
+			version: 1,
+			plan: [
+				[
+					{
+						kind: "publish",
+						name: "@fixture/pi-alpha",
+						version: "1.0.0",
+						access: "public",
+						tag: "latest",
+					},
+				],
+				[
+					{
+						kind: "publish",
+						name: "@fixture/pi-broken",
+						version: "2.0.0",
+						access: "restricted",
+						tag: "next",
+					},
+				],
+				[
+					{
+						kind: "publish",
+						name: "@fixture/pi-omega",
+						version: "3.0.0",
+						access: "public",
+						tag: "latest",
+					},
+					{
+						kind: "tag-only",
+						name: "@fixture/pi-tag-only",
+						version: "4.0.0",
+					},
+				],
+			],
+		};
+		writeJson(path.join(fixture, "publish-plan.fixture.json"), plan);
+
+		const changesetsBin = path.join(fixture, "node_modules/@changesets/cli/bin.js");
+		mkdirSync(path.dirname(changesetsBin), { recursive: true });
+		writeFileSync(
+			changesetsBin,
+			[
+				'const fs = require("node:fs");',
+				'const path = require("node:path");',
+				'const output = process.argv[process.argv.indexOf("--output") + 1];',
+				'fs.copyFileSync(path.join(process.cwd(), "publish-plan.fixture.json"), output);',
+			].join("\n"),
+		);
+
+		const binDirectory = path.join(fixture, "bin");
+		const npmBin = path.join(binDirectory, "npm");
+		mkdirSync(binDirectory, { recursive: true });
+		writeFileSync(
+			npmBin,
+			[
+				"#!/usr/bin/env node",
+				'const fs = require("node:fs");',
+				'const workspace = process.argv[process.argv.indexOf("--workspace") + 1];',
+				'fs.appendFileSync(process.env.PUBLISH_CALLS, JSON.stringify(process.argv.slice(2)) + "\\n");',
+				'if (workspace === "@fixture/pi-broken") process.exit(17);',
+			].join("\n"),
+			{ mode: 0o755 },
+		);
+
+		const changesetsOutput = path.join(fixture, "changesets-output.ndjson");
+		const callsPath = path.join(fixture, "publish-calls.ndjson");
+		const script = path.join(repositoryRoot, "scripts/publish-packages-sequentially.mjs");
+		const result = spawnSync(process.execPath, [script], {
+			cwd: fixture,
+			encoding: "utf8",
+			env: {
+				...process.env,
+				CHANGESETS_OUTPUT: changesetsOutput,
+				PATH: `${binDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
+				PUBLISH_CALLS: callsPath,
+			},
+		});
+
+		assert.equal(result.status, 1);
+		assert.match(
+			result.stderr,
+			/::error title=Failed to publish @fixture\/pi-broken@2\.0\.0::npm publish exited with code 17/u,
+		);
+		assert.deepEqual(
+			readFileSync(callsPath, "utf8")
+				.trim()
+				.split("\n")
+				.map((line) => JSON.parse(line)),
+			[
+				["publish", "--workspace", "@fixture/pi-alpha", "--access", "public", "--tag", "latest"],
+				["publish", "--workspace", "@fixture/pi-broken", "--access", "restricted", "--tag", "next"],
+				["publish", "--workspace", "@fixture/pi-omega", "--access", "public", "--tag", "latest"],
+			],
+		);
+		assert.deepEqual(
+			readFileSync(changesetsOutput, "utf8")
+				.trim()
+				.split("\n")
+				.map((line) => JSON.parse(line)),
+			[
+				{
+					type: "git-tag",
+					tag: "@fixture/pi-alpha@1.0.0",
+					packageName: "@fixture/pi-alpha",
+				},
+				{
+					type: "git-tag",
+					tag: "@fixture/pi-omega@3.0.0",
+					packageName: "@fixture/pi-omega",
+				},
+				{
+					type: "git-tag",
+					tag: "@fixture/pi-tag-only@4.0.0",
+					packageName: "@fixture/pi-tag-only",
+				},
+			],
+		);
 	} finally {
 		rmSync(fixture, { recursive: true, force: true });
 	}
