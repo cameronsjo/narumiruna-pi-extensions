@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import {
 	mkdir,
 	mkdtemp,
@@ -194,7 +195,7 @@ test("Pi's Jiti loader loads the generated extension and child bridge", async ()
 		assert.deepEqual([...(main?.messageRenderers.keys() ?? [])], ["pi-subagents-completion"]);
 		assert.deepEqual(
 			[...(main?.tools.keys() ?? [])],
-			["subagent_spawn", "subagent_inspect", "subagent_cancel", "subagent_wait", "subagent_reply"],
+			["subagent_spawn", "subagent_inspect", "subagent_cancel", "subagent_wait", "subagent_send"],
 		);
 
 		const childLoader = new DefaultResourceLoader({
@@ -208,6 +209,10 @@ test("Pi's Jiti loader loads the generated extension and child bridge", async ()
 		assert.deepEqual(loadedChild.errors, []);
 		assert.equal(loadedChild.extensions.length, 1);
 		assert.deepEqual([...(loadedChild.extensions[0]?.tools.keys() ?? [])], []);
+		assert.deepEqual(await loadCredentialBackedChild(output, agentDir, root), {
+			errors: 0,
+			tools: ["subagent_send", "subagent_wait"],
+		});
 	} finally {
 		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
@@ -256,6 +261,55 @@ test("failed validation and publication preserve the previous runtime", async ()
 		await rm(root, { force: true, recursive: true });
 	}
 });
+
+async function loadCredentialBackedChild(
+	output: string,
+	agentDir: string,
+	cwd: string,
+): Promise<{ errors: number; tools: string[] }> {
+	const source = `
+import { DefaultResourceLoader, SettingsManager } from "@earendil-works/pi-coding-agent";
+const [output, agentDir, cwd] = process.argv.slice(1);
+const loader = new DefaultResourceLoader({
+  cwd,
+  agentDir,
+  settingsManager: SettingsManager.inMemory({}),
+  additionalExtensionPaths: [output + "/child-communication-bridge.ts"],
+});
+await loader.reload();
+const loaded = loader.getExtensions();
+process.stdout.write(JSON.stringify({
+  errors: loaded.errors.length,
+  tools: [...(loaded.extensions[0]?.tools.keys() ?? [])],
+}));
+`;
+	const child = spawn(
+		process.execPath,
+		["--input-type=module", "-e", source, output, agentDir, cwd],
+		{
+			cwd: resolve("."),
+			env: { ...process.env, PI_SUBAGENT_BROKER_FD: "3" },
+			stdio: ["ignore", "pipe", "pipe", "pipe"],
+		},
+	);
+	const credentials = child.stdio[3];
+	assert.ok(credentials && "end" in credentials);
+	credentials.end(JSON.stringify({ host: "127.0.0.1", port: 31_337, token: "a".repeat(64) }));
+	let stdout = "";
+	let stderr = "";
+	child.stdout?.on("data", (chunk: Buffer) => {
+		stdout += chunk.toString();
+	});
+	child.stderr?.on("data", (chunk: Buffer) => {
+		stderr += chunk.toString();
+	});
+	const code = await new Promise<number | null>((resolveExit, reject) => {
+		child.once("error", reject);
+		child.once("close", resolveExit);
+	});
+	assert.equal(code, 0, stderr);
+	return JSON.parse(stdout) as { errors: number; tools: string[] };
+}
 
 function requireOutput(metadata: BuildMetadata, path: string) {
 	const output = metadata.outputs?.[path];

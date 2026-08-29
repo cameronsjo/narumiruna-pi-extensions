@@ -11,7 +11,7 @@
 
 Starts one task-specialized subagent job with the selected tool capabilities and returns its job ID immediately.
 
-The runtime always adds `subagent_ask` and `subagent_wait` to the selected tools.
+The runtime always adds `subagent_send` and `subagent_wait` to the selected tools.
 
 The child inherits the main agent's effective provider and model at spawn time.
 
@@ -44,40 +44,51 @@ No parameters.
 | `jobId` | `string` | Yes | Job ID to wait for. |
 | `timeout` | `number` | No | Seconds; `> 0` through `2,147,483.647`; no default and does not cancel the job. |
 
-Returns `{ jobId, state, timedOut: false, interrupted: true, reason: "subagent_message" }` without cancelling the job when any unanswered child question needs a main-agent response.
+Returns `{ jobId, state, timedOut: false, interrupted: true, reason: "subagent_message" }` without cancelling the job when a child request or response arrives.
 
 ### Subagent
 
 | Parameter | Type | Required | Constraint / default |
 | --- | --- | --- | --- |
-| `requestId` | `string` | Yes | Request ID returned by `subagent_ask`. |
+| `requestId` | `string` | Yes | Request ID returned by a child-originated `subagent_send`. |
 | `timeout` | `number` | No | Seconds; `> 0` through `2,147,483.647`; no default and does not cancel the request. |
 
 Returns the main agent's response as plain text.
 
 A timeout or caller cancellation throws and stops only that wait, so the child may wait for the same request again.
 
-## `subagent_ask`
+## `subagent_send`
 
-Available only to subagents.
-
-| Parameter | Type | Required | Constraint / default |
-| --- | --- | --- | --- |
-| `message` | `string` | Yes | Self-contained question for the main agent, up to 50 KiB of UTF-8 text. |
-
-Returns a request ID immediately.
-
-Each job may have up to four unanswered or answered-but-not-consumed requests.
-
-## `subagent_reply`
-
-Available only to the main agent.
+Main and child processes receive the same provider-visible tool definition.
 
 | Parameter | Type | Required | Constraint / default |
 | --- | --- | --- | --- |
-| `requestId` | `string` | Yes | Pending request ID received from a subagent. |
-| `message` | `string` | Yes | Plain-text response, up to 50 KiB of UTF-8 text and 2,000 lines. |
+| `recipient` | `string` | Conditional | Recipient for a new request; use an active job ID from main or `main` from a child. |
+| `requestId` | `string` | Conditional | Pending request to answer. |
+| `message` | `string` | Yes | Plain-text request or response, up to 50 KiB of UTF-8 text. |
 
-The first accepted response wins.
+Provide exactly one of `recipient` or `requestId`.
 
-Returns an acknowledgement without replacing an earlier response.
+A new request provides `recipient` and omits `requestId`.
+
+A response provides `requestId` and omits `recipient`.
+
+The main agent may send a new request only to a queued or running job ID.
+
+A child may send a new request only to the literal recipient `main`.
+
+A main-originated request waits for the child RPC prompt to be accepted and then uses Pi steering to reach the running child.
+
+A child response arrives asynchronously in the main session and interrupts an active main-agent `subagent_wait`.
+
+A child-originated request returns a request ID immediately, and the child may pass that ID to `subagent_wait`.
+
+The first accepted response wins, and repeated responses acknowledge the existing response without replacing it.
+
+Each job may have up to four unresolved or answered-but-not-consumed requests across both directions.
+
+Responses are limited to 2,000 lines.
+
+Terminal jobs, unknown requests, cross-job responses, responses from the request originator, and stale session credentials throw.
+
+A successful call returns `{ requestId, accepted, duplicate }`.

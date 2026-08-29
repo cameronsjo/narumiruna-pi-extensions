@@ -9,7 +9,7 @@ import { MAX_FRAME_BYTES, MAX_IDENTIFIER_LENGTH } from "./message-broker.js";
 import type { BrokerCredentials } from "./types.js";
 
 const CONNECT_TIMEOUT_MS = 2_000;
-const ASK_RESPONSE_TIMEOUT_MS = 5_000;
+const SEND_RESPONSE_TIMEOUT_MS = 5_000;
 
 const captured = captureBrokerCredentials();
 
@@ -21,22 +21,28 @@ export default childCommunicationBridge;
 
 export function createBrokerClient(credentials: BrokerCredentials): ChildCommunicationClient {
 	return {
-		async ask(message, signal) {
+		async send(params, signal) {
 			const response = await requestBroker(
 				credentials,
-				{ type: "ask", token: credentials.token, message },
+				{ type: "send", token: credentials.token, ...params },
 				signal,
-				ASK_RESPONSE_TIMEOUT_MS,
+				SEND_RESPONSE_TIMEOUT_MS,
 			);
 			if (response.ok !== true) throw brokerError(response);
 			if (
 				typeof response.requestId !== "string" ||
 				!response.requestId ||
-				response.requestId.length > MAX_IDENTIFIER_LENGTH
+				response.requestId.length > MAX_IDENTIFIER_LENGTH ||
+				typeof response.accepted !== "boolean" ||
+				typeof response.duplicate !== "boolean"
 			) {
-				throw new Error("Subagent broker returned an invalid request ID.");
+				throw new Error("Subagent broker returned an invalid send acknowledgement.");
 			}
-			return response.requestId;
+			return {
+				requestId: response.requestId,
+				accepted: response.accepted,
+				duplicate: response.duplicate,
+			};
 		},
 		async wait(requestId, timeoutMs, signal) {
 			const response = await requestBroker(

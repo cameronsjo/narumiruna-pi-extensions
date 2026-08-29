@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-subagents)](https://www.npmjs.com/package/@narumitw/pi-subagents) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-Pi Subagents runs Pi jobs in separate child processes and lets each child ask the main agent necessary questions through an authenticated loopback broker.
+Pi Subagents runs Pi jobs in separate child processes and supports authenticated request-response messaging in both directions while each job is active.
 
 ## ✨ Features
 
@@ -10,8 +10,9 @@ Pi Subagents runs Pi jobs in separate child processes and lets each child ask th
 - Uses the task to define the child's specialization and the tool list to limit its capabilities.
 - Defaults work tools to `read`, `grep`, `find`, and `ls`.
 - Inherits the main agent's effective model and uses its thinking level by default.
-- Gives every child fixed `subagent_ask` and `subagent_wait` tools for necessary questions.
-- Lets the main agent answer with `subagent_reply` without cancelling the job.
+- Gives the main agent and every child one shared `subagent_send` contract for bidirectional requests and responses.
+- Gives every child `subagent_wait` for an answer to a child-originated request.
+- Lets the main agent question a queued or running job through Pi RPC steering without retaining the child after completion.
 - Publishes one asynchronous terminal completion and shows active-job progress above the editor.
 - Exposes privacy-filtered metadata without task text, output, prompts, selected tools, or broker credentials.
 - Cancels session-owned work and closes the broker during replacement, reload, or shutdown.
@@ -71,7 +72,11 @@ The call returns a `jobId` immediately, and the job continues in the background.
 
 Continue useful main-agent work until the result is required or a completion arrives.
 
-If `subagent_wait` returns `reason: "subagent_message"`, answer the visible question with `subagent_reply` and wait for the job again only when needed.
+Call `subagent_send` with `recipient: jobId` to ask an active child a question.
+
+If `subagent_wait` returns `reason: "subagent_message"`, handle the visible request or response and wait for the job again only when needed.
+
+Answer a child-originated request by calling `subagent_send` with its `requestId`.
 
 Completion messages follow Pi's global tool-output expansion state and the `app.tools.expand` binding (`Ctrl+O` by default).
 
@@ -88,31 +93,39 @@ The main Pi session exposes five fixed tools:
 | `subagent_spawn` | `task`, optional `tools`, `thinkingLevel`, `timeout` | Start one subagent job and return its `jobId`. |
 | `subagent_inspect` | none | List privacy-filtered retained-job metadata. |
 | `subagent_cancel` | `jobId` | Idempotently cancel one queued or running job. |
-| `subagent_wait` | `jobId`, optional `timeout` | Wait for a job or return early for a pending child question. |
-| `subagent_reply` | `requestId`, `message` | Answer one pending child question without replacing an accepted reply. |
+| `subagent_wait` | `jobId`, optional `timeout` | Wait for a job or return early for an incoming child message. |
+| `subagent_send` | `recipient` or `requestId`, plus `message` | Send a new request to an active child or answer one pending child request. |
 
 Every child exposes these communication tools in addition to its selected work tools:
 
 | Tool | Parameters | Purpose |
 | --- | --- | --- |
-| `subagent_ask` | `message` | Send one question to the main agent and return a `requestId`. |
-| `subagent_wait` | `requestId`, optional `timeout` | Wait for the main agent's plain-text reply. |
+| `subagent_send` | `recipient` or `requestId`, plus `message` | Send a new request to `main` or answer one pending main-agent request. |
+| `subagent_wait` | `requestId`, optional `timeout` | Wait for the main agent's plain-text response to a child-originated request. |
+
+Main and child processes receive the same provider-visible `subagent_send` definition.
+
+A new request provides `recipient` and omits `requestId`.
+
+A response provides `requestId` and omits `recipient`.
+
+The main agent uses an active job ID as `recipient`, while a child may use only the literal recipient `main`.
 
 Execution and wait timeouts use seconds, accept finite numbers greater than zero through 2,147,483.647, and have no default.
 
 Omitting a job execution timeout lets the child run until it exits, is cancelled, the session shuts down, or the Pi process exits.
 
-A wait timeout or caller cancellation stops only that wait and does not cancel its job or question request.
+A wait timeout or caller cancellation stops only that wait and does not cancel its job or message request.
 
-Tasks, questions, and replies are limited to 50 KiB of UTF-8 text.
+Tasks, requests, and responses are limited to 50 KiB of UTF-8 text.
 
-Replies are also limited to 2,000 lines so successful child tool output stays within Pi's tool-result bound.
+Responses are also limited to 2,000 lines so successful child tool output stays within Pi's tool-result bound.
 
-Each job may have up to four unanswered or not-yet-consumed question requests.
+Each job may have up to four unresolved or answered-but-not-consumed requests across both directions.
 
 The terminal states are `completed`, `partial`, `failed`, `timed_out`, and `cancelled`.
 
-`subagent_inspect` never returns complete task text, child output, prompts, selected tools, context, credentials, environment variables, questions, replies, or secrets.
+`subagent_inspect` never returns complete task text, child output, prompts, selected tools, context, credentials, environment variables, requests, responses, or secrets.
 
 See [`docs/tools.md`](./docs/tools.md) for the concise schema reference.
 
@@ -130,7 +143,7 @@ Omitting `tools` selects `read`, `grep`, `find`, and `ls`.
 
 Passing an empty list gives the child no work tools.
 
-The runtime always adds `subagent_ask` and child `subagent_wait` and removes duplicate names.
+The runtime always adds `subagent_send` and child `subagent_wait` and removes duplicate names.
 
 Adding `edit` or `write` lets the child modify files.
 
@@ -160,11 +173,15 @@ The parent passes the broker credentials once through a private inherited pipe i
 
 The child bridge reads and closes that descriptor before model tool execution.
 
-Each child communication tool call uses one request-scoped connection, while a response wait uses an abortable long poll.
+Each child runs in Pi RPC mode so the parent can inject a main-originated request through `steer` after the initial prompt is accepted.
 
-The first accepted `subagent_reply` wins.
+Each child broker call uses one request-scoped connection, while a response wait uses an abortable long poll.
 
-Repeated replies acknowledge the existing answer without replacing it.
+A main-originated request to a queued job waits for RPC readiness before delivery is accepted.
+
+The first accepted `subagent_send` response wins.
+
+Repeated responses acknowledge the existing answer without replacing it.
 
 A child may retry `subagent_wait` after a wait timeout because the underlying request remains active.
 
@@ -194,9 +211,12 @@ Use these replacements where the new job model supports the previous intent:
 | `subagent_await` | `subagent_wait` |
 | `subagent_inspect` | `subagent_inspect` |
 | `subagent_manage` cancellation | `subagent_cancel` |
-| Child-to-main questions | Child `subagent_ask` and `subagent_wait`, plus main `subagent_reply` |
+| Child-to-main questions | Child `subagent_send` and `subagent_wait`, plus main `subagent_send` |
+| Running main-to-child questions | Main and child `subagent_send` |
 
-The `/subagents` command, extension settings, `subagent_send`, `subagent_mailbox`, `subagent_consult`, custom agent catalogs, retained follow-ups, advanced orchestration, alternate transports, trust-aware cwd policy, and extension-owned worktrees have no direct replacement.
+The version 3 `subagent_send` contract is not compatible with the legacy retained-agent follow-up tool of the same name.
+
+The `/subagents` command, extension settings, legacy retained follow-ups, `subagent_mailbox`, `subagent_consult`, custom agent catalogs, advanced orchestration, alternate transports, trust-aware cwd policy, and extension-owned worktrees have no direct replacement.
 
 Describe the child's specialization in `task` and grant only the required work tools through `tools`.
 
@@ -220,13 +240,15 @@ The broker accepts only loopback TCP connections with an active per-job token.
 
 The token is bootstrapped through a private inherited pipe and is absent from the child's initial environment and command line.
 
-A child question is visible model context, but its envelope explicitly identifies it as untrusted subagent content rather than user authorization.
+A child request or response is visible main-agent model context, but its envelope explicitly identifies it as untrusted subagent content rather than user authorization.
 
-A child question cannot grant permission for writes, shell commands, credential access, or other privileged actions.
+A child message cannot grant permission for writes, shell commands, credential access, or other privileged actions.
+
+A main-agent request is visible child model context, but it cannot expand the child's selected tools or grant capabilities the child did not receive at spawn time.
 
 Terminal controls and bidirectional controls are stripped before untrusted child text is displayed.
 
-Tasks, repository context, questions, and inspected file content may be sent to the selected model provider.
+Tasks, repository context, requests, responses, and inspected file content may be sent to the selected model provider.
 
 Parallel writers require disjoint ownership or workspace isolation outside this extension.
 
@@ -238,11 +260,11 @@ Process-local runtime API keys are not forwarded to children.
 
 The extension does not provide custom agents, per-job models, custom system prompts, peer-to-peer child messaging, retained conversations, user-directed follow-up work, mailboxes, Agent Teams, chains, fan-in aggregators, panels, workflow DAGs, dynamic scheduling, verification orchestration, nested subagents, or extension-owned semantic memory.
 
-Child questions use request-response coordination, not a retained conversational session.
+Bidirectional messages use request-response coordination, not a retained conversational session.
 
 The main agent must verify child claims against the actual diff and deterministic checks.
 
-Questions trigger a main-agent turn, but asynchronous job completions do not wake an otherwise idle model turn automatically.
+Child requests and responses trigger a main-agent turn, but asynchronous job completions do not wake an otherwise idle model turn automatically.
 
 Jobs, broker requests, and retained results do not survive extension reload, session replacement, or process exit.
 

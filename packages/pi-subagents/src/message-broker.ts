@@ -15,20 +15,23 @@ const REQUEST_FRAME_TIMEOUT_MS = 2_000;
 const MAX_TIMEOUT_MS = 2_147_483_647;
 const MAX_RETAINED_CONSUMED_REQUESTS = 4;
 
-export interface BrokerQuestion {
+export type BrokerRequestOrigin = "main" | "child";
+
+export interface BrokerInboundMessage {
+	kind: "request" | "response";
 	requestId: string;
 	jobId: string;
 	message: string;
 }
 
-export interface BrokerReplyAcknowledgement {
+export interface BrokerSendAcknowledgement {
 	requestId: string;
 	accepted: boolean;
 	duplicate: boolean;
 }
 
 export interface MessageBrokerOptions {
-	onQuestion(question: BrokerQuestion): void;
+	onMessage(message: BrokerInboundMessage): void;
 	createServer?: (listener: (socket: Socket) => void) => Server;
 	now?: () => number;
 	requestFrameTimeoutMs?: number;
@@ -45,18 +48,30 @@ interface RequestWaiter {
 	timer?: NodeJS.Timeout;
 }
 
-interface QuestionRecord extends BrokerQuestion {
+interface RequestRecord {
+	requestId: string;
+	jobId: string;
+	generation: number;
+	origin: BrokerRequestOrigin;
+	expectedResponder: BrokerRequestOrigin;
+	message: string;
 	createdAt: number;
-	answer?: string;
+	response?: string;
 	consumedAt?: number;
 	waiter?: RequestWaiter;
 }
 
 type BrokerRequest =
-	| { type: "ask"; token: string; message: string }
+	| {
+			type: "send";
+			token: string;
+			recipient?: string;
+			requestId?: string;
+			message: string;
+	  }
 	| { type: "wait"; token: string; requestId: string; timeoutMs?: number };
 
-/** Session-scoped authenticated loopback transport for child questions and main-agent replies. */
+/** Session-scoped authenticated loopback transport for bidirectional requests and responses. */
 export class MessageBroker {
 	private server?: Server;
 	private starting?: Promise<void>;
@@ -66,8 +81,8 @@ export class MessageBroker {
 	private readonly sockets = new Set<Socket>();
 	private readonly jobsByToken = new Map<string, JobRecord>();
 	private readonly tokenByJob = new Map<string, string>();
-	private readonly questions = new Map<string, QuestionRecord>();
-	private readonly pendingQuestionListeners = new Set<() => void>();
+	private readonly requests = new Map<string, RequestRecord>();
+	private readonly inboundMessageListeners = new Set<() => void>();
 	private readonly createServer: (listener: (socket: Socket) => void) => Server;
 	private readonly now: () => number;
 	private readonly requestFrameTimeoutMs: number;
@@ -146,49 +161,49 @@ export class MessageBroker {
 		return { host: BROKER_HOST, port: this.address?.port ?? 0, token };
 	}
 
+	createMainRequest(jobId: string, message: string): BrokerSendAcknowledgement {
+		this.assertReady();
+		const job = this.requireJob(jobId);
+		return this.createRequest(job, "main", message);
+	}
+
+	replyFromMain(requestId: string, message: string): BrokerSendAcknowledgement {
+		this.assertReady();
+		return this.acceptResponse("main", undefined, requestId, message);
+	}
+
+	rollbackMainRequest(requestId: string): void {
+		const request = this.requests.get(requestId);
+		if (request?.origin === "main" && request.response === undefined) {
+			this.clearWaiter(request);
+			this.requests.delete(requestId);
+		}
+	}
+
 	revokeJob(jobId: string, reason = "Subagent job is no longer active."): void {
 		const token = this.tokenByJob.get(jobId);
 		if (token) {
 			this.tokenByJob.delete(jobId);
 			this.jobsByToken.delete(token);
 		}
-		for (const question of [...this.questions.values()]) {
-			if (question.jobId !== jobId) continue;
-			if (question.waiter) this.respondError(question.waiter.socket, reason);
-			this.clearWaiter(question);
-			this.questions.delete(question.requestId);
+		for (const request of [...this.requests.values()]) {
+			if (request.jobId !== jobId) continue;
+			if (request.waiter) this.respondError(request.waiter.socket, reason);
+			this.clearWaiter(request);
+			this.requests.delete(request.requestId);
 		}
 	}
 
-	reply(requestId: string, message: string): BrokerReplyAcknowledgement {
-		this.assertReady();
-		validateRequestId(requestId);
-		validateMessage(message, "Subagent reply");
-		if (lineCount(message) > MAX_RESPONSE_LINES) {
-			throw new Error(`Subagent reply must contain at most ${MAX_RESPONSE_LINES} lines.`);
-		}
-		const question = this.questions.get(requestId);
-		if (!question) throw new Error("Unknown or expired subagent request.");
-		if (question.answer !== undefined) {
-			return { requestId, accepted: false, duplicate: true };
-		}
-		question.answer = message;
-		if (question.waiter) {
-			const socket = question.waiter.socket;
-			this.clearWaiter(question);
-			this.respond(socket, { ok: true, response: message }, () => this.markConsumed(question));
-		}
-		return { requestId, accepted: true, duplicate: false };
+	hasPendingMainRequest(): boolean {
+		return [...this.requests.values()].some(
+			(request) => request.origin === "child" && request.response === undefined,
+		);
 	}
 
-	hasPendingQuestion(): boolean {
-		return [...this.questions.values()].some((question) => question.answer === undefined);
-	}
-
-	subscribePendingQuestion(listener: () => void): () => void {
-		this.pendingQuestionListeners.add(listener);
-		if (this.hasPendingQuestion()) listener();
-		return () => this.pendingQuestionListeners.delete(listener);
+	subscribeInboundMessage(listener: () => void): () => void {
+		this.inboundMessageListeners.add(listener);
+		if (this.hasPendingMainRequest()) listener();
+		return () => this.inboundMessageListeners.delete(listener);
 	}
 
 	async shutdown(): Promise<void> {
@@ -198,8 +213,8 @@ export class MessageBroker {
 		for (const jobId of [...this.tokenByJob.keys()]) {
 			this.revokeJob(jobId, "Subagent session shut down.");
 		}
-		this.questions.clear();
-		this.pendingQuestionListeners.clear();
+		this.requests.clear();
+		this.inboundMessageListeners.clear();
 		for (const socket of this.sockets) socket.destroy();
 		this.sockets.clear();
 		const server = this.server;
@@ -208,6 +223,108 @@ export class MessageBroker {
 		this.failure = undefined;
 		if (!server?.listening) return;
 		await new Promise<void>((resolve) => server.close(() => resolve()));
+	}
+
+	private requireJob(jobId: string): JobRecord {
+		const token = this.tokenByJob.get(jobId);
+		const job = token ? this.jobsByToken.get(token) : undefined;
+		if (!job) throw new Error("Unknown or inactive subagent job.");
+		return job;
+	}
+
+	private createRequest(
+		job: JobRecord,
+		origin: BrokerRequestOrigin,
+		message: string,
+	): BrokerSendAcknowledgement {
+		validateMessage(message, "Subagent request");
+		const outstanding = [...this.requests.values()].filter(
+			(request) => request.jobId === job.jobId && request.consumedAt === undefined,
+		).length;
+		if (outstanding >= MAX_OUTSTANDING_REQUESTS) {
+			throw new Error(
+				`Subagent job may have at most ${MAX_OUTSTANDING_REQUESTS} outstanding requests.`,
+			);
+		}
+		const request: RequestRecord = {
+			requestId: `req_${randomUUID()}`,
+			jobId: job.jobId,
+			generation: job.generation,
+			origin,
+			expectedResponder: origin === "main" ? "child" : "main",
+			message,
+			createdAt: this.now(),
+		};
+		this.requests.set(request.requestId, request);
+		if (origin === "child") {
+			try {
+				this.deliverInbound({
+					kind: "request",
+					requestId: request.requestId,
+					jobId: request.jobId,
+					message: request.message,
+				});
+			} catch (error) {
+				this.requests.delete(request.requestId);
+				throw error;
+			}
+		}
+		return { requestId: request.requestId, accepted: true, duplicate: false };
+	}
+
+	private acceptResponse(
+		responder: BrokerRequestOrigin,
+		job: JobRecord | undefined,
+		requestId: string,
+		message: string,
+	): BrokerSendAcknowledgement {
+		validateRequestId(requestId);
+		validateMessage(message, "Subagent response");
+		if (lineCount(message) > MAX_RESPONSE_LINES) {
+			throw new Error(`Subagent response must contain at most ${MAX_RESPONSE_LINES} lines.`);
+		}
+		const request = this.requests.get(requestId);
+		if (
+			!request ||
+			request.expectedResponder !== responder ||
+			(job && (request.jobId !== job.jobId || request.generation !== job.generation))
+		) {
+			throw new Error("Unknown, expired, or unauthorized subagent request.");
+		}
+		if (request.response !== undefined) {
+			return { requestId, accepted: false, duplicate: true };
+		}
+		request.response = message;
+		if (responder === "child") {
+			try {
+				this.deliverInbound({
+					kind: "response",
+					requestId,
+					jobId: request.jobId,
+					message,
+				});
+				this.markConsumed(request);
+			} catch (error) {
+				request.response = undefined;
+				throw error;
+			}
+		} else if (request.waiter) {
+			const socket = request.waiter.socket;
+			this.clearWaiter(request);
+			this.respond(socket, { ok: true, response: message }, () => this.markConsumed(request));
+		}
+		return { requestId, accepted: true, duplicate: false };
+	}
+
+	private deliverInbound(message: BrokerInboundMessage): void {
+		this.options.onMessage(message);
+		for (const listener of [...this.inboundMessageListeners]) {
+			try {
+				listener();
+			} catch {
+				// Runtime wait observers cannot interrupt broker delivery.
+			}
+		}
 	}
 
 	private accept(socket: Socket): void {
@@ -228,8 +345,8 @@ export class MessageBroker {
 		const cleanup = () => {
 			clearTimeout(frameTimer);
 			this.sockets.delete(socket);
-			for (const question of this.questions.values()) {
-				if (question.waiter?.socket === socket) this.clearWaiter(question);
+			for (const request of this.requests.values()) {
+				if (request.waiter?.socket === socket) this.clearWaiter(request);
 			}
 		};
 		socket.on("data", (chunk: Buffer) => {
@@ -276,8 +393,8 @@ export class MessageBroker {
 			return;
 		}
 		try {
-			if (request.type === "ask") {
-				this.handleAsk(socket, job, request);
+			if (request.type === "send") {
+				this.handleSend(socket, job, request);
 				return;
 			}
 			if (request.type === "wait") {
@@ -290,95 +407,91 @@ export class MessageBroker {
 		}
 	}
 
-	private handleAsk(socket: Socket, job: JobRecord, request: BrokerRequest): void {
-		if (request.type !== "ask" || typeof request.message !== "string") {
-			throw new Error("Subagent ask requires a message string.");
+	private handleSend(
+		socket: Socket,
+		job: JobRecord,
+		request: Extract<BrokerRequest, { type: "send" }>,
+	): void {
+		if (typeof request.message !== "string") {
+			throw new Error("subagent_send requires a message string.");
 		}
-		validateMessage(request.message, "Subagent question");
-		const outstanding = [...this.questions.values()].filter(
-			(question) => question.jobId === job.jobId && question.consumedAt === undefined,
-		).length;
-		if (outstanding >= MAX_OUTSTANDING_REQUESTS) {
-			throw new Error(
-				`Subagent job may have at most ${MAX_OUTSTANDING_REQUESTS} outstanding requests.`,
-			);
+		const hasRecipient = typeof request.recipient === "string";
+		const hasRequestId = typeof request.requestId === "string";
+		if (hasRecipient === hasRequestId) {
+			throw new Error("subagent_send requires exactly one of recipient or requestId.");
 		}
-		const question: QuestionRecord = {
-			requestId: `req_${randomUUID()}`,
-			jobId: job.jobId,
-			message: request.message,
-			createdAt: this.now(),
-		};
-		this.questions.set(question.requestId, question);
-		try {
-			this.options.onQuestion({
-				requestId: question.requestId,
-				jobId: question.jobId,
-				message: question.message,
-			});
-		} catch (error) {
-			this.questions.delete(question.requestId);
-			throw error;
-		}
-		for (const listener of [...this.pendingQuestionListeners]) listener();
-		this.respond(socket, { ok: true, requestId: question.requestId });
+		const acknowledgement = hasRecipient
+			? request.recipient === "main"
+				? this.createRequest(job, "child", request.message)
+				: (() => {
+						throw new Error('A subagent may send new requests only to recipient "main".');
+					})()
+			: this.acceptResponse("child", job, request.requestId ?? "", request.message);
+		this.respond(socket, { ok: true, ...acknowledgement });
 	}
 
-	private handleWait(socket: Socket, job: JobRecord, request: BrokerRequest): void {
-		if (request.type !== "wait" || typeof request.requestId !== "string") {
+	private handleWait(
+		socket: Socket,
+		job: JobRecord,
+		request: Extract<BrokerRequest, { type: "wait" }>,
+	): void {
+		if (typeof request.requestId !== "string") {
 			throw new Error("Subagent wait requires a request ID.");
 		}
 		validateRequestId(request.requestId);
 		if (request.timeoutMs !== undefined) validateTimeout(request.timeoutMs);
-		const question = this.questions.get(request.requestId);
-		if (!question || question.jobId !== job.jobId) {
+		const record = this.requests.get(request.requestId);
+		if (
+			record?.origin !== "child" ||
+			record.jobId !== job.jobId ||
+			record.generation !== job.generation
+		) {
 			throw new Error("Unknown or expired subagent request.");
 		}
-		if (question.consumedAt !== undefined && question.answer !== undefined) {
-			this.respond(socket, { ok: true, response: question.answer });
+		if (record.consumedAt !== undefined && record.response !== undefined) {
+			this.respond(socket, { ok: true, response: record.response });
 			return;
 		}
-		if (question.answer !== undefined) {
-			this.respond(socket, { ok: true, response: question.answer }, () =>
-				this.markConsumed(question),
+		if (record.response !== undefined) {
+			this.respond(socket, { ok: true, response: record.response }, () =>
+				this.markConsumed(record),
 			);
 			return;
 		}
-		if (question.waiter) {
+		if (record.waiter) {
 			throw new Error(`A wait is already active for subagent request ${request.requestId}.`);
 		}
 		const waiter: RequestWaiter = { socket };
-		question.waiter = waiter;
+		record.waiter = waiter;
 		if (request.timeoutMs !== undefined) {
 			waiter.timer = setTimeout(() => {
-				if (question.waiter !== waiter) return;
-				this.clearWaiter(question);
+				if (record.waiter !== waiter) return;
+				this.clearWaiter(record);
 				this.respondError(socket, "Subagent response wait timed out.");
 			}, request.timeoutMs);
 			waiter.timer.unref();
 		}
 	}
 
-	private markConsumed(question: QuestionRecord): void {
-		if (this.questions.get(question.requestId) !== question || question.answer === undefined)
-			return;
-		question.consumedAt ??= this.now();
-		const consumed = [...this.questions.values()]
+	private markConsumed(request: RequestRecord): void {
+		if (this.requests.get(request.requestId) !== request || request.response === undefined) return;
+		request.consumedAt ??= this.now();
+		const consumed = [...this.requests.values()]
 			.filter(
-				(candidate) => candidate.jobId === question.jobId && candidate.consumedAt !== undefined,
+				(candidate) => candidate.jobId === request.jobId && candidate.consumedAt !== undefined,
 			)
 			.sort((left, right) => (left.consumedAt ?? 0) - (right.consumedAt ?? 0));
 		for (const expired of consumed.slice(
 			0,
 			Math.max(0, consumed.length - MAX_RETAINED_CONSUMED_REQUESTS),
 		)) {
-			this.questions.delete(expired.requestId);
+			this.requests.delete(expired.requestId);
 		}
 	}
 
-	private clearWaiter(question: QuestionRecord): void {
-		if (question.waiter?.timer) clearTimeout(question.waiter.timer);
-		question.waiter = undefined;
+	private clearWaiter(request: RequestRecord): void {
+		if (request.waiter?.timer) clearTimeout(request.waiter.timer);
+		request.waiter = undefined;
 	}
 
 	private respondError(socket: Socket, error: string): void {
