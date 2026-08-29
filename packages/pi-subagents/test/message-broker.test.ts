@@ -90,6 +90,34 @@ test("wait timeout and cancellation stop only the child long poll", async () => 
 	assert.equal(await retry, "Still active");
 });
 
+test("interrupts child waits for queued main requests without consuming the original request", async () => {
+	const { broker, credentials, observeNextFrame } = await setup(() => undefined);
+	const client = createBrokerClient(credentials);
+	const childRequest = await client.send(
+		{ recipient: "main", message: "Need the first decision" },
+		undefined,
+	);
+	const waitFrame = observeNextFrame();
+	const interruptedWait = client.wait(childRequest.requestId, undefined, undefined);
+	await waitFrame;
+	const mainRequest = broker.createMainRequest("job_1", "Handle this request next");
+	assert.equal(broker.markMainRequestQueued(mainRequest.requestId), true);
+	assert.equal(broker.interruptChildWaits("job_1"), 1);
+	await assert.rejects(interruptedWait, /interrupted.*original request remains active/is);
+	await assert.rejects(
+		client.wait(childRequest.requestId, undefined, undefined),
+		/interrupted.*original request remains active/is,
+	);
+
+	assert.deepEqual(
+		await client.send({ requestId: mainRequest.requestId, message: "Next response" }, undefined),
+		{ requestId: mainRequest.requestId, accepted: true, duplicate: false },
+	);
+	broker.replyFromMain(childRequest.requestId, "First decision");
+	assert.equal(await client.wait(childRequest.requestId, undefined, undefined), "First decision");
+	assert.equal(broker.interruptChildWaits("job_1"), 0);
+});
+
 test("enforces four combined outstanding requests and limits consumed replay", async () => {
 	const { broker, credentials } = await setup(() => undefined);
 	const client = createBrokerClient(credentials);
@@ -146,6 +174,7 @@ test("rejects cross-job responses, concurrent waits, wrong recipients, and revok
 		() => second.send({ requestId: mainRequest.requestId, message: "cross-job" }, undefined),
 		/unauthorized/i,
 	);
+	await first.send({ requestId: mainRequest.requestId, message: "authorized" }, undefined);
 	await assert.rejects(
 		() =>
 			first.send(

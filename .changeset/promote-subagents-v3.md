@@ -10,6 +10,8 @@ Use `subagent_spawn`, `subagent_inspect`, `subagent_cancel`, `subagent_wait`, an
 
 Main agents can send requests to queued or running jobs, and children can send requests to main, while either side answers with the same request ID through `subagent_send`.
 
+A queued main-agent request interrupts active child response waits without consuming the original child requests, so RPC steering can proceed and those waits can be retried.
+
 The package no longer registers or publishes a delegation skill, while the repository keeps `using-pi-subagents` as an example for designing one.
 
 Completion messages follow Pi's global tool-output expansion state and configured `app.tools.expand` binding.

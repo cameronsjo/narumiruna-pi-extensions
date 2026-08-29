@@ -67,6 +67,8 @@ Any replacement must preserve:
 - First-response-wins semantics.
 - Retryable waits after timeout.
 - Caller cancellation that stops only the current wait.
+- One-shot replay of a child response that arrives immediately before a main-agent job wait.
+- Interruption of active child response waits after a main-agent request is accepted, without consuming the original child requests.
 - Immediate rejection of pending waits after job cancellation, child exit, session replacement, reload, or shutdown.
 - Retention-limited state and terminal-safe cleanup.
 - Untrusted-content handling and terminal sanitization.

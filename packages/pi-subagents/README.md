@@ -119,6 +119,10 @@ Omitting a job execution timeout lets the child run until it exits, is cancelled
 
 A wait timeout or caller cancellation stops only that wait and does not cancel its job or message request.
 
+An incoming main-agent request interrupts an active child `subagent_wait` after RPC steering is queued so the child can receive the new request.
+
+The interrupted child-originated request remains active and may be waited on again.
+
 Tasks, requests, and responses are limited to 50 KiB of UTF-8 text.
 
 Responses are also limited to 2,000 lines so successful child tool output stays within Pi's tool-result bound.
@@ -180,6 +184,10 @@ Each child runs in Pi RPC mode so the parent can inject a main-originated reques
 Each child broker call uses one request-scoped connection, while a response wait uses an abortable long poll.
 
 A main-originated request to a queued job waits for RPC readiness before delivery is accepted.
+
+After RPC accepts the steering message, the runtime interrupts active child response waits so the queued request can reach the child model.
+
+The interrupted child-originated requests remain active and retryable.
 
 The first accepted `subagent_send` response wins.
 

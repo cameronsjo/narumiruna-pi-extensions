@@ -210,7 +210,7 @@ export function registerSubagentTools(
 		name: "subagent_send",
 		label: "Subagent · Send",
 		description:
-			"Use subagent_send to send one request to an active job or answer one pending child request. For a new request, provide recipient and omit requestId. To answer a request, provide requestId and omit recipient. Provide exactly one of recipient or requestId.",
+			"Use subagent_send to send one request to an active job or answer one pending child request. For a new request, provide recipient and omit requestId. To answer a request, provide requestId and omit recipient. Provide exactly one of recipient or requestId. An accepted new request interrupts any active child response wait so delivery can proceed without consuming the child's original request.",
 		promptSnippet: "Use subagent_send to send or answer one subagent message",
 		parameters: SendParameters,
 		async execute(_toolCallId, params, signal) {

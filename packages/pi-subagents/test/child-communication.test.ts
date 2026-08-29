@@ -71,6 +71,7 @@ test("registers fixed send and wait schemas and returns bounded results", async 
 		tools[1]?.parameters.properties?.timeout?.description,
 		"Timeout in seconds (optional, no default timeout)",
 	);
+	assert.match(tools[1]?.description ?? "", /incoming main-agent request.*original request/is);
 	assert.deepEqual(tools[1]?.prepareArguments?.({ requestId: "req_1", timeoutMs: 1_500 }), {
 		requestId: "req_1",
 		timeout: 1.5,

@@ -87,7 +87,7 @@ export function createChildCommunicationExtension(
 			name: "subagent_wait",
 			label: "Subagent · Wait for Main Agent",
 			description:
-				"Use subagent_wait with a request ID from subagent_send to wait for the main agent's plain-text response. A timeout or caller cancellation stops only this wait and does not cancel the request.",
+				"Use subagent_wait with a request ID from subagent_send to wait for the main agent's plain-text response. A timeout, caller cancellation, or incoming main-agent request stops only this wait and does not cancel the original request. Retry the wait when its response is still needed.",
 			promptSnippet: "Use subagent_wait to receive a requested main-agent response",
 			parameters: WaitParameters,
 			prepareArguments: prepareWaitArguments,

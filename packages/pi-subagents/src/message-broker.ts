@@ -14,6 +14,8 @@ const MAX_CONNECTIONS = 32;
 const REQUEST_FRAME_TIMEOUT_MS = 2_000;
 const MAX_TIMEOUT_MS = 2_147_483_647;
 const MAX_RETAINED_CONSUMED_REQUESTS = 4;
+const CHILD_WAIT_INTERRUPTED_ERROR =
+	"Subagent wait was interrupted by an incoming main-agent request. The original request remains active.";
 
 export type BrokerRequestOrigin = "main" | "child";
 
@@ -58,6 +60,7 @@ interface RequestRecord {
 	createdAt: number;
 	response?: string;
 	consumedAt?: number;
+	deliveryQueued?: boolean;
 	waiter?: RequestWaiter;
 }
 
@@ -83,6 +86,7 @@ export class MessageBroker {
 	private readonly tokenByJob = new Map<string, string>();
 	private readonly requests = new Map<string, RequestRecord>();
 	private readonly inboundMessageListeners = new Set<() => void>();
+	private pendingInboundResponse = false;
 	private readonly createServer: (listener: (socket: Socket) => void) => Server;
 	private readonly now: () => number;
 	private readonly requestFrameTimeoutMs: number;
@@ -200,6 +204,33 @@ export class MessageBroker {
 		);
 	}
 
+	takePendingInboundResponse(): boolean {
+		const pending = this.pendingInboundResponse;
+		this.pendingInboundResponse = false;
+		return pending;
+	}
+
+	markMainRequestQueued(requestId: string): boolean {
+		const request = this.requests.get(requestId);
+		if (request?.origin !== "main") {
+			throw new Error("Unknown or expired main-agent subagent request.");
+		}
+		request.deliveryQueued = true;
+		return request.response === undefined;
+	}
+
+	interruptChildWaits(jobId: string): number {
+		let interrupted = 0;
+		for (const request of this.requests.values()) {
+			if (request.jobId !== jobId || request.origin !== "child" || !request.waiter) continue;
+			const socket = request.waiter.socket;
+			this.clearWaiter(request);
+			this.respondError(socket, CHILD_WAIT_INTERRUPTED_ERROR);
+			interrupted++;
+		}
+		return interrupted;
+	}
+
 	subscribeInboundMessage(listener: () => void): () => void {
 		this.inboundMessageListeners.add(listener);
 		if (this.hasPendingMainRequest()) listener();
@@ -215,6 +246,7 @@ export class MessageBroker {
 		}
 		this.requests.clear();
 		this.inboundMessageListeners.clear();
+		this.pendingInboundResponse = false;
 		for (const socket of this.sockets) socket.destroy();
 		this.sockets.clear();
 		const server = this.server;
@@ -230,6 +262,16 @@ export class MessageBroker {
 		const job = token ? this.jobsByToken.get(token) : undefined;
 		if (!job) throw new Error("Unknown or inactive subagent job.");
 		return job;
+	}
+
+	private hasQueuedRequestForChild(jobId: string): boolean {
+		return [...this.requests.values()].some(
+			(request) =>
+				request.jobId === jobId &&
+				request.origin === "main" &&
+				request.deliveryQueued === true &&
+				request.response === undefined,
+		);
 	}
 
 	private createRequest(
@@ -318,6 +360,9 @@ export class MessageBroker {
 
 	private deliverInbound(message: BrokerInboundMessage): void {
 		this.options.onMessage(message);
+		if (message.kind === "response" && this.inboundMessageListeners.size === 0) {
+			this.pendingInboundResponse = true;
+		}
 		for (const listener of [...this.inboundMessageListeners]) {
 			try {
 				listener();
@@ -456,6 +501,10 @@ export class MessageBroker {
 			this.respond(socket, { ok: true, response: record.response }, () =>
 				this.markConsumed(record),
 			);
+			return;
+		}
+		if (this.hasQueuedRequestForChild(job.jobId)) {
+			this.respondError(socket, CHILD_WAIT_INTERRUPTED_ERROR);
 			return;
 		}
 		if (record.waiter) {

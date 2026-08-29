@@ -515,6 +515,8 @@ test("delivers child questions, interrupts parent waits, and returns plain-text 
 test("sends a queued main request to a running child and delivers one child response", async () => {
 	let request!: ChildRequest;
 	const steered: string[] = [];
+	const queuedSpy = vi.spyOn(MessageBroker.prototype, "markMainRequestQueued");
+	const interruptSpy = vi.spyOn(MessageBroker.prototype, "interruptChildWaits");
 	const { mock, context } = await setup({
 		runChild: async (candidate) => {
 			request = candidate;
@@ -540,6 +542,11 @@ test("sends a queued main request to a running child and delivers one child resp
 		duplicate: false,
 	});
 	assert.equal(steered.length, 1);
+	assert.deepEqual(queuedSpy.mock.calls, [[sent.details.requestId]]);
+	assert.deepEqual(interruptSpy.mock.calls, [[spawned.details.jobId]]);
+	assert.ok(
+		(queuedSpy.mock.invocationCallOrder[0] ?? 0) < (interruptSpy.mock.invocationCallOrder[0] ?? 0),
+	);
 	assert.match(steered[0] ?? "", /MAIN_AGENT_REQUEST.*Report findings/is);
 	assert.match(steered[0] ?? "", /not the user/i);
 	assert.match(steered[0] ?? "", /subagent_send.*requestId/i);
@@ -580,6 +587,51 @@ test("sends a queued main request to a running child and delivers one child resp
 			undefined,
 		),
 		{ requestId: sent.details.requestId, accepted: false, duplicate: true },
+	);
+	await cancelJob(mock, context, String(spawned.details.jobId));
+});
+
+test("replays a child response once when it arrives before the main wait", async () => {
+	let request!: ChildRequest;
+	const { mock, context } = await setup({
+		runChild: async (candidate) => {
+			request = candidate;
+			candidate.onControl?.({ async send() {} });
+			return waitForCancellation(candidate);
+		},
+	});
+	const spawned = await spawnJob(mock, context, "Respond before main waits");
+	const sent = await tool(mock, "subagent_send").execute(
+		"send-before-wait",
+		{ recipient: spawned.details.jobId, message: "Reply immediately" },
+		undefined,
+		undefined,
+		context.ctx,
+	);
+	const client = createBrokerClient(request.communication);
+	await client.send(
+		{ requestId: String(sent.details.requestId), message: "Already answered" },
+		undefined,
+	);
+
+	assert.deepEqual((await waitFor(mock, context, String(spawned.details.jobId))).details, {
+		jobId: spawned.details.jobId,
+		state: "running",
+		timedOut: false,
+		interrupted: true,
+		reason: "subagent_message",
+	});
+	assert.deepEqual(
+		(
+			await tool(mock, "subagent_wait").execute(
+				"second-wait",
+				{ jobId: spawned.details.jobId, timeout: 0.001 },
+				undefined,
+				undefined,
+				context.ctx,
+			)
+		).details,
+		{ jobId: spawned.details.jobId, state: "running", timedOut: true },
 	);
 	await cancelJob(mock, context, String(spawned.details.jobId));
 });

@@ -236,6 +236,12 @@ export class SubagentRuntime {
 			}
 			await control.send(mainRequestMessage(job.jobId, acknowledgement.requestId, message), signal);
 			throwIfAborted(signal, "Subagent send was cancelled");
+			if (isTerminal(job.state) || job.stopRequest || job.generation !== this.generation) {
+				throw new Error("Subagent job is no longer active.");
+			}
+			if (this.broker.markMainRequestQueued(acknowledgement.requestId)) {
+				this.broker.interruptChildWaits(jobId);
+			}
 		})();
 		job.sendQueue = operation.catch(() => undefined);
 		try {
@@ -290,7 +296,9 @@ export class SubagentRuntime {
 		const job = this.requireJob(jobId);
 		if (isTerminal(job.state)) return this.waitResult(job, false);
 		if (signal?.aborted) throw abortError("Subagent wait was cancelled");
-		if (this.broker.hasPendingMainRequest()) return this.interruptedWaitResult(job);
+		if (this.broker.takePendingInboundResponse() || this.broker.hasPendingMainRequest()) {
+			return this.interruptedWaitResult(job);
+		}
 		let timeout: NodeJS.Timeout | undefined;
 		let onAbort: (() => void) | undefined;
 		let unsubscribeMessage: () => void = () => undefined;

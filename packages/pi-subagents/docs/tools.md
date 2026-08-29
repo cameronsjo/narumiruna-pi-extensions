@@ -55,7 +55,9 @@ Returns `{ jobId, state, timedOut: false, interrupted: true, reason: "subagent_m
 
 Returns the main agent's response as plain text.
 
-A timeout or caller cancellation throws and stops only that wait, so the child may wait for the same request again.
+A timeout, caller cancellation, or incoming main-agent request throws and stops only that wait, so the child may wait for the same request again.
+
+The runtime interrupts an active child wait only after Pi RPC accepts the incoming main request for steering.
 
 ## `subagent_send`
 
@@ -88,7 +90,9 @@ A response provides the pending main-agent `requestId`.
 
 A main-originated request waits for the child RPC prompt to be accepted and then uses Pi steering to reach the running child.
 
-A child response arrives asynchronously in the main session and interrupts an active main-agent `subagent_wait`.
+After steering is queued, the runtime interrupts active child response waits without consuming their original requests.
+
+A child response arrives asynchronously in the main session and interrupts the next active main-agent `subagent_wait`, including when the response arrived immediately before the wait started.
 
 The first accepted response wins, and repeated responses acknowledge the existing response without replacing it.
 
