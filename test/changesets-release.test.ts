@@ -122,6 +122,13 @@ test("sequential publishing reports a failure and continues with later packages"
 					},
 					{
 						kind: "publish",
+						name: "@fixture/pi-range-independent",
+						version: "2.2.0",
+						access: "public",
+						tag: "latest",
+					},
+					{
+						kind: "publish",
 						name: "@fixture/pi-omega",
 						version: "3.0.0",
 						access: "public",
@@ -147,24 +154,35 @@ test("sequential publishing reports a failure and continues with later packages"
 		writeJson(path.join(fixture, "publish-plan.fixture.json"), plan);
 		writeJson(path.join(fixture, "packages/pi-alpha/package.json"), {
 			name: "@fixture/pi-alpha",
+			version: "1.0.0",
 		});
 		writeJson(path.join(fixture, "packages/pi-broken/package.json"), {
 			name: "@fixture/pi-broken",
+			version: "2.0.0",
 		});
 		writeJson(path.join(fixture, "packages/pi-dependent/package.json"), {
 			name: "@fixture/pi-dependent",
+			version: "2.1.0",
 			dependencies: { "@fixture/pi-broken": "^2.0.0" },
+		});
+		writeJson(path.join(fixture, "packages/pi-range-independent/package.json"), {
+			name: "@fixture/pi-range-independent",
+			version: "2.2.0",
+			dependencies: { "@fixture/pi-broken": "^1.0.0" },
 		});
 		writeJson(path.join(fixture, "packages/pi-omega/package.json"), {
 			name: "@fixture/pi-omega",
+			version: "3.0.0",
 			devDependencies: { "@fixture/pi-broken": "^2.0.0" },
 		});
 		writeJson(path.join(fixture, "packages/pi-transitive/package.json"), {
 			name: "@fixture/pi-transitive",
+			version: "3.1.0",
 			peerDependencies: { "@fixture/pi-dependent": "^2.1.0" },
 		});
 		writeJson(path.join(fixture, "packages/pi-tag-only/package.json"), {
 			name: "@fixture/pi-tag-only",
+			version: "4.0.0",
 		});
 
 		const changesetsBin = path.join(fixture, "node_modules/@changesets/cli/bin.js");
@@ -233,6 +251,15 @@ test("sequential publishing reports a failure and continues with later packages"
 			[
 				["publish", "--workspace", "@fixture/pi-alpha", "--access", "public", "--tag", "latest"],
 				["publish", "--workspace", "@fixture/pi-broken", "--access", "restricted", "--tag", "next"],
+				[
+					"publish",
+					"--workspace",
+					"@fixture/pi-range-independent",
+					"--access",
+					"public",
+					"--tag",
+					"latest",
+				],
 				["publish", "--workspace", "@fixture/pi-omega", "--access", "public", "--tag", "latest"],
 			],
 		);
@@ -272,6 +299,11 @@ test("sequential publishing reports a failure and continues with later packages"
 				},
 				{
 					type: "git-tag",
+					tag: "@fixture/pi-range-independent@2.2.0",
+					packageName: "@fixture/pi-range-independent",
+				},
+				{
+					type: "git-tag",
 					tag: "@fixture/pi-omega@3.0.0",
 					packageName: "@fixture/pi-omega",
 				},
@@ -289,6 +321,7 @@ test("sequential publishing reports a failure and continues with later packages"
 				.map((line) => JSON.parse(line)),
 			[
 				{ packageName: "@fixture/pi-alpha", version: "1.0.0" },
+				{ packageName: "@fixture/pi-range-independent", version: "2.2.0" },
 				{ packageName: "@fixture/pi-omega", version: "3.0.0" },
 			],
 		);
