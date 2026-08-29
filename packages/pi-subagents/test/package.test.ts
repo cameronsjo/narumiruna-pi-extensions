@@ -6,7 +6,7 @@ import { test } from "vitest";
 
 const packageDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-test("package declares one generated extension and one bundled operating skill", () => {
+test("package declares one generated extension without a bundled skill", () => {
 	const manifest = JSON.parse(
 		readFileSync(path.join(packageDirectory, "package.json"), "utf8"),
 	) as {
@@ -14,7 +14,7 @@ test("package declares one generated extension and one bundled operating skill",
 		description: string;
 		private: boolean;
 		files: string[];
-		pi: { extensions: string[]; skills: string[] };
+		pi: { extensions: string[]; skills?: string[] };
 		piExtension: { lifecycle: string };
 		peerDependencies: Record<string, string>;
 		repository: { directory: string };
@@ -24,17 +24,18 @@ test("package declares one generated extension and one bundled operating skill",
 	assert.equal(manifest.private, true);
 	assert.equal(manifest.repository.directory, "packages/pi-subagents");
 	assert.deepEqual(manifest.pi.extensions, ["./dist/index.ts"]);
-	assert.deepEqual(manifest.pi.skills, ["./skills"]);
+	assert.equal("skills" in manifest.pi, false);
 	assert.equal(manifest.piExtension.lifecycle, "stable");
 	assert.equal(manifest.peerDependencies["@earendil-works/pi-ai"], "*");
 	assert.equal(manifest.peerDependencies["@earendil-works/pi-coding-agent"], "*");
 	assert.ok(manifest.files.includes("src"));
 	assert.ok(manifest.files.includes("dist"));
-	assert.ok(manifest.files.includes("skills"));
+	assert.equal(manifest.files.includes("skills"), false);
+	assert.equal(manifest.files.includes("examples"), false);
 	assert.ok(manifest.files.includes("docs"));
 });
 
-test("bundled skill documents every minimal-runtime operating responsibility", () => {
+test("repository example skill documents every minimal-runtime operating responsibility", () => {
 	const skill = readFileSync(
 		path.join(packageDirectory, "skills", "using-pi-subagents", "SKILL.md"),
 		"utf8",
