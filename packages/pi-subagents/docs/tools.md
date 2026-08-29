@@ -59,29 +59,36 @@ A timeout or caller cancellation throws and stops only that wait, so the child m
 
 ## `subagent_send`
 
-Main and child processes receive the same provider-visible tool definition.
+Main and child processes receive separate provider-visible definitions for their own context.
+
+### Main agent
 
 | Parameter | Type | Required | Constraint / default |
 | --- | --- | --- | --- |
-| `recipient` | `string` | Conditional | Recipient for a new request; use an active job ID from main or `main` from a child. |
-| `requestId` | `string` | Conditional | Pending request to answer. |
+| `recipient` | `string` | Conditional | Active job ID for a new request. |
+| `requestId` | `string` | Conditional | Pending child request to answer. |
 | `message` | `string` | Yes | Plain-text request or response, up to 50 KiB of UTF-8 text. |
 
 Provide exactly one of `recipient` or `requestId`.
 
-A new request provides `recipient` and omits `requestId`.
+A new request provides an active queued or running job ID as `recipient` and omits `requestId`.
 
 A response provides `requestId` and omits `recipient`.
 
-The main agent may send a new request only to a queued or running job ID.
+### Subagent
 
-A child may send a new request only to the literal recipient `main`.
+| Parameter | Type | Required | Constraint / default |
+| --- | --- | --- | --- |
+| `requestId` | `string` | No | Pending main-agent request to answer; omit to start a new request to main. |
+| `message` | `string` | Yes | Plain-text request or response, up to 50 KiB of UTF-8 text. |
+
+A new request omits `requestId` and returns a request ID immediately for an optional `subagent_wait` call.
+
+A response provides the pending main-agent `requestId`.
 
 A main-originated request waits for the child RPC prompt to be accepted and then uses Pi steering to reach the running child.
 
 A child response arrives asynchronously in the main session and interrupts an active main-agent `subagent_wait`.
-
-A child-originated request returns a request ID immediately, and the child may pass that ID to `subagent_wait`.
 
 The first accepted response wins, and repeated responses acknowledge the existing response without replacing it.
 

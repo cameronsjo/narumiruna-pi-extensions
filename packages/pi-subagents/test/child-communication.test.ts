@@ -50,10 +50,13 @@ test("registers fixed send and wait schemas and returns bounded results", async 
 		tools.map((tool) => tool.name),
 		["subagent_send", "subagent_wait"],
 	);
-	assert.equal(tools[0]?.label, "Subagent · Send");
+	assert.equal(tools[0]?.label, "Subagent · Send to Main");
 	assert.equal(tools[0]?.parameters.properties?.message?.maxLength, 50 * 1024);
-	assert.equal(tools[0]?.parameters.properties?.recipient?.maxLength, 128);
+	assert.equal(tools[0]?.parameters.properties?.recipient, undefined);
 	assert.equal(tools[0]?.parameters.properties?.requestId?.maxLength, 128);
+	assert.equal(Check(tools[0]?.parameters, { message: "Question" }), true);
+	assert.equal(Check(tools[0]?.parameters, { requestId: "req_main", message: "Response" }), true);
+	assert.equal(Check(tools[0]?.parameters, { recipient: "main", message: "Question" }), false);
 	for (const tool of tools) {
 		assert.doesNotMatch(
 			JSON.stringify({
@@ -76,7 +79,7 @@ test("registers fixed send and wait schemas and returns bounded results", async 
 	const preparedMalformed = tools[1]?.prepareArguments?.(malformedAlias);
 	assert.deepEqual(preparedMalformed, malformedAlias);
 	assert.equal(Check(tools[1]?.parameters, preparedMalformed), false);
-	const sent = await tools[0]?.execute("send", { recipient: " main ", message: "Question" });
+	const sent = await tools[0]?.execute("send", { message: "Question" });
 	assert.deepEqual(sent, {
 		content: [
 			{
@@ -105,7 +108,7 @@ test("registers fixed send and wait schemas and returns bounded results", async 
 	assert.equal(calls[2]?.timeoutMs, 1_250);
 });
 
-test("child send enforces context-specific selectors before transport", async () => {
+test("child send validates optional response IDs before transport", async () => {
 	let calls = 0;
 	const client: ChildCommunicationClient = {
 		async send() {
@@ -119,19 +122,13 @@ test("child send enforces context-specific selectors before transport", async ()
 	const mock = createMockPi();
 	createChildCommunicationExtension(client)(mock.pi);
 	const send = (mock.tools as unknown as RegisteredTool[])[0];
-	await assert.rejects(() => send?.execute("missing", { message: "Question" }), /exactly one/i);
 	await assert.rejects(
-		() =>
-			send?.execute("both", {
-				recipient: "main",
-				requestId: "req_1",
-				message: "Question",
-			}),
-		/exactly one/i,
+		() => send?.execute("empty-request", { requestId: " ", message: "Response" }),
+		/requestId is required/i,
 	);
 	await assert.rejects(
-		() => send?.execute("peer", { recipient: "job_2", message: "Question" }),
-		/only to recipient "main"/i,
+		() => send?.execute("empty-message", { message: " " }),
+		/message is required/i,
 	);
 	assert.equal(calls, 0);
 });
@@ -150,10 +147,7 @@ test("child tool failures throw and preserve AbortError", async () => {
 	const mock = createMockPi();
 	createChildCommunicationExtension(client)(mock.pi);
 	const tools = mock.tools as unknown as RegisteredTool[];
-	await assert.rejects(
-		() => tools[0]?.execute("send", { recipient: "main", message: "Question" }),
-		/broker rejected/,
-	);
+	await assert.rejects(() => tools[0]?.execute("send", { message: "Question" }), /broker rejected/);
 	await assert.rejects(
 		() => tools[1]?.execute("wait", { requestId: "req_1" }),
 		(error: Error) => error.name === "AbortError",

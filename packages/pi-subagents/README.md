@@ -10,7 +10,7 @@ Pi Subagents runs Pi jobs in separate child processes and supports authenticated
 - Uses the task to define the child's specialization and the tool list to limit its capabilities.
 - Defaults work tools to `read`, `grep`, `find`, and `ls`.
 - Inherits the main agent's effective model and uses its thinking level by default.
-- Gives the main agent and every child one shared `subagent_send` contract for bidirectional requests and responses.
+- Gives the main agent and every child a context-specific `subagent_send` contract for bidirectional requests and responses.
 - Gives every child `subagent_wait` for an answer to a child-originated request.
 - Lets the main agent question a queued or running job through Pi RPC steering without retaining the child after completion.
 - Publishes one asynchronous terminal completion and shows active-job progress above the editor.
@@ -100,16 +100,18 @@ Every child exposes these communication tools in addition to its selected work t
 
 | Tool | Parameters | Purpose |
 | --- | --- | --- |
-| `subagent_send` | `recipient` or `requestId`, plus `message` | Send a new request to `main` or answer one pending main-agent request. |
+| `subagent_send` | optional `requestId`, plus `message` | Omit `requestId` to send a new request to main, or provide it to answer one pending main-agent request. |
 | `subagent_wait` | `requestId`, optional `timeout` | Wait for the main agent's plain-text response to a child-originated request. |
 
-Main and child processes receive the same provider-visible `subagent_send` definition.
+Main and child processes receive separate provider-visible `subagent_send` definitions for their own context.
 
-A new request provides `recipient` and omits `requestId`.
+The main agent starts a request with an active job ID as `recipient` and omits `requestId`.
 
-A response provides `requestId` and omits `recipient`.
+The main agent answers a child request with `requestId` and omits `recipient`.
 
-The main agent uses an active job ID as `recipient`, while a child may use only the literal recipient `main`.
+A child starts a request to main by omitting `requestId`.
+
+A child answers a main-agent request by providing `requestId`.
 
 Execution and wait timeouts use seconds, accept finite numbers greater than zero through 2,147,483.647, and have no default.
 
@@ -214,7 +216,7 @@ Use these replacements where the new job model supports the previous intent:
 | Child-to-main questions | Child `subagent_send` and `subagent_wait`, plus main `subagent_send` |
 | Running main-to-child questions | Main and child `subagent_send` |
 
-The version 3 `subagent_send` contract is not compatible with the legacy retained-agent follow-up tool of the same name.
+The version 3 `subagent_send` contracts are not compatible with the legacy retained-agent follow-up tool of the same name.
 
 The `/subagents` command, extension settings, legacy retained follow-ups, `subagent_mailbox`, `subagent_consult`, custom agent catalogs, advanced orchestration, alternate transports, trust-aware cwd policy, and extension-owned worktrees have no direct replacement.
 

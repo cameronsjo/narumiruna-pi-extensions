@@ -127,7 +127,9 @@ test("registers five fixed main-agent tools with stable schemas and explicit lim
 		(candidate) => candidate.name === "subagent_send",
 	);
 	assert.ok(childSend);
-	assert.deepEqual(
+	assert.equal(childSend.label, "Subagent · Send to Main");
+	assert.equal(childSend.parameters.properties?.recipient, undefined);
+	assert.notDeepEqual(
 		providerVisibleDefinition(tools[4] as RegisteredTool),
 		providerVisibleDefinition(childSend),
 	);

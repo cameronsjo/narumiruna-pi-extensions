@@ -2,14 +2,12 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 import {
-	resolveSubagentSendArguments,
-	SUBAGENT_SEND_TOOL_DEFINITION,
-} from "./communication-contract.js";
-import {
 	type BrokerInboundMessage,
 	MAX_IDENTIFIER_LENGTH,
+	MAX_MESSAGE_BYTES,
 	MessageBroker,
 	sanitizeTerminalText,
+	validateMessage,
 } from "./message-broker.js";
 import { modelVisibleJson, truncateModelText } from "./model-output.js";
 import { resolveTimeoutMs } from "./process.js";
@@ -82,6 +80,37 @@ const WaitParameters = Type.Object(
 );
 
 type WaitArguments = Static<typeof WaitParameters>;
+
+const SendParameters = Type.Object(
+	{
+		recipient: Type.Optional(
+			Type.String({
+				description: "Active job ID for a new request. Omit when answering a request.",
+				minLength: 1,
+				maxLength: MAX_IDENTIFIER_LENGTH,
+			}),
+		),
+		requestId: Type.Optional(
+			Type.String({
+				description: "Pending child request to answer. Omit when starting a new request.",
+				minLength: 1,
+				maxLength: MAX_IDENTIFIER_LENGTH,
+			}),
+		),
+		message: Type.String({
+			description: "Plain-text request or response. Maximum 50 KiB.",
+			minLength: 1,
+			maxLength: MAX_MESSAGE_BYTES,
+		}),
+	},
+	{ additionalProperties: false },
+);
+
+type SendArguments = Static<typeof SendParameters>;
+
+type MainSendSelection =
+	| { kind: "request"; recipient: string; message: string }
+	| { kind: "response"; requestId: string; message: string };
 
 export interface SubagentToolsDependencies extends RuntimeDependencies {
 	createBroker?: (onMessage: (message: BrokerInboundMessage) => void) => MessageBroker;
@@ -178,10 +207,15 @@ export function registerSubagentTools(
 	});
 
 	pi.registerTool({
-		...SUBAGENT_SEND_TOOL_DEFINITION,
+		name: "subagent_send",
+		label: "Subagent · Send",
+		description:
+			"Use subagent_send to send one request to an active job or answer one pending child request. For a new request, provide recipient and omit requestId. To answer a request, provide requestId and omit recipient. Provide exactly one of recipient or requestId.",
+		promptSnippet: "Use subagent_send to send or answer one subagent message",
+		parameters: SendParameters,
 		async execute(_toolCallId, params, signal) {
 			throwIfAborted(signal, "Subagent send was cancelled");
-			const selection = resolveSubagentSendArguments(params);
+			const selection = resolveMainSendArguments(params);
 			if (selection.kind === "request") {
 				if (selection.recipient === "main") {
 					throw new Error('The main agent must use an active job ID as recipient, not "main".');
@@ -317,6 +351,22 @@ function prepareTimeoutArguments(args: unknown): Record<string, unknown> {
 	const { timeoutMs, ...prepared } = record;
 	if (prepared.timeout === undefined) return { ...prepared, timeout: timeoutMs / 1000 };
 	return prepared;
+}
+
+function resolveMainSendArguments(params: SendArguments): MainSendSelection {
+	validateMessage(params.message, "Subagent message");
+	const recipient = optionalIdentifier(params.recipient, "recipient");
+	const requestId = optionalIdentifier(params.requestId, "requestId");
+	if ((recipient === undefined) === (requestId === undefined)) {
+		throw new Error("Main-agent subagent_send requires exactly one of recipient or requestId.");
+	}
+	return recipient !== undefined
+		? { kind: "request", recipient, message: params.message }
+		: { kind: "response", requestId: requestId ?? "", message: params.message };
+}
+
+function optionalIdentifier(value: unknown, field: string): string | undefined {
+	return value === undefined ? undefined : requiredIdentifier(value, field);
 }
 
 function requiredString(value: unknown, field: string): string {

@@ -197,6 +197,16 @@ test("Pi's Jiti loader loads the generated extension and child bridge", async ()
 			[...(main?.tools.keys() ?? [])],
 			["subagent_spawn", "subagent_inspect", "subagent_cancel", "subagent_wait", "subagent_send"],
 		);
+		assert.deepEqual(
+			Object.keys(
+				(
+					main?.tools.get("subagent_send")?.definition.parameters as {
+						properties?: Record<string, unknown>;
+					}
+				)?.properties ?? {},
+			),
+			["recipient", "requestId", "message"],
+		);
 
 		const childLoader = new DefaultResourceLoader({
 			cwd: root,
@@ -212,6 +222,7 @@ test("Pi's Jiti loader loads the generated extension and child bridge", async ()
 		assert.deepEqual(await loadCredentialBackedChild(output, agentDir, root), {
 			errors: 0,
 			tools: ["subagent_send", "subagent_wait"],
+			sendParameters: ["requestId", "message"],
 		});
 	} finally {
 		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
@@ -266,7 +277,7 @@ async function loadCredentialBackedChild(
 	output: string,
 	agentDir: string,
 	cwd: string,
-): Promise<{ errors: number; tools: string[] }> {
+): Promise<{ errors: number; tools: string[]; sendParameters: string[] }> {
 	const source = `
 import { DefaultResourceLoader, SettingsManager } from "@earendil-works/pi-coding-agent";
 const [output, agentDir, cwd] = process.argv.slice(1);
@@ -278,9 +289,11 @@ const loader = new DefaultResourceLoader({
 });
 await loader.reload();
 const loaded = loader.getExtensions();
+const send = loaded.extensions[0]?.tools.get("subagent_send");
 process.stdout.write(JSON.stringify({
   errors: loaded.errors.length,
   tools: [...(loaded.extensions[0]?.tools.keys() ?? [])],
+  sendParameters: Object.keys(send?.definition.parameters.properties ?? {}),
 }));
 `;
 	const child = spawn(
@@ -308,7 +321,7 @@ process.stdout.write(JSON.stringify({
 		child.once("close", resolveExit);
 	});
 	assert.equal(code, 0, stderr);
-	return JSON.parse(stdout) as { errors: number; tools: string[] };
+	return JSON.parse(stdout) as { errors: number; tools: string[]; sendParameters: string[] };
 }
 
 function requireOutput(metadata: BuildMetadata, path: string) {

@@ -114,15 +114,15 @@ Keep fan-in synthesis in the main agent because the runtime does not provide agg
 
 ## Exchange necessary messages
 
-Main and child processes receive the same `subagent_send` tool definition.
+Main and child processes receive context-specific `subagent_send` definitions.
 
-Start a request by providing `recipient` and omitting `requestId`.
+The main agent starts a request by providing an active job ID as `recipient` and omitting `requestId`.
 
-Answer a request by providing `requestId` and omitting `recipient`.
+The main agent answers a child request by providing `requestId` and omitting `recipient`.
 
-The main agent uses an active job ID as `recipient` to question a queued or running child.
+A child starts a request to main by omitting `requestId` and receives a request ID immediately.
 
-A child uses only the literal recipient `main` to start a request and receives a request ID immediately.
+A child answers a main-agent request by providing `requestId`.
 
 The child calls its own `subagent_wait(requestId, timeout?)` when it must wait for the main agent's plain-text response.
 

@@ -147,7 +147,11 @@ test("rejects cross-job responses, concurrent waits, wrong recipients, and revok
 		/unauthorized/i,
 	);
 	await assert.rejects(
-		() => first.send({ recipient: "job_2", message: "peer" }, undefined),
+		() =>
+			first.send(
+				{ recipient: "job_2", message: "peer" } as unknown as Parameters<typeof first.send>[0],
+				undefined,
+			),
 		/only to recipient "main"/i,
 	);
 	const controller = new AbortController();

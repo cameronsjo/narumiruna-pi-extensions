@@ -1,20 +1,35 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 import {
-	resolveSubagentSendArguments,
-	SUBAGENT_SEND_TOOL_DEFINITION,
-	type SubagentSendArguments,
-} from "./communication-contract.js";
-import {
 	type BrokerSendAcknowledgement,
 	MAX_IDENTIFIER_LENGTH,
+	MAX_MESSAGE_BYTES,
 	sanitizeTerminalText,
+	validateMessage,
 } from "./message-broker.js";
 
 export const CHILD_COMMUNICATION_TOOL_NAMES = ["subagent_send", "subagent_wait"] as const;
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
 const MAX_TIMEOUT_SECONDS = MAX_TIMEOUT_MS / 1000;
+
+const SendParameters = Type.Object(
+	{
+		requestId: Type.Optional(
+			Type.String({
+				description: "Pending main-agent request to answer. Omit when starting a new request.",
+				minLength: 1,
+				maxLength: MAX_IDENTIFIER_LENGTH,
+			}),
+		),
+		message: Type.String({
+			description: "Plain-text request or response. Maximum 50 KiB.",
+			minLength: 1,
+			maxLength: MAX_MESSAGE_BYTES,
+		}),
+	},
+	{ additionalProperties: false },
+);
 
 const WaitParameters = Type.Object(
 	{
@@ -30,10 +45,14 @@ const WaitParameters = Type.Object(
 	{ additionalProperties: false },
 );
 
+type ChildBrokerSendArguments =
+	| { recipient: "main"; message: string }
+	| { requestId: string; message: string };
+
 type WaitArguments = Static<typeof WaitParameters>;
 
 export interface ChildCommunicationClient {
-	send(params: SubagentSendArguments, signal?: AbortSignal): Promise<BrokerSendAcknowledgement>;
+	send(params: ChildBrokerSendArguments, signal?: AbortSignal): Promise<BrokerSendAcknowledgement>;
 	wait(requestId: string, timeoutMs: number | undefined, signal?: AbortSignal): Promise<string>;
 }
 
@@ -42,16 +61,19 @@ export function createChildCommunicationExtension(
 ): ExtensionFactory {
 	return (pi) => {
 		pi.registerTool({
-			...SUBAGENT_SEND_TOOL_DEFINITION,
+			name: "subagent_send",
+			label: "Subagent · Send to Main",
+			description:
+				"Use subagent_send to send one request to the main agent or answer one pending main-agent request. Omit requestId to start a request. Provide requestId to answer that request.",
+			promptSnippet: "Use subagent_send to send or answer one main-agent message",
+			parameters: SendParameters,
 			async execute(_toolCallId, params, signal) {
-				const selection = resolveSubagentSendArguments(params);
-				if (selection.kind === "request" && selection.recipient !== "main") {
-					throw new Error('A subagent may send new requests only to recipient "main".');
-				}
+				validateMessage(params.message, "Subagent message");
+				const requestId = optionalIdentifier(params.requestId, "requestId");
 				const acknowledgement = await client.send(
-					selection.kind === "request"
-						? { recipient: selection.recipient, message: selection.message }
-						: { requestId: selection.requestId, message: selection.message },
+					requestId === undefined
+						? { recipient: "main", message: params.message }
+						: { requestId, message: params.message },
 					signal,
 				);
 				return {
@@ -103,6 +125,10 @@ function prepareWaitArguments(args: unknown): WaitArguments {
 		return { ...prepared, timeout: timeoutMs / 1000 } as WaitArguments;
 	}
 	return prepared as WaitArguments;
+}
+
+function optionalIdentifier(value: unknown, field: string): string | undefined {
+	return value === undefined ? undefined : requiredIdentifier(value, field);
 }
 
 function requiredIdentifier(value: unknown, field: string): string {

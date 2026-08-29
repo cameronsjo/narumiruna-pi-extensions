@@ -59,7 +59,7 @@ A successful IPC design may remove:
 Any replacement must preserve:
 
 - A fresh child Pi process with no inherited main-agent conversation history.
-- One shared provider-visible `subagent_send` definition in main and child processes.
+- Context-specific provider-visible `subagent_send` definitions for main and child processes.
 - The child `subagent_wait` tool for child-originated requests.
 - Plain-text requests and responses in either direction.
 - At most four unresolved requests per job across both directions.
