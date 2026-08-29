@@ -18,6 +18,7 @@ import {
 	RPC_DOCUMENT_LINE_WIDTH,
 	RPC_DOCUMENT_PAGE_SIZE,
 } from "./document-formatting.js";
+import { DocumentSearchController } from "./document-search.js";
 import {
 	componentRows,
 	handleSearchInput,
@@ -43,6 +44,9 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 	options: BrowseOptions<ScreenId, ActionId>,
 ): MenuScreenComponent {
 	const searchInput = new Input();
+	const detailSearch = options.screen.enableDetailSearch
+		? new DocumentSearchController()
+		: undefined;
 	const allItems: SearchableItem[] = options.screen.items.map((item) => ({
 		item,
 		label: safeBrowseText(item.label),
@@ -68,6 +72,14 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 	const selected = () => filteredItems[selectedIndex];
 	const syncFocus = () => {
 		searchInput.focused = focused && view === "list" && searchInputVisible;
+		if (detailSearch) detailSearch.focused = focused && view === "detail";
+	};
+	const moveToDetailMatch = (row: number | undefined) => {
+		if (row === undefined) return;
+		if (row < detailScrollOffset) detailScrollOffset = row;
+		else if (row >= detailScrollOffset + detailViewportRows) {
+			detailScrollOffset = row - detailViewportRows + 1;
+		}
 	};
 	const setSelectedIndex = (index: number, wrap: boolean, rememberUserSelection: boolean) => {
 		if (filteredItems.length === 0) {
@@ -128,7 +140,9 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 							safeWidth,
 						)
 					: legacyDetailLines(selectedItem, safeWidth);
-				const layout = detailLayout(contentRows, content.length);
+				detailSearch?.updateLines(content);
+				const displayedContent = detailSearch?.highlight(content, options.theme) ?? content;
+				const layout = detailLayout(contentRows, content.length, detailSearch?.active ?? false);
 				detailViewportRows = layout.contentRows;
 				detailMaximumScroll = Math.max(0, content.length - layout.contentRows);
 				detailScrollOffset = clamp(detailScrollOffset, 0, detailMaximumScroll);
@@ -136,7 +150,8 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 					...(layout.titleRows
 						? [options.theme.fg("accent", options.theme.bold(selected()?.label || "Details"))]
 						: []),
-					...content.slice(detailScrollOffset, detailScrollOffset + layout.contentRows),
+					...(layout.searchRows && detailSearch ? [detailSearch.render(safeWidth)] : []),
+					...displayedContent.slice(detailScrollOffset, detailScrollOffset + layout.contentRows),
 					...(layout.positionRows
 						? [
 								options.theme.fg(
@@ -145,7 +160,18 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 								),
 							]
 						: []),
-					...(layout.hintRows ? [options.theme.fg("dim", detailHint(options.keybindings))] : []),
+					...(layout.hintRows
+						? [
+								options.theme.fg(
+									"dim",
+									detailHint(
+										options.keybindings,
+										Boolean(detailSearch),
+										detailSearch?.active ?? false,
+									),
+								),
+							]
+						: []),
 				];
 				return boundedFrame(lines, safeWidth, availableRows, options.theme);
 			}
@@ -202,15 +228,38 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 		invalidate() {
 			detailLineCache.invalidate();
 			searchInput.invalidate();
+			detailSearch?.invalidate();
 		},
 		handleInput(data) {
 			if (disposed) return;
 			if (matchesKey(data, Key.ctrl("c"))) {
 				options.onEvent({ kind: "close" });
-			} else if (options.keybindings.matches(data, "tui.select.cancel")) {
+			} else if (
+				view === "detail" &&
+				detailSearch?.active &&
+				options.keybindings.matches(data, "tui.altScreen.searchClose")
+			) {
+				detailSearch.close();
+			} else if (
+				view === "detail" &&
+				detailSearch?.active &&
+				options.keybindings.matches(data, "tui.altScreen.searchNext")
+			) {
+				moveToDetailMatch(detailSearch.next());
+			} else if (
+				view === "detail" &&
+				detailSearch?.active &&
+				options.keybindings.matches(data, "tui.altScreen.searchPrevious")
+			) {
+				moveToDetailMatch(detailSearch.previous());
+			} else if (
+				!(view === "detail" && detailSearch?.active) &&
+				options.keybindings.matches(data, "tui.select.cancel")
+			) {
 				if (view === "detail") {
 					view = "list";
 					detailScrollOffset = 0;
+					detailSearch?.close();
 					syncFocus();
 				} else options.onEvent({ kind: options.screen.hint ?? "back" });
 			} else if (view === "detail") {
@@ -232,6 +281,11 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 					);
 				} else if (matchesKey(data, Key.home)) detailScrollOffset = 0;
 				else if (matchesKey(data, Key.end)) detailScrollOffset = detailMaximumScroll;
+				else if (detailSearch?.active) {
+					if (detailSearch.handleInput(data)) moveToDetailMatch(detailSearch.currentRow);
+				} else if (detailSearch && options.keybindings.matches(data, "tui.altScreen.search")) {
+					detailSearch.activate([]);
+				}
 			} else if (options.keybindings.matches(data, "tui.select.up")) move(-1);
 			else if (options.keybindings.matches(data, "tui.select.down")) move(1);
 			else if (options.keybindings.matches(data, "tui.select.pageUp")) page(-1);
@@ -243,6 +297,7 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 				if (selected()) {
 					view = "detail";
 					detailScrollOffset = 0;
+					detailSearch?.close();
 					syncFocus();
 				}
 			} else if (searchInputVisible) {
@@ -256,6 +311,7 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 			if (disposed) return;
 			disposed = true;
 			searchInput.focused = false;
+			detailSearch?.dispose();
 			options.onDispose?.();
 		},
 	};
@@ -387,21 +443,33 @@ function listLayout(
 
 interface BrowseDetailLayout {
 	titleRows: number;
+	searchRows: number;
 	contentRows: number;
 	positionRows: number;
 	hintRows: number;
 }
 
-function detailLayout(availableRows: number, contentLength: number): BrowseDetailLayout {
+function detailLayout(
+	availableRows: number,
+	contentLength: number,
+	searchActive: boolean,
+): BrowseDetailLayout {
 	if (availableRows === 1) {
-		return { titleRows: 0, contentRows: 1, positionRows: 0, hintRows: 0 };
+		return {
+			titleRows: 0,
+			searchRows: searchActive ? 1 : 0,
+			contentRows: searchActive ? 0 : 1,
+			positionRows: 0,
+			hintRows: 0,
+		};
 	}
-	const titleRows = availableRows >= 4 ? 1 : 0;
-	const hintRows = availableRows >= 3 ? 1 : 0;
-	let contentRows = Math.max(1, availableRows - titleRows - hintRows);
+	const searchRows = searchActive ? 1 : 0;
+	const titleRows = availableRows >= 4 + searchRows ? 1 : 0;
+	const hintRows = availableRows >= 3 + searchRows ? 1 : 0;
+	let contentRows = Math.max(1, availableRows - titleRows - hintRows - searchRows);
 	const positionRows = contentLength > contentRows && contentRows >= 2 ? 1 : 0;
 	contentRows -= positionRows;
-	return { titleRows, contentRows, positionRows, hintRows };
+	return { titleRows, searchRows, contentRows, positionRows, hintRows };
 }
 
 function listWindowStart(selectedIndex: number, itemCount: number, viewportSize: number) {
@@ -454,19 +522,29 @@ function browseHint(keybindings: MenuKeybindings, destination: "back" | "close")
 	return ["type to search", controls].filter(Boolean).join(" · ");
 }
 
-function detailHint(keybindings: MenuKeybindings) {
+function detailHint(keybindings: MenuKeybindings, searchEnabled: boolean, searchActive: boolean) {
 	return formatInteractionHints(
 		keybindings,
-		[
-			{ bindings: ["tui.select.up", "tui.select.down"], label: "scroll" },
-			{ bindings: ["tui.select.pageUp", "tui.select.pageDown"], label: "page" },
-			{
-				bindings: ["tui.select.cancel"],
-				excludeKeys: ["ctrl+c"],
-				label: "back",
-			},
-			{ keys: ["ctrl+c"], label: "close" },
-		],
+		searchActive
+			? [
+					{ bindings: ["tui.altScreen.searchNext"], label: "next" },
+					{ bindings: ["tui.altScreen.searchPrevious"], label: "previous" },
+					{ bindings: ["tui.altScreen.searchClose"], label: "close search" },
+					{ keys: ["ctrl+c"], label: "close" },
+				]
+			: [
+					{ bindings: ["tui.select.up", "tui.select.down"], label: "scroll" },
+					{ bindings: ["tui.select.pageUp", "tui.select.pageDown"], label: "page" },
+					...(searchEnabled
+						? [{ bindings: ["tui.altScreen.search"] as const, label: "search" }]
+						: []),
+					{
+						bindings: ["tui.select.cancel"],
+						excludeKeys: ["ctrl+c"],
+						label: "back",
+					},
+					{ keys: ["ctrl+c"], label: "close" },
+				],
 		{ separator: "·" },
 	);
 }

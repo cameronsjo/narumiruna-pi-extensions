@@ -56,9 +56,9 @@ test("package exposes API version 14 and Markdown document types", () => {
 		label: "Schema",
 		detailDocument: document,
 	};
-	const apiVersion: 14 = PI_EXTENSION_MENU_API_VERSION;
+	const apiVersion: 15 = PI_EXTENSION_MENU_API_VERSION;
 	assert.equal(item.detailDocument, document);
-	assert.equal(apiVersion, 14);
+	assert.equal(apiVersion, 15);
 	assert.equal(resolveMenuScreen(testMenu(), "main", { count: 0 }).kind, "actions");
 });
 

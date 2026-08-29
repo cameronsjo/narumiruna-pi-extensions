@@ -4,6 +4,7 @@ import {
 	type BrowseScreen,
 	defineMenu,
 	formatInteractionHints,
+	hardWrapTerminalDocument,
 	type InputScreen,
 	type MenuCloseReason,
 	type MultiSelectScreen,
@@ -14,6 +15,7 @@ import {
 	runLiveChoice,
 	runMenu,
 	runQuestionnaire,
+	sanitizeTerminalDocument,
 } from "../src/index.js";
 import { createRpcHarness, createTuiHarness } from "../src/testing/index.js";
 
@@ -57,6 +59,7 @@ const modulesScreen: BrowseScreen = {
 		},
 	],
 	viewportSize: "adaptive",
+	enableDetailSearch: true,
 };
 void modulesScreen;
 
@@ -90,9 +93,14 @@ const reviewChangesScreen: ReviewScreen<Action> = {
 	content: "+1 enabled=true",
 	format: { kind: "diff", filePath: "settings.json" },
 	viewportSize: "adaptive",
+	enableSearch: true,
 	confirm: { id: "apply", label: "Apply", action: "refresh" },
 };
 void reviewChangesScreen;
+
+const safeDocument = sanitizeTerminalDocument("first\r\nsecond");
+const wrappedDocument = hardWrapTerminalDocument(safeDocument, 40);
+void wrappedDocument;
 
 const markdownScreen: ReviewScreen<Action> = {
 	kind: "review",

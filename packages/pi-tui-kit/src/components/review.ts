@@ -1,5 +1,11 @@
 import { stripVTControlCharacters } from "node:util";
-import { Key, matchesKey, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import {
+	type Focusable,
+	Key,
+	matchesKey,
+	truncateToWidth,
+	wrapTextWithAnsi,
+} from "@earendil-works/pi-tui";
 import type { MenuScreen, ReviewScreen } from "../types.js";
 import type {
 	MenuKeybindings,
@@ -12,6 +18,7 @@ import {
 	RPC_DOCUMENT_LINE_WIDTH,
 	RPC_DOCUMENT_PAGE_SIZE,
 } from "./document-formatting.js";
+import { DocumentSearchController } from "./document-search.js";
 import {
 	componentRows,
 	fitCompactHintSegments,
@@ -37,14 +44,22 @@ export function createReviewComponent<ScreenId extends string, ActionId extends 
 	let lastMaximumScroll = 0;
 	let lastViewportSize = reviewViewportSize(options.screen);
 	let disposed = false;
+	let focused = false;
+	let lastLines: readonly string[] = [];
 	const documentLineCache = createDocumentLineCache(options.theme);
+	const search = options.screen.enableSearch ? new DocumentSearchController() : undefined;
 
 	const moveTo = (offset: number) => {
 		scrollOffset = Math.max(0, Math.min(offset, lastMaximumScroll));
 		options.tui.requestRender();
 	};
+	const moveToMatch = (row: number | undefined) => {
+		if (row === undefined) return;
+		if (row < scrollOffset) moveTo(row);
+		else if (row >= scrollOffset + lastViewportSize) moveTo(row - lastViewportSize + 1);
+	};
 
-	return {
+	const component: MenuScreenComponent & Partial<Focusable> = {
 		render(width) {
 			const safeWidth = Math.max(1, width);
 			const formattedLines = documentLineCache.lines(
@@ -57,9 +72,14 @@ export function createReviewComponent<ScreenId extends string, ActionId extends 
 			)
 				? formattedLines
 				: [];
+			lastLines = allLines;
+			search?.updateLines(allLines);
 			const frame = renderAdaptiveReviewFrame({
 				screen: options.screen,
-				allLines,
+				allLines: search?.highlight(allLines, options.theme) ?? allLines,
+				searchLine: search?.active ? search.render(safeWidth) : undefined,
+				searchEnabled: Boolean(search),
+				searchActive: search?.active ?? false,
 				width: safeWidth,
 				terminalRows: options.tui.terminal.rows,
 				maximumViewportSize:
@@ -77,11 +97,22 @@ export function createReviewComponent<ScreenId extends string, ActionId extends 
 		},
 		invalidate() {
 			documentLineCache.invalidate();
+			search?.invalidate();
 		},
 		handleInput(data) {
 			if (disposed) return;
 			if (matchesKey(data, Key.ctrl("c"))) options.onEvent({ kind: "close" });
-			else if (options.keybindings.matches(data, "tui.select.cancel")) {
+			else if (search?.active && options.keybindings.matches(data, "tui.altScreen.searchClose")) {
+				search.close();
+				options.tui.requestRender();
+			} else if (search?.active && options.keybindings.matches(data, "tui.altScreen.searchNext")) {
+				moveToMatch(search.next());
+			} else if (
+				search?.active &&
+				options.keybindings.matches(data, "tui.altScreen.searchPrevious")
+			) {
+				moveToMatch(search.previous());
+			} else if (!search?.active && options.keybindings.matches(data, "tui.select.cancel")) {
 				options.onEvent({ kind: options.screen.hint ?? "back" });
 			} else if (options.keybindings.matches(data, "tui.select.up")) {
 				moveTo(scrollOffset - 1);
@@ -93,22 +124,47 @@ export function createReviewComponent<ScreenId extends string, ActionId extends 
 				moveTo(scrollOffset + lastViewportSize);
 			} else if (matchesKey(data, Key.home)) moveTo(0);
 			else if (matchesKey(data, Key.end)) moveTo(lastMaximumScroll);
-			else if (options.screen.confirm && options.keybindings.matches(data, "tui.select.confirm")) {
+			else if (
+				!search?.active &&
+				options.screen.confirm &&
+				options.keybindings.matches(data, "tui.select.confirm")
+			) {
 				options.onEvent({ kind: "activate", itemId: options.screen.confirm.id });
+			} else if (search?.active) {
+				if (search.handleInput(data)) moveToMatch(search.currentRow);
+				options.tui.requestRender();
+			} else if (search && options.keybindings.matches(data, "tui.altScreen.search")) {
+				search.activate(lastLines);
+				options.tui.requestRender();
 			}
 		},
 		async waitForPending() {},
 		dispose() {
 			if (disposed) return;
 			disposed = true;
+			search?.dispose();
 			options.onDispose?.();
 		},
 	};
+	if (search) {
+		Object.defineProperty(component, "focused", {
+			get: () => focused,
+			set: (value: boolean) => {
+				focused = value;
+				search.focused = value;
+			},
+			enumerable: true,
+		});
+	}
+	return component;
 }
 
 interface AdaptiveReviewFrameOptions<ActionId extends string> {
 	screen: ReviewScreen<ActionId>;
 	allLines: readonly string[];
+	searchLine?: string;
+	searchEnabled: boolean;
+	searchActive: boolean;
 	width: number;
 	terminalRows: number;
 	maximumViewportSize?: number;
@@ -138,6 +194,8 @@ function renderAdaptiveReviewFrame<ActionId extends string>(
 	const totalRows = componentRows(options.terminalRows);
 	const framed = totalRows >= MIN_FRAMED_ROWS;
 	const availableRows = framed ? totalRows - 2 : totalRows;
+	const searchRows = options.searchLine === undefined ? 0 : 1;
+	const documentRows = Math.max(0, availableRows - searchRows);
 	const destination = options.screen.hint ?? "back";
 	const confirmAction = options.screen.confirm ? safeMenuText(options.screen.confirm.label) : "";
 	const fullHeader = [
@@ -149,29 +207,42 @@ function renderAdaptiveReviewFrame<ActionId extends string>(
 			wrapTextWithAnsi(options.theme.fg("muted", safeMenuText(line)), options.width),
 		),
 	].map((line) => truncateToWidth(line, options.width, ""));
-	const fullHint = wrapTextWithAnsi(
-		options.theme.fg("dim", menuHint(options.keybindings, destination, confirmAction)),
-		options.width,
-	).map((line) => truncateToWidth(line, options.width, ""));
+	const hintText = reviewHint(
+		options.keybindings,
+		destination,
+		confirmAction,
+		options.searchEnabled,
+		options.searchActive,
+	);
+	const fullHint = wrapTextWithAnsi(options.theme.fg("dim", hintText), options.width).map((line) =>
+		truncateToWidth(line, options.width, ""),
+	);
 	const criticalHint = options.theme.fg(
 		"dim",
-		compactReviewHint(options.keybindings, destination, confirmAction, options.width),
+		compactReviewHint(
+			options.keybindings,
+			destination,
+			confirmAction,
+			options.width,
+			options.searchEnabled,
+			options.searchActive,
+		),
 	);
 
 	let chrome =
 		options.allLines.length === 0
-			? allocateEmptyReviewChrome(availableRows, fullHeader, fullHint, criticalHint)
+			? allocateEmptyReviewChrome(documentRows, fullHeader, fullHint, criticalHint)
 			: allocateAdaptiveReviewChrome(
-					availableRows,
+					documentRows,
 					fullHeader,
 					fullHint,
 					criticalHint,
 					false,
 					options.maximumViewportSize,
 				);
-	if (availableRows >= 4 && options.allLines.length > chrome.viewportSize) {
+	if (documentRows >= 4 && options.allLines.length > chrome.viewportSize) {
 		chrome = allocateAdaptiveReviewChrome(
-			availableRows,
+			documentRows,
 			fullHeader,
 			fullHint,
 			criticalHint,
@@ -190,6 +261,7 @@ function renderAdaptiveReviewFrame<ActionId extends string>(
 		: [];
 	const contentLines = [
 		...chrome.header,
+		...(options.searchLine === undefined ? [] : [options.searchLine]),
 		...(chrome.separator ? [""] : []),
 		...visible,
 		...position,
@@ -229,6 +301,9 @@ function allocateAdaptiveReviewChrome(
 	showPosition: boolean,
 	maximumViewportSize?: number,
 ): AdaptiveReviewChrome {
+	if (availableRows <= 0) {
+		return { header: [], separator: false, hint: [], showPosition: false, viewportSize: 0 };
+	}
 	if (availableRows === 1) {
 		return { header: [], separator: false, hint: [], showPosition: false, viewportSize: 1 };
 	}
@@ -280,12 +355,47 @@ function allocateAdaptiveReviewChrome(
 	};
 }
 
+function reviewHint(
+	keybindings: MenuKeybindings,
+	destination: "back" | "close",
+	confirmAction: string,
+	searchEnabled: boolean,
+	searchActive: boolean,
+) {
+	if (searchActive) {
+		const next = reviewBindingText(keybindings, "tui.altScreen.searchNext");
+		const previous = reviewBindingText(keybindings, "tui.altScreen.searchPrevious");
+		const close = reviewBindingText(keybindings, "tui.altScreen.searchClose");
+		return [
+			...(next ? [`${next} next`] : []),
+			...(previous ? [`${previous} previous`] : []),
+			...(close ? [`${close} close search`] : []),
+			"ctrl+c close",
+		].join(" · ");
+	}
+	const base = menuHint(keybindings, destination, confirmAction);
+	const search = searchEnabled ? reviewBindingText(keybindings, "tui.altScreen.search") : "";
+	return [base, ...(search ? [`${search} search`] : [])].filter(Boolean).join(" · ");
+}
+
 function compactReviewHint(
 	keybindings: MenuKeybindings,
 	destination: "back" | "close",
 	confirmAction: string,
 	width: number,
+	searchEnabled: boolean,
+	searchActive: boolean,
 ) {
+	if (searchActive) {
+		return fitCompactHintSegments(
+			[
+				`${reviewBindingText(keybindings, "tui.altScreen.searchClose")} close search`,
+				`${reviewBindingText(keybindings, "tui.altScreen.searchNext")} next`,
+				"ctrl+c close",
+			],
+			width,
+		);
+	}
 	const confirm = reviewBindingText(keybindings, "tui.select.confirm");
 	const cancel = reviewBindingText(keybindings, "tui.select.cancel", "ctrl+c");
 	const up = reviewBindingText(keybindings, "tui.select.up");
@@ -296,6 +406,9 @@ function compactReviewHint(
 			...(destination === "back" || !cancel ? ["ctrl+c close"] : []),
 			...(confirm && confirmAction ? [`${confirm} ${confirmAction}`] : []),
 			...(up || down ? [`${[up, down].filter(Boolean).join("/")} navigate`] : []),
+			...(searchEnabled
+				? [`${reviewBindingText(keybindings, "tui.altScreen.search")} search`]
+				: []),
 		],
 		width,
 	);

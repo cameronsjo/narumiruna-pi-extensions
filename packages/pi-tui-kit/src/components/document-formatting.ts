@@ -1,6 +1,7 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { MarkdownTheme } from "@earendil-works/pi-tui";
 import * as PiTui from "@earendil-works/pi-tui";
+import { hardWrapTerminalDocument } from "../terminal-document.js";
 import type { ReviewFormat } from "../types.js";
 import { sanitizeDocumentText } from "./document-sanitization.js";
 import { mermaidMarkdownTransform, supportsRichMarkdown } from "./mermaid.js";
@@ -8,9 +9,6 @@ import { getLanguageFromPath, highlightCode } from "./syntax-highlighting.js";
 
 export const RPC_DOCUMENT_LINE_WIDTH = 120;
 export const RPC_DOCUMENT_PAGE_SIZE = 8;
-
-const TAB_SIZE = 4;
-const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 type DocumentTheme = Pick<Theme, "fg" | "bold"> &
 	Partial<Pick<Theme, "italic" | "underline" | "strikethrough">>;
@@ -177,51 +175,7 @@ function documentFormatIdentity(format: ReviewFormat | undefined) {
 }
 
 function documentSegments(content: string, width: number) {
-	const safe = sanitizeDocumentText(content);
-	return safe.split("\n").flatMap((line) => {
-		const source = expandTabs(line);
-		return hardWrapLine(source, width).map((text) => ({ source, text }));
-	});
-}
-
-function expandTabs(line: string): string {
-	let column = 0;
-	let result = "";
-	for (const { segment } of graphemeSegmenter.segment(line)) {
-		if (segment === "\t") {
-			const count = TAB_SIZE - (column % TAB_SIZE);
-			result += " ".repeat(count);
-			column += count;
-			continue;
-		}
-		result += segment;
-		column += PiTui.visibleWidth(segment);
-	}
-	return result;
-}
-
-function hardWrapLine(line: string, width: number): string[] {
-	const safeWidth = Math.max(1, width);
-	if (line.length === 0) return [""];
-	const lines: string[] = [];
-	let current = "";
-	let currentWidth = 0;
-	const flush = () => {
-		lines.push(current);
-		current = "";
-		currentWidth = 0;
-	};
-	for (const { segment } of graphemeSegmenter.segment(line)) {
-		const segmentWidth = PiTui.visibleWidth(segment);
-		if (segmentWidth > safeWidth) {
-			if (current.length > 0) flush();
-			lines.push("?".repeat(safeWidth));
-			continue;
-		}
-		if (currentWidth + segmentWidth > safeWidth && current.length > 0) flush();
-		current += segment;
-		currentWidth += segmentWidth;
-	}
-	if (current.length > 0 || lines.length === 0) lines.push(current);
-	return lines;
+	return sanitizeDocumentText(content)
+		.split("\n")
+		.flatMap((source) => hardWrapTerminalDocument(source, width).map((text) => ({ source, text })));
 }

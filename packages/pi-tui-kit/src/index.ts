@@ -46,6 +46,10 @@ export {
 } from "./questionnaire.js";
 export { type RunMenuOptions, type RunMenuResult, runMenu } from "./runtime.js";
 export { type RunTaskOptions, type RunTaskResult, runTask } from "./task.js";
+export {
+	hardWrapTerminalDocument,
+	sanitizeTerminalDocument,
+} from "./terminal-document.js";
 export { sanitizeTerminalText } from "./terminal-text.js";
 export type {
 	ActionMenuItem,
@@ -76,4 +80,4 @@ export type {
 	SettingsScreen,
 } from "./types.js";
 
-export const PI_EXTENSION_MENU_API_VERSION = 14;
+export const PI_EXTENSION_MENU_API_VERSION = 15;

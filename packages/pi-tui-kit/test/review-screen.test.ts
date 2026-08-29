@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { stripVTControlCharacters } from "node:util";
 import { initTheme } from "@earendil-works/pi-coding-agent";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { type Focusable, visibleWidth } from "@earendil-works/pi-tui";
 import { test } from "vitest";
 import { createCustomSelectorHarness, createMockContext } from "../../../test/support.js";
 import { createMenuScreenComponent } from "../src/components/index.js";
@@ -37,6 +37,10 @@ const reviewTestKeybindings: ReviewKeybindings = {
 			"tui.select.pageDown": "d",
 			"tui.select.confirm": "l",
 			"tui.select.cancel": "q",
+			"tui.altScreen.search": "s",
+			"tui.altScreen.searchNext": "n",
+			"tui.altScreen.searchPrevious": "p",
+			"tui.altScreen.searchClose": "x",
 		};
 		return data === values[binding];
 	},
@@ -48,6 +52,10 @@ const reviewTestKeybindings: ReviewKeybindings = {
 			"tui.select.pageDown": ["d"],
 			"tui.select.confirm": ["l"],
 			"tui.select.cancel": ["q", "ctrl+c"],
+			"tui.altScreen.search": ["s"],
+			"tui.altScreen.searchNext": ["n"],
+			"tui.altScreen.searchPrevious": ["p"],
+			"tui.altScreen.searchClose": ["x"],
 		};
 		return values[binding] ?? [];
 	},
@@ -702,6 +710,7 @@ test("RPC adaptive review matches default bounded pagination without custom TUI"
 					...reviewScreen,
 					content: Array.from({ length: 20 }, (_, index) => `row ${index + 1}`).join("\n"),
 					viewportSize,
+					enableSearch: true,
 					confirm: undefined,
 				}),
 			},
@@ -749,6 +758,7 @@ test("RPC review paginates bounded content and preserves colliding confirmation 
 			review: () => ({
 				...reviewScreen,
 				content,
+				enableSearch: true,
 				confirm: { id: "confirm-next", label: "Next", action: "apply" },
 			}),
 		},
@@ -810,6 +820,48 @@ test("owner abort dismisses an unanswered adaptive RPC review without invoking c
 	owner.abort(new DOMException("Session replaced", "AbortError"));
 	assert.deepEqual(await running, { kind: "stale" });
 	assert.equal(invoked, false);
+});
+
+test("review search is opt-in, focus-aware, navigable, and separately dismissible", () => {
+	const colors: string[] = [];
+	const harness = reviewComponentHarness(
+		{
+			...reviewScreen,
+			content: "first needle\nsecond\nthird needle",
+			enableSearch: true,
+		},
+		false,
+		10,
+		(color) => colors.push(color),
+	);
+	const focusable = harness.component as typeof harness.component & Focusable;
+	focusable.focused = true;
+	harness.component.render(40);
+	harness.component.handleInput("s");
+	harness.component.handleInput("needle");
+	assert.match(plainRender(harness.component, 40), /Find:/u);
+	assert.ok(colors.includes("searchMatchText"));
+	harness.component.handleInput("n");
+	assert.match(plainRender(harness.component, 40), /third needle/u);
+	harness.component.handleInput("x");
+	assert.doesNotMatch(plainRender(harness.component, 40), /Find:/u);
+	assert.deepEqual(harness.events, []);
+	harness.component.handleInput("q");
+	assert.deepEqual(harness.events, [{ kind: "back" }]);
+	harness.component.handleInput("s");
+	harness.component.handleInput("\u0003");
+	assert.deepEqual(harness.events.at(-1), { kind: "close" });
+});
+
+test("search-disabled review keeps its prior component and disposal behavior", () => {
+	const harness = reviewComponentHarness(reviewScreen);
+	assert.equal("focused" in harness.component, false);
+	harness.component.render(30);
+	harness.component.handleInput("s");
+	assert.doesNotMatch(plainRender(harness.component, 30), /Find:/u);
+	harness.component.dispose?.();
+	harness.component.handleInput("q");
+	assert.deepEqual(harness.events, []);
 });
 
 function reviewComponentHarness(

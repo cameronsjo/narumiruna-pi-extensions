@@ -24,6 +24,10 @@ const keybindings = {
 			"tui.select.pageDown": "d",
 			"tui.select.confirm": "y",
 			"tui.select.cancel": "q",
+			"tui.altScreen.search": "s",
+			"tui.altScreen.searchNext": "n",
+			"tui.altScreen.searchPrevious": "p",
+			"tui.altScreen.searchClose": "x",
 		};
 		return data === inputs[binding];
 	},
@@ -35,6 +39,10 @@ const keybindings = {
 			"tui.select.pageDown": "d",
 			"tui.select.confirm": "y",
 			"tui.select.cancel": "q",
+			"tui.altScreen.search": "s",
+			"tui.altScreen.searchNext": "n",
+			"tui.altScreen.searchPrevious": "p",
+			"tui.altScreen.searchClose": "x",
 		}[binding];
 		return key ? [key] : [];
 	},
@@ -402,6 +410,72 @@ test("browse is adaptively bounded, handles empty searches, and distinguishes Ba
 	>);
 	close.component.handleInput("\u0003");
 	assert.deepEqual(close.events, [{ kind: "close" }]);
+});
+
+test("browse detail search stays independent from list filtering", () => {
+	const colors: string[] = [];
+	const screen = {
+		...browseScreen(),
+		enableDetailSearch: true,
+		items: [
+			{
+				id: "legacy",
+				label: "Legacy",
+				searchText: "catalog-only",
+				details: ["first needle", "second needle"],
+			},
+		],
+	} as MenuScreen<ScreenId, ActionId>;
+	const harness = componentHarness(screen, { rows: 12, onColor: (color) => colors.push(color) });
+	const focusable = harness.component as MenuScreenComponent & Focusable;
+	focusable.focused = true;
+	harness.component.render(40);
+	harness.component.handleInput("catalog");
+	harness.component.handleInput("y");
+	harness.component.render(40);
+	harness.component.handleInput("s");
+	harness.component.handleInput("needle");
+	assert.match(plainRender(harness.component, 40).join("\n"), /Find:/u);
+	assert.ok(colors.includes("searchMatchText"));
+	harness.component.handleInput("n");
+	harness.component.handleInput("x");
+	assert.doesNotMatch(plainRender(harness.component, 40).join("\n"), /Find:/u);
+	harness.component.handleInput("q");
+	assert.match(plainRender(harness.component, 40).join("\n"), /Legacy/u);
+	assert.doesNotMatch(plainRender(harness.component, 40).join("\n"), /No matching items/u);
+});
+
+test("browse searches exact detail documents and resets on exit", () => {
+	const screen: MenuScreen<ScreenId, ActionId> = {
+		kind: "browse",
+		title: "Documents",
+		enableDetailSearch: true,
+		items: [
+			{
+				id: "exact",
+				label: "Exact",
+				detailDocument: {
+					content: "# Heading\n\nexact needle",
+					format: { kind: "markdown" },
+				},
+			},
+		],
+	};
+	const harness = componentHarness(screen, { rows: 12 });
+	harness.component.render(40);
+	harness.component.handleInput("y");
+	harness.component.render(40);
+	harness.component.handleInput("s");
+	harness.component.handleInput("missing");
+	assert.match(plainRender(harness.component, 40).join("\n"), /0\/0/u);
+	harness.component.handleInput("q");
+	assert.match(plainRender(harness.component, 40).join("\n"), /missingq/u);
+	harness.component.handleInput("x");
+	harness.component.handleInput("q");
+	harness.component.handleInput("y");
+	assert.doesNotMatch(plainRender(harness.component, 40).join("\n"), /Find:/u);
+	harness.component.handleInput("\u0003");
+	assert.deepEqual(harness.events, [{ kind: "close" }]);
 });
 
 function plainRender(component: MenuScreenComponent, width: number) {

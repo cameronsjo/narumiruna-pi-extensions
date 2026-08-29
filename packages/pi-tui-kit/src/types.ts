@@ -127,6 +127,8 @@ export interface BrowseScreen {
 	items: readonly MenuBrowseItem[];
 	/** Omitted or "adaptive" fills the live terminal budget; a number caps visible item rows. */
 	viewportSize?: number | "adaptive";
+	/** Enable TUI-only literal search after opening an item's detail view. */
+	enableDetailSearch?: boolean;
 	hint?: "back" | "close";
 }
 
@@ -167,6 +169,8 @@ export interface ReviewScreen<ActionId extends string> {
 	content: string;
 	format?: ReviewFormat;
 	viewportSize?: number | "adaptive";
+	/** Enable TUI-only literal search over displayed document text. */
+	enableSearch?: boolean;
 	confirm?: ReviewConfirmation<ActionId>;
 	hint?: "back" | "close";
 }
