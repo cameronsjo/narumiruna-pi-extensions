@@ -167,7 +167,6 @@ export class FleetController {
 	private activeContext: ExtensionContext | undefined;
 	private controller = new AbortController();
 	private membership: Membership | undefined;
-	private warningAccepted = false;
 	private membershipMutation: Promise<void> = Promise.resolve();
 	private readonly ownedTasks = new Set<Promise<unknown>>();
 
@@ -188,7 +187,6 @@ export class FleetController {
 		this.controller = new AbortController();
 		this.activeSessionManager = ctx.sessionManager;
 		this.activeContext = ctx;
-		this.warningAccepted = false;
 		const owner = ctx.sessionManager;
 		const ownerGeneration = this.generation;
 		let envelope: FleetLaunchEnvelope | undefined;
@@ -208,14 +206,6 @@ export class FleetController {
 		const handoff =
 			event.reason === "reload" ? takeReloadHandoff(owner, this.deps.now()) : undefined;
 		if (!envelope && !handoff) return;
-		if (!handoff?.warningAccepted) {
-			this.notify(
-				ctx,
-				"Pi Fleet is experimental. Local protocol, terminal automation, and agent-request behavior may change.",
-				"warning",
-			);
-		}
-		this.warningAccepted = true;
 		try {
 			if (envelope?.childName) this.pi.setSessionName(envelope.childName);
 			if (envelope?.model) {
@@ -265,7 +255,6 @@ export class FleetController {
 					? { kickoffCapability: this.membership.kickoffCapability }
 					: {}),
 				kickoffConsumed: this.membership.kickoffConsumed,
-				warningAccepted: this.warningAccepted,
 				expiresAt: this.deps.now() + RELOAD_HANDOFF_TTL_MS,
 			});
 		}
@@ -279,22 +268,6 @@ export class FleetController {
 
 	get sessionSignal(): AbortSignal {
 		return this.controller.signal;
-	}
-
-	async acceptExperimentalWarning(ctx: ExtensionContext, signal?: AbortSignal): Promise<boolean> {
-		this.assertCurrentContext(ctx);
-		if (this.warningAccepted) return true;
-		if (!ctx.hasUI) throw new Error("Pi Fleet requires TUI or RPC UI for experimental consent");
-		const owner = ctx.sessionManager;
-		const ownerGeneration = this.generation;
-		const accepted = await ctx.ui.confirm(
-			"Use experimental Pi Fleet?",
-			"Pi Fleet starts local sockets and may launch paid model turns in new terminal splits. Its protocol and behavior may change.",
-			{ signal: combineSignals(signal, this.controller.signal) },
-		);
-		if (!this.isCurrent(owner, ownerGeneration)) return false;
-		if (accepted) this.warningAccepted = true;
-		return accepted;
 	}
 
 	async startNewGroup(
@@ -485,9 +458,6 @@ export class FleetController {
 					: this.deps.createZellij();
 		const terminalVersion = await terminalAdapter.assertAvailable(operationSignal);
 		if (!this.isCurrent(owner, ownerGeneration)) throw staleError();
-		if (!(await this.acceptExperimentalWarning(ctx, operationSignal))) {
-			throw abortError("Pi Fleet launch cancelled before creating a split");
-		}
 		if (launchSettings.confirmSessionLaunch) {
 			const confirmed = await ctx.ui.confirm(
 				"Create a new Pi session?",

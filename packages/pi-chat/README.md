@@ -2,13 +2,9 @@
 
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-chat)](https://www.npmjs.com/package/@narumitw/pi-chat) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-> [!WARNING]
-> Pi Chat is experimental.
-> Its protocol, identity format, networking behavior, and interaction flow may change between releases.
-> It is not an anonymous or reliable messaging service.
-
 Join ephemeral peer-to-peer chat rooms without leaving Pi.
 Chat messages stay out of prompts, model context, repositories, and agent output.
+Pi Chat is not an anonymous or reliable messaging service.
 
 Pi Chat uses Hyperswarm and HyperDHT for peer discovery and encrypted Noise streams for direct connections.
 
@@ -249,7 +245,7 @@ Explicit **Leave and forget room** atomically removes resume state before discon
 
 ## 🚧 Limitations
 
-The current experimental release intentionally omits:
+The current release intentionally omits:
 
 - simultaneous multi-room connections or UI;
 - persistent or synchronized history;

@@ -223,7 +223,7 @@ test("spawn auto-creates a group, preserves parent, inherits model, and sends ki
 		task: "Check tests",
 		cwd: "worktree",
 	});
-	assert.equal(confirmationMessages.length, 2);
+	assert.equal(confirmationMessages.length, 1);
 	assert.equal(
 		confirmationMessages.some((message) => /tmux split: down/u.test(message)),
 		true,
@@ -420,7 +420,7 @@ test("spawn routes configured and explicit Zellij launches without changing the 
 	}
 });
 
-test("disabled launch confirmation skips the preview but preserves experimental consent", async () => {
+test("disabled launch confirmation skips every confirmation", async () => {
 	const runtime = harness();
 	const settings = memorySettingsRuntime({ confirmSessionLaunch: false });
 	const controller = new FleetController(runtime.mock.pi, runtime.deps, settings);
@@ -435,7 +435,7 @@ test("disabled launch confirmation skips the preview but preserves experimental 
 	});
 	await controller.sessionStart({ reason: "startup" }, context.ctx);
 	await controller.spawn(context.ctx, {});
-	assert.deepEqual(confirmationTitles, ["Use experimental Pi Fleet?"]);
+	assert.deepEqual(confirmationTitles, []);
 	await controller.sessionShutdown({ reason: "quit" }, context.ctx);
 });
 

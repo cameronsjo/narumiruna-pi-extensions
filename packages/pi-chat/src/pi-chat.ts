@@ -29,8 +29,6 @@ import {
 import { sanitizeSingleLine } from "./text.js";
 
 const CHAT_UI_KEY = "chat";
-const EXPERIMENTAL_WARNING =
-	"Pi Chat is experimental. Peer identity, networking, and interaction behavior may change.";
 const USAGE = "Usage: /chat, /chat <pichat:v1-or-v2:invite>, or /chat #<public-slug>";
 const PRIVATE_ROOM_OPTIONS = [
 	"Join and remember — Save the bearer invite privately and restore this room",
@@ -686,7 +684,7 @@ export function createPiChatExtension(
 		};
 
 		pi.registerCommand("chat", {
-			description: "Open experimental peer-to-peer developer chat",
+			description: "Open peer-to-peer developer chat",
 			handler: async (args, ctx) => {
 				if (ctx.mode !== "tui") throw new Error("Pi Chat requires Pi TUI mode.");
 				const owner = ctx.sessionManager;
@@ -773,7 +771,6 @@ export function createPiChatExtension(
 				settings = {};
 				notifySafely(ctx, "Pi Chat settings are invalid; fix the file before saving.", "error");
 			}
-			if (ctx.hasUI) notifySafely(ctx, EXPERIMENTAL_WARNING, "warning");
 			if (settings.resume && ctx.mode === "tui") {
 				void trackTask(restoreRememberedRoom(ctx, ownerGeneration));
 			}

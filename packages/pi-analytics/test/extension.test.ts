@@ -151,7 +151,7 @@ test("factory registers lifecycle hooks without constructing or opening storage"
 	]);
 });
 
-test("session start synchronously installs a lazy store and shows the experimental warning", async () => {
+test("session start synchronously installs a lazy store without notifying", async () => {
 	const store = new FakeStore();
 	let path = "";
 	const mock = createMockPi();
@@ -165,10 +165,7 @@ test("session start synchronously installs a lazy store and shows the experiment
 	const started = lifecycleContext();
 	await emit(mock, "session_start", { reason: "startup" }, started.ctx);
 	assert.equal(path, "/agent/pi-analytics");
-	assert.deepEqual(started.notifications[0], {
-		message: "pi-analytics is experimental; its metrics and dashboard may change.",
-		level: "warning",
-	});
+	assert.deepEqual(started.notifications, []);
 });
 
 test("a repeated session start aborts and closes the previous lazy store", async () => {

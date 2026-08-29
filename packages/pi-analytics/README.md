@@ -2,10 +2,6 @@
 
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-analytics)](https://www.npmjs.com/package/@narumitw/pi-analytics) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-> [!WARNING]
-> This extension is experimental.
-> Its metrics, storage format, and dashboard may change between releases.
-
 Measure local model, skill, tool, and provider reliability activity without storing conversation or tool content or sending analytics elsewhere.
 
 ## ✨ Features

@@ -1,7 +1,7 @@
 {
 	"name": "@narumitw/pi-chat",
 	"version": "0.1.5",
-	"description": "Experimental peer-to-peer chat extension for Pi.",
+	"description": "Peer-to-peer chat extension for Pi.",
 	"type": "module",
 	"license": "MIT",
 	"private": false,
@@ -25,7 +25,7 @@
 		]
 	},
 	"piExtension": {
-		"lifecycle": "experimental"
+		"lifecycle": "stable"
 	},
 	"scripts": {
 		"build": "node scripts/build-runtime.mjs",

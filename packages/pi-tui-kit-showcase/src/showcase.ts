@@ -38,7 +38,7 @@ export function createPiTuiKitShowcaseExtension(
 		});
 
 		pi.registerCommand(COMMAND_NAME, {
-			description: "Open the private experimental Pi TUI Kit showcase",
+			description: "Open the private Pi TUI Kit showcase",
 			getArgumentCompletions: () => [],
 			handler: async (rawArgs, ctx) => {
 				const args = rawArgs.trim();

@@ -368,7 +368,7 @@ export function createChatMenu(source: ChatMenuSource) {
 				kind: "detail",
 				title: "Pi Chat help",
 				lines: [
-					"Pi Chat is experimental and TUI-only.",
+					"Pi Chat is TUI-only.",
 					"Chat stays outside Pi sessions, prompts, model context, and repository files.",
 					"Private invites are bearer secrets. Public rooms are guessable.",
 					"Noise encrypts direct streams, but peers and DHT infrastructure may observe network metadata.",
@@ -505,7 +505,7 @@ function mainScreen(state: ChatMenuState) {
 		return {
 			kind: "actions" as const,
 			title: "Pi Chat · disconnected",
-			lines: ["Experimental peer-to-peer chat. Messages never enter model context."],
+			lines: ["Peer-to-peer chat whose messages never enter model context."],
 			items: [
 				{
 					id: "browse",
