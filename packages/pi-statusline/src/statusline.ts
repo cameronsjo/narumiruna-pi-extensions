@@ -243,6 +243,7 @@ export default function statusline(pi: ExtensionAPI) {
 		runtime.turnCount = 0;
 		runtime.activeTools.clear();
 		runtime.isStreaming = false;
+		runtime.uiPrompt = undefined;
 		loaded = loadStatuslineSettingsForAgent(agentDir);
 		const settingsNotice = consumeStatuslineSettingsNotice();
 		if (settingsNotice) ctx.ui.notify(settingsNotice, "warning");
@@ -271,6 +272,7 @@ export default function statusline(pi: ExtensionAPI) {
 		runtime.gitStatus = undefined;
 		runtime.activeTools.clear();
 		runtime.isStreaming = false;
+		runtime.uiPrompt = undefined;
 		runtime.duplicateExtensions = [];
 		runtime.extensionStatusIconAliases = EMPTY_EXTENSION_STATUS_ICON_ALIASES;
 		ctx.ui.setFooter(undefined);
@@ -302,6 +304,18 @@ export default function statusline(pi: ExtensionAPI) {
 		if (!ownsRuntime(ctx)) return;
 		runtime.isStreaming = false;
 		runtime.activeTools.clear();
+		refresh();
+	});
+
+	pi.on("ui_prompt_start", (event, ctx) => {
+		if (!ownsRuntime(ctx)) return;
+		runtime.uiPrompt = { kind: event.kind, title: event.title };
+		refresh();
+	});
+
+	pi.on("ui_prompt_end", (_event, ctx) => {
+		if (!ownsRuntime(ctx)) return;
+		runtime.uiPrompt = undefined;
 		refresh();
 	});
 

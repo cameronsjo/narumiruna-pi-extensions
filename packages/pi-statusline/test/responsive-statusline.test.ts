@@ -90,9 +90,22 @@ test("statusline activity appears only while streaming or tools are active and r
 		assert.match(footer.render(200)[0] ?? "", /💭 thinking/u);
 		await emit(mock.events, "tool_execution_start", { toolName: "read" }, context.ctx);
 		await emit(mock.events, "tool_execution_start", { toolName: "read" }, context.ctx);
-		assert.match(footer.render(200)[0] ?? "", /⚙ read×2/u);
+		assert.match(footer.render(200)[0] ?? "", /⚙️ read×2/u);
+		await emit(
+			mock.events,
+			"ui_prompt_start",
+			{ kind: "confirm", title: "Deploy production?" },
+			context.ctx,
+		);
+		assert.match(footer.render(200)[0] ?? "", /⌨ waiting for confirm · Deploy production\?/u);
+		await emit(mock.events, "ui_prompt_end", { kind: "confirm" }, context.ctx);
+		assert.match(footer.render(200)[0] ?? "", /⚙️ read×2/u);
 		await emit(mock.events, "tool_execution_end", { toolName: "read" }, context.ctx);
 		await emit(mock.events, "tool_execution_end", { toolName: "read" }, context.ctx);
+		assert.match(footer.render(200)[0] ?? "", /💭 thinking/u);
+		await emit(mock.events, "ui_prompt_start", { kind: "custom" }, context.ctx);
+		assert.match(footer.render(200)[0] ?? "", /⌨ waiting for custom/u);
+		await emit(mock.events, "ui_prompt_end", { kind: "custom" }, context.ctx);
 		assert.match(footer.render(200)[0] ?? "", /💭 thinking/u);
 		await emit(mock.events, "agent_end", {}, context.ctx);
 		assert.match(footer.render(200)[0] ?? "", /💭 thinking/u);
@@ -107,9 +120,18 @@ test("statusline activity appears only while streaming or tools are active and r
 		try {
 			assert.doesNotMatch(replacementFooter.render(200)[0] ?? "", /write|💤|✅|⚙|💭/u);
 			await emit(mock.events, "agent_start", {}, replacement.ctx);
+			await emit(
+				mock.events,
+				"ui_prompt_start",
+				{ kind: "input", title: "Current prompt" },
+				replacement.ctx,
+			);
 			await emit(mock.events, "session_shutdown", {}, context.ctx);
 			await emit(mock.events, "agent_end", {}, context.ctx);
 			await emit(mock.events, "agent_settled", {}, context.ctx);
+			await emit(mock.events, "ui_prompt_end", { kind: "input" }, context.ctx);
+			assert.match(replacementFooter.render(200)[0] ?? "", /waiting for input · Current prompt/u);
+			await emit(mock.events, "ui_prompt_end", { kind: "input" }, replacement.ctx);
 			assert.match(replacementFooter.render(200)[0] ?? "", /💭 thinking/u);
 			await emit(mock.events, "agent_settled", {}, replacement.ctx);
 			assert.doesNotMatch(replacementFooter.render(200)[0] ?? "", /💤|✅|⚙|💭/u);

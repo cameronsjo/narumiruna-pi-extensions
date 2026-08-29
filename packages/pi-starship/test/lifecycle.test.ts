@@ -105,6 +105,70 @@ test("non-TUI sessions install no footer and execute no Git or GitHub subprocess
 	assert.equal(calls, 0);
 });
 
+test("UI prompt waiting state restores activity and rejects stale session events", async (t) => {
+	useLifecycleConfig(t, "format = '$activity'\n");
+	const mock = createMockPi();
+	piStarship(mock.pi);
+	const oldContext = createMockContext({ mode: "tui" });
+	const newContext = createMockContext({ mode: "tui" });
+	await emit(mock.events, "session_start", {}, oldContext.ctx);
+	const footerData = {
+		getGitBranch: () => null,
+		getExtensionStatuses: () => new Map<string, string>(),
+		onBranchChange: () => () => undefined,
+	};
+	const oldFooter = (oldContext.footer as FooterFactory)({ requestRender() {} }, {}, footerData);
+	try {
+		await emit(mock.events, "agent_start", {}, oldContext.ctx);
+		await emit(mock.events, "tool_execution_start", { toolName: "read" }, oldContext.ctx);
+		await emit(
+			mock.events,
+			"ui_prompt_start",
+			{ kind: "confirm", title: "Deploy production?" },
+			oldContext.ctx,
+		);
+		assert.match(
+			stripAnsi(oldFooter.render(200).join("\n")),
+			/waiting for confirm · Deploy production\?/u,
+		);
+		await emit(mock.events, "ui_prompt_end", { kind: "confirm" }, oldContext.ctx);
+		assert.match(stripAnsi(oldFooter.render(200).join("\n")), /read/u);
+		await emit(mock.events, "tool_execution_end", { toolName: "read" }, oldContext.ctx);
+		assert.match(stripAnsi(oldFooter.render(200).join("\n")), /thinking/u);
+		await emit(mock.events, "ui_prompt_start", { kind: "custom" }, oldContext.ctx);
+		assert.match(stripAnsi(oldFooter.render(200).join("\n")), /waiting for custom/u);
+		await emit(mock.events, "ui_prompt_end", { kind: "custom" }, oldContext.ctx);
+		assert.match(stripAnsi(oldFooter.render(200).join("\n")), /thinking/u);
+
+		await emit(mock.events, "ui_prompt_start", { kind: "editor" }, oldContext.ctx);
+		await emit(mock.events, "session_start", {}, newContext.ctx);
+		const newFooter = (newContext.footer as FooterFactory)({ requestRender() {} }, {}, footerData);
+		try {
+			assert.match(stripAnsi(newFooter.render(200).join("\n")), /idle/u);
+			await emit(mock.events, "ui_prompt_end", { kind: "editor" }, oldContext.ctx);
+			await emit(
+				mock.events,
+				"ui_prompt_start",
+				{ kind: "input", title: "Current prompt" },
+				newContext.ctx,
+			);
+			await emit(mock.events, "ui_prompt_end", { kind: "editor" }, oldContext.ctx);
+			assert.match(
+				stripAnsi(newFooter.render(200).join("\n")),
+				/waiting for input · Current prompt/u,
+			);
+			await emit(mock.events, "ui_prompt_end", { kind: "input" }, newContext.ctx);
+			assert.match(stripAnsi(newFooter.render(200).join("\n")), /idle/u);
+			await emit(mock.events, "session_shutdown", {}, newContext.ctx);
+			assert.equal(newContext.footer, undefined);
+		} finally {
+			newFooter.dispose();
+		}
+	} finally {
+		oldFooter.dispose();
+	}
+});
+
 test("reachable directory alone collects repository-root metadata", async (t) => {
 	useLifecycleConfig(t, "format = '$directory'\n");
 	const mock = createMockPi();

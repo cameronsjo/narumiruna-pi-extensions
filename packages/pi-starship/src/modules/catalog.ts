@@ -61,7 +61,7 @@ const MODULE_IMPLEMENTATIONS = [
 export type ModuleName = (typeof MODULE_IMPLEMENTATIONS)[number]["name"];
 
 const MODULE_DESCRIPTIONS = {
-	activity: "Current Pi activity or most recently completed tool.",
+	activity: "Current Pi activity, extension UI wait, or most recently completed tool.",
 	aws: "Active AWS profile and region.",
 	azure: "Active Azure subscription and optional username.",
 	brand: "pi-starship brand mark.",

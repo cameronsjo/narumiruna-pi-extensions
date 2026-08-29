@@ -360,7 +360,7 @@ There is no hidden compatibility overlay or automatic migration.
 | `git_state` | `$symbol`, `$state`, `$progress_current`, `$progress_total` | Rebase, merge, revert, cherry-pick, bisect, or mail-apply state |
 | `git_metrics` | `$symbol`, `$added`, `$deleted` | Added/deleted line totals from the working tree diff |
 | `git_status` | `$symbol`, `$all_status`, `$ahead_behind`, `$ahead`, `$behind`, `$diverged`, `$up_to_date`, `$conflicted`, `$stashed`, `$deleted`, `$renamed`, `$modified`, `$typechanged`, `$staged`, `$untracked`, and detailed index/worktree counters | Cached porcelain-v2 counters |
-| `activity` | `$symbol`, `$state`, `$tool`, `$count`, `$text` | Active tools, streaming, completion, or idle |
+| `activity` | `$symbol`, `$state`, `$tool`, `$count`, `$kind`, `$title`, `$text` | Extension UI waits, active tools, streaming, completion, or idle |
 | `context` | `$symbol`, `$percentage`, `$tokens`, `$window` | Context-window use |
 | `tokens` | `$symbol`, `$input`, `$output`, `$total` | Token totals |
 | `cache` | `$symbol`, `$rate`, `$read`, `$write` | Prompt-cache reads, writes, and latest hit rate; disabled by default |
@@ -395,6 +395,8 @@ There is no hidden compatibility overlay or automatic migration.
 
 ### Usage semantics
 
+- During a blocking extension UI prompt, `activity` sets `$state` to `waiting`, `$kind` to the prompt kind, and `$title` to the sanitized bounded title or an empty string.
+- Prompt waiting takes precedence without losing the underlying tool, streaming, completed, or idle state, which returns when the prompt closes.
 - `tokens`, `cache`, and `cost` total every usage-bearing session entry, matching Pi's native footer.
   This includes assistant messages, nested-LLM tool results, compactions, and branch summaries, including abandoned branches retained in the session.
 - Cache `$read` and `$write` are cumulative.

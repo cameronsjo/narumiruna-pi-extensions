@@ -562,7 +562,7 @@ test("formatToolActivity shows only active or streaming work", () => {
 
 	assert.equal(
 		formatToolActivity(runtime({ activeTools: new Map([["read", 2]]), isStreaming: false })),
-		"⚙ read×2",
+		"⚙️ read×2",
 	);
 	assert.equal(
 		formatToolActivity(runtime({ activeTools: new Map(), isStreaming: true })),

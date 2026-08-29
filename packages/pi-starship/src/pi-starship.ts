@@ -57,6 +57,7 @@ function loadStarshipCommands(): Promise<StarshipCommands> {
 interface RuntimeState {
 	activeTools: Map<string, number>;
 	isStreaming: boolean;
+	uiPrompt?: NonNullable<StarshipRuntimeSnapshot["uiPrompt"]>;
 	thinkingLevel: string;
 	lastCompletedTool?: string;
 	git?: GitSnapshot;
@@ -102,6 +103,7 @@ export default function piStarship(pi: ExtensionAPI, options: PiStarshipOptions 
 	let githubPrGeneration = 0;
 
 	const refresh = () => runtime.requestRender?.();
+	const ownsRuntime = (ctx: ExtensionContext) => sessionOwner === ctx.sessionManager;
 	const githubPrExec = options.githubPrExec ?? execWorkspaceCommand;
 	const gitController = new AsyncRefreshController<GitRefreshInput, GitSnapshot | undefined>({
 		async read(input, signal) {
@@ -401,6 +403,10 @@ export default function piStarship(pi: ExtensionAPI, options: PiStarshipOptions 
 	});
 
 	pi.on("session_start", (_event, ctx) => {
+		runtime.activeTools.clear();
+		runtime.isStreaming = false;
+		runtime.uiPrompt = undefined;
+		runtime.lastCompletedTool = undefined;
 		loaded = loadStarshipConfig(configPath);
 		loadedRevision += 1;
 		if (loaded.diagnostics.length > 0 && (ctx.mode === "tui" || ctx.hasUI)) {
@@ -428,6 +434,10 @@ export default function piStarship(pi: ExtensionAPI, options: PiStarshipOptions 
 		stopGithubPr();
 		runtime.git = undefined;
 		runtime.workspace = undefined;
+		runtime.activeTools.clear();
+		runtime.isStreaming = false;
+		runtime.uiPrompt = undefined;
+		runtime.lastCompletedTool = undefined;
 		runtime.requestRender = undefined;
 		runtime.renderPreview = undefined;
 		runtime.inspect = undefined;
@@ -450,6 +460,16 @@ export default function piStarship(pi: ExtensionAPI, options: PiStarshipOptions 
 		scheduleRefresh(ctx);
 		const target = activeTarget;
 		if (target?.sessionManager === ctx.sessionManager) requestGithubPr(target);
+		refresh();
+	});
+	pi.on("ui_prompt_start", (event, ctx) => {
+		if (!ownsRuntime(ctx)) return;
+		runtime.uiPrompt = { kind: event.kind, title: event.title };
+		refresh();
+	});
+	pi.on("ui_prompt_end", (_event, ctx) => {
+		if (!ownsRuntime(ctx)) return;
+		runtime.uiPrompt = undefined;
 		refresh();
 	});
 	pi.on("turn_start", () => {
@@ -568,6 +588,7 @@ function runtimeSnapshot(
 		turnCount: userTurnCount(ctx),
 		activeTools: runtime.activeTools,
 		isStreaming: runtime.isStreaming,
+		uiPrompt: runtime.uiPrompt,
 		lastCompletedTool: runtime.lastCompletedTool,
 		contextUsage: ctx.getContextUsage() ?? undefined,
 		tokenTotals: summarizeFooterUsage(ctx.sessionManager.getEntries()),
