@@ -16,7 +16,6 @@
 	"files": [
 		"src",
 		"dist",
-		"skills",
 		"docs",
 		"README.md",
 		"LICENSE"
@@ -24,9 +23,6 @@
 	"pi": {
 		"extensions": [
 			"./dist/index.ts"
-		],
-		"skills": [
-			"./skills"
 		]
 	},
 	"piExtension": {

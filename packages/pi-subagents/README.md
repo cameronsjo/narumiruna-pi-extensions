@@ -4,8 +4,6 @@
 
 Pi Subagents runs Pi jobs in separate child processes and lets each child ask the main agent necessary questions through an authenticated loopback broker.
 
-The bundled `using-pi-subagents` skill explains when to delegate, how to limit child capabilities, and how to verify results safely.
-
 ## ✨ Features
 
 - Runs each job in an isolated Pi child process and returns its job ID immediately.
@@ -42,7 +40,7 @@ npm --workspace @narumitw/pi-subagents run build
 pi install ./packages/pi-subagents
 ```
 
-Build before trying the extension and bundled skill from a local checkout:
+Build before trying the extension from a local checkout:
 
 ```bash
 npm --workspace @narumitw/pi-subagents run build
@@ -59,9 +57,15 @@ Review the source before installing or invoking the extension.
 
 ## 🚀 Quick start
 
-Ask Pi to use the bundled `using-pi-subagents` skill when deciding whether to delegate, or invoke `/skill:using-pi-subagents` directly.
-
 Call `subagent_spawn` with a self-contained task and only the work tools that task needs.
+
+The package intentionally does not register or publish a skill.
+
+Create a project skill under `.pi/skills/<your-skill>/SKILL.md` or a global skill under `~/.pi/agent/skills/<your-skill>/SKILL.md` when you want reusable delegation policy.
+
+Choose a name, trigger description, tool policy, task format, and verification workflow for your own use case.
+
+The repository-only [`using-pi-subagents` example](https://github.com/narumiruna/pi-extensions/tree/main/packages/pi-subagents/skills/using-pi-subagents) demonstrates one possible design without imposing it on installed users.
 
 The call returns a `jobId` immediately, and the job continues in the background.
 
@@ -249,10 +253,10 @@ packages/pi-subagents/
 ├── dist/                        # Generated Jiti runtime and child bridge
 ├── docs/                        # Concise tools and design references
 ├── scripts/                     # Deterministic runtime builder
+├── skills/using-pi-subagents/  # Repository-only example delegation skill
 ├── src/                         # Extension, broker, child bridge, and subprocess runtime
-├── skills/using-pi-subagents/  # Delegation and messaging operating manual
 ├── test/                        # Protocol, lifecycle, process, and policy tests
-├── package.json                 # Pi extension and skill declarations
+├── package.json                 # Pi extension declaration
 └── README.md                    # User guide and safety boundaries
 ```
 
