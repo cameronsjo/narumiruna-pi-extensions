@@ -123,9 +123,9 @@ An incoming main-agent request interrupts an active child `subagent_wait` after 
 
 The interrupted child-originated request remains active and may be waited on again.
 
-Tasks, requests, and responses are limited to 50 KiB of UTF-8 text.
+Tasks are limited to 50 KiB of UTF-8 text.
 
-Responses are also limited to 2,000 lines so successful child tool output stays within Pi's tool-result bound.
+Requests and responses are limited to 48 KiB and 1,992 lines so their protocol envelopes fit Pi's 50 KiB and 2,000-line model-text bounds without truncating accepted content.
 
 Each job may have up to four unresolved or answered-but-not-consumed requests across both directions.
 
@@ -186,6 +186,10 @@ Each child broker call uses one request-scoped connection, while a response wait
 A main-originated request to a queued job waits for RPC readiness before delivery is accepted.
 
 After RPC accepts the steering message, the runtime interrupts active child response waits so the queued request can reach the child model.
+
+Caller cancellation before RPC delivery starts rolls the request back.
+
+Once RPC delivery starts, cancellation stops only the caller's wait; the request may still arrive and remains answerable until delivery fails or the job terminates.
 
 The interrupted child-originated requests remain active and retryable.
 

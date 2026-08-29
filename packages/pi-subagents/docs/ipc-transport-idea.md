@@ -63,7 +63,7 @@ Any replacement must preserve:
 - The child `subagent_wait` tool for child-originated requests.
 - Plain-text requests and responses in either direction.
 - At most four unresolved requests per job across both directions.
-- The 50 KiB UTF-8 message limit and 2,000-line response limit.
+- The 48 KiB and 1,992-line message limits that reserve space for protocol envelopes.
 - First-response-wins semantics.
 - Retryable waits after timeout.
 - Caller cancellation that stops only the current wait.

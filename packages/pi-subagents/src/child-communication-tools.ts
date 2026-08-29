@@ -23,7 +23,7 @@ const SendParameters = Type.Object(
 			}),
 		),
 		message: Type.String({
-			description: "Plain-text request or response. Maximum 50 KiB.",
+			description: "Plain-text request or response. Maximum 48 KiB of UTF-8 text and 1,992 lines.",
 			minLength: 1,
 			maxLength: MAX_MESSAGE_BYTES,
 		}),

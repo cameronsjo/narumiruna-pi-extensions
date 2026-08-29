@@ -9,7 +9,7 @@ import {
 	sanitizeTerminalText,
 	validateMessage,
 } from "./message-broker.js";
-import { modelVisibleJson, truncateModelText } from "./model-output.js";
+import { modelVisibleJson, requireBoundedModelText } from "./model-output.js";
 import { resolveTimeoutMs } from "./process.js";
 import { type RuntimeDependencies, SubagentRuntime } from "./runtime.js";
 import {
@@ -98,7 +98,7 @@ const SendParameters = Type.Object(
 			}),
 		),
 		message: Type.String({
-			description: "Plain-text request or response. Maximum 50 KiB.",
+			description: "Plain-text request or response. Maximum 48 KiB of UTF-8 text and 1,992 lines.",
 			minLength: 1,
 			maxLength: MAX_MESSAGE_BYTES,
 		}),
@@ -252,7 +252,7 @@ export function registerSubagentTools(
 function deliverMessage(pi: ExtensionAPI, message: BrokerInboundMessage): void {
 	const isRequest = message.kind === "request";
 	const safeMessage = sanitizeTerminalText(message.message);
-	const content = truncateModelText(
+	const content = requireBoundedModelText(
 		[
 			`Message Type: ${isRequest ? "SUBAGENT_REQUEST" : "SUBAGENT_RESPONSE"}`,
 			"Protocol: pi-subagents:main-message:v1",
@@ -266,6 +266,7 @@ function deliverMessage(pi: ExtensionAPI, message: BrokerInboundMessage): void {
 			...(isRequest ? ["Request:"] : []),
 			safeMessage,
 		].join("\n"),
+		"Subagent broker message envelope",
 	);
 	pi.sendMessage(
 		{

@@ -11,6 +11,7 @@ import {
 	type ChildCommunicationClient,
 	createChildCommunicationExtension,
 } from "../src/child-communication-tools.js";
+import { MAX_MESSAGE_BYTES } from "../src/message-broker.js";
 import type { BrokerCredentials } from "../src/types.js";
 
 interface RegisteredTool {
@@ -51,7 +52,7 @@ test("registers fixed send and wait schemas and returns bounded results", async 
 		["subagent_send", "subagent_wait"],
 	);
 	assert.equal(tools[0]?.label, "Subagent · Send to Main");
-	assert.equal(tools[0]?.parameters.properties?.message?.maxLength, 50 * 1024);
+	assert.equal(tools[0]?.parameters.properties?.message?.maxLength, MAX_MESSAGE_BYTES);
 	assert.equal(tools[0]?.parameters.properties?.recipient, undefined);
 	assert.equal(tools[0]?.parameters.properties?.requestId?.maxLength, 128);
 	assert.equal(Check(tools[0]?.parameters, { message: "Question" }), true);

@@ -3,10 +3,10 @@ import net, { type AddressInfo, type Server, type Socket } from "node:net";
 import type { BrokerCredentials } from "./types.js";
 
 export const BROKER_HOST = "127.0.0.1" as const;
-export const MAX_MESSAGE_BYTES = 50 * 1024;
+export const MAX_MESSAGE_BYTES = 48 * 1024;
+export const MAX_MESSAGE_LINES = 1_992;
 export const MAX_FRAME_BYTES = 384 * 1024;
 export const MAX_ERROR_BYTES = 8 * 1024;
-export const MAX_RESPONSE_LINES = 2_000;
 export const MAX_OUTSTANDING_REQUESTS = 4;
 export const MAX_IDENTIFIER_LENGTH = 128;
 
@@ -322,9 +322,6 @@ export class MessageBroker {
 	): BrokerSendAcknowledgement {
 		validateRequestId(requestId);
 		validateMessage(message, "Subagent response");
-		if (lineCount(message) > MAX_RESPONSE_LINES) {
-			throw new Error(`Subagent response must contain at most ${MAX_RESPONSE_LINES} lines.`);
-		}
 		const request = this.requests.get(requestId);
 		if (
 			!request ||
@@ -572,6 +569,9 @@ export function validateMessage(message: string, label: string): void {
 	if (message.includes("\0")) throw new Error(`${label} must not contain NUL bytes.`);
 	if (Buffer.byteLength(message, "utf8") > MAX_MESSAGE_BYTES) {
 		throw new Error(`${label} must be at most ${MAX_MESSAGE_BYTES} UTF-8 bytes.`);
+	}
+	if (lineCount(message) > MAX_MESSAGE_LINES) {
+		throw new Error(`${label} must contain at most ${MAX_MESSAGE_LINES} lines.`);
 	}
 }
 

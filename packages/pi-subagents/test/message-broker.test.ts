@@ -7,6 +7,7 @@ import {
 	type BrokerInboundMessage,
 	MAX_FRAME_BYTES,
 	MAX_MESSAGE_BYTES,
+	MAX_MESSAGE_LINES,
 	MessageBroker,
 } from "../src/message-broker.js";
 import type { BrokerCredentials } from "../src/types.js";
@@ -270,23 +271,24 @@ test("rejects incomplete, malformed, unauthenticated, and oversized frames", asy
 	);
 });
 
-test("bounds request bytes and response lines", async () => {
+test("bounds message bytes and lines for intact protocol envelopes", async () => {
 	const { broker, credentials } = await setup(() => undefined);
 	const client = createBrokerClient(credentials);
 	await assert.rejects(
 		() => client.send({ recipient: "main", message: "x".repeat(MAX_MESSAGE_BYTES + 1) }, undefined),
-		/50 KiB|51200/i,
+		/48 KiB|49152/i,
+	);
+	const tooManyLines = Array.from({ length: MAX_MESSAGE_LINES + 1 }, () => "x").join("\n");
+	await assert.rejects(
+		() => client.send({ recipient: "main", message: tooManyLines }, undefined),
+		/at most 1992 lines/i,
 	);
 	const sent = await client.send({ recipient: "main", message: "Question" }, undefined);
-	assert.throws(
-		() => broker.replyFromMain(sent.requestId, "x\n".repeat(2_000)),
-		/at most 2000 lines/i,
-	);
+	assert.throws(() => broker.replyFromMain(sent.requestId, tooManyLines), /at most 1992 lines/i);
 	const mainRequest = broker.createMainRequest("job_1", "Question");
 	await assert.rejects(
-		() =>
-			client.send({ requestId: mainRequest.requestId, message: "x\n".repeat(2_000) }, undefined),
-		/at most 2000 lines/i,
+		() => client.send({ requestId: mainRequest.requestId, message: tooManyLines }, undefined),
+		/at most 1992 lines/i,
 	);
 });
 

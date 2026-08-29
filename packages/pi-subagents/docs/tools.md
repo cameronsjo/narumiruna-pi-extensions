@@ -69,7 +69,7 @@ Main and child processes receive separate provider-visible definitions for their
 | --- | --- | --- | --- |
 | `recipient` | `string` | Conditional | Active job ID for a new request. |
 | `requestId` | `string` | Conditional | Pending child request to answer. |
-| `message` | `string` | Yes | Plain-text request or response, up to 50 KiB of UTF-8 text. |
+| `message` | `string` | Yes | Plain-text request or response, up to 48 KiB of UTF-8 text and 1,992 lines. |
 
 Provide exactly one of `recipient` or `requestId`.
 
@@ -82,7 +82,7 @@ A response provides `requestId` and omits `recipient`.
 | Parameter | Type | Required | Constraint / default |
 | --- | --- | --- | --- |
 | `requestId` | `string` | No | Pending main-agent request to answer; omit to start a new request to main. |
-| `message` | `string` | Yes | Plain-text request or response, up to 50 KiB of UTF-8 text. |
+| `message` | `string` | Yes | Plain-text request or response, up to 48 KiB of UTF-8 text and 1,992 lines. |
 
 A new request omits `requestId` and returns a request ID immediately for an optional `subagent_wait` call.
 
@@ -92,13 +92,17 @@ A main-originated request waits for the child RPC prompt to be accepted and then
 
 After steering is queued, the runtime interrupts active child response waits without consuming their original requests.
 
+Caller cancellation before RPC delivery starts rolls the request back.
+
+Once RPC delivery starts, cancellation stops only the caller's wait; the request may still arrive and remains answerable until delivery fails or the job terminates.
+
 A child response arrives asynchronously in the main session and interrupts the next active main-agent `subagent_wait`, including when the response arrived immediately before the wait started.
 
 The first accepted response wins, and repeated responses acknowledge the existing response without replacing it.
 
 Each job may have up to four unresolved or answered-but-not-consumed requests across both directions.
 
-Responses are limited to 2,000 lines.
+Requests and responses are limited to 1,992 lines so their protocol envelopes fit Pi's 2,000-line model-text bound.
 
 Terminal jobs, unknown requests, cross-job responses, responses from the request originator, and stale session credentials throw.
 

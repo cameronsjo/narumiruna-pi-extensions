@@ -5,7 +5,7 @@ import {
 	type MessageBroker,
 	sanitizeTerminalText,
 } from "./message-broker.js";
-import { modelVisibleJson, truncateModelText } from "./model-output.js";
+import { modelVisibleJson, requireBoundedModelText } from "./model-output.js";
 import { runChild as defaultRunChild } from "./process.js";
 import {
 	type ChildControl,
@@ -221,6 +221,7 @@ export class SubagentRuntime {
 		throwIfAborted(signal, "Subagent send was cancelled");
 		const acknowledgement = this.broker.createMainRequest(jobId, message);
 		const previous = job.sendQueue;
+		let deliveryStarted = false;
 		const operation = (async () => {
 			await waitForPromise(previous, signal, "Subagent send was cancelled");
 			throwIfAborted(signal, "Subagent send was cancelled");
@@ -234,21 +235,25 @@ export class SubagentRuntime {
 			if (isTerminal(job.state) || job.stopRequest || job.generation !== this.generation) {
 				throw new Error("Subagent job is no longer active.");
 			}
-			await control.send(mainRequestMessage(job.jobId, acknowledgement.requestId, message), signal);
-			throwIfAborted(signal, "Subagent send was cancelled");
+			deliveryStarted = true;
+			await control.send(mainRequestMessage(job.jobId, acknowledgement.requestId, message));
 			if (isTerminal(job.state) || job.stopRequest || job.generation !== this.generation) {
 				throw new Error("Subagent job is no longer active.");
 			}
 			if (this.broker.markMainRequestQueued(acknowledgement.requestId)) {
 				this.broker.interruptChildWaits(jobId);
 			}
-		})();
+		})().catch((error) => {
+			this.broker.rollbackMainRequest(acknowledgement.requestId);
+			throw error;
+		});
 		job.sendQueue = operation.catch(() => undefined);
 		try {
-			await operation;
+			await waitForPromise(operation, signal, "Subagent send was cancelled");
+			throwIfAborted(signal, "Subagent send was cancelled");
 			return acknowledgement;
 		} catch (error) {
-			this.broker.rollbackMainRequest(acknowledgement.requestId);
+			if (!deliveryStarted) this.broker.rollbackMainRequest(acknowledgement.requestId);
 			throw error;
 		}
 	}
@@ -481,7 +486,7 @@ export class SubagentRuntime {
 }
 
 function mainRequestMessage(jobId: string, requestId: string, message: string): string {
-	return truncateModelText(
+	return requireBoundedModelText(
 		[
 			"Message Type: MAIN_AGENT_REQUEST",
 			"Protocol: pi-subagents:child-message:v1",
@@ -493,6 +498,7 @@ function mainRequestMessage(jobId: string, requestId: string, message: string): 
 			"Request:",
 			sanitizeTerminalText(message),
 		].join("\n"),
+		"Subagent main-request envelope",
 	);
 }
 
