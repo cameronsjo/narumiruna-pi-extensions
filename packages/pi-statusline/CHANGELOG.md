@@ -1,5 +1,17 @@
 # @narumitw/pi-statusline
 
+## 0.50.0
+
+### Minor Changes
+
+- b87641b: Show when Pi is waiting for blocking extension UI input and restore the underlying activity after the prompt closes.
+  
+  Expose `waiting`, `$kind`, and `$title` through pi-starship's activity module.
+
+### Patch Changes
+
+- 36a5ad5: Honor Pi's effective terminal capabilities when rendering pull request hyperlinks and RGB footer colors.
+
 ## 0.49.15
 
 ### Patch Changes

@@ -1,5 +1,11 @@
 # @narumitw/pi-github-pr
 
+## 0.49.7
+
+### Patch Changes
+
+- 36a5ad5: Honor Pi's effective terminal capabilities when rendering pull request hyperlinks and RGB footer colors.
+
 ## 0.49.6
 
 ### Patch Changes
