@@ -60,6 +60,7 @@
 		"changeset:status": "changeset status --verbose",
 		"version-packages": "changeset version && npm install --package-lock-only --ignore-scripts",
 		"publish-packages": "changeset publish",
+		"publish-packages:sequential": "node ./scripts/publish-packages-sequentially.mjs",
 		"pack:btw": "npm --workspace @narumitw/pi-btw pack --dry-run",
 		"pack:caffeinate": "npm --workspace @narumitw/pi-caffeinate pack --dry-run",
 		"pack:chrome-devtools": "npm --workspace @narumitw/pi-chrome-devtools pack --dry-run",
