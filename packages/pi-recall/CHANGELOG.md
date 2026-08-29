@@ -1,5 +1,13 @@
 # @narumitw/pi-recall
 
+## 0.50.7
+
+### Patch Changes
+
+- 5333554: Promote the extensions to the stable lifecycle and remove their experimental warnings.
+  
+  Pi Fleet no longer asks for separate experimental consent before its existing launch and join confirmations.
+
 ## 0.50.6
 
 ### Patch Changes
