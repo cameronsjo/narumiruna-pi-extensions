@@ -15,7 +15,6 @@ test("package declares one generated extension without a bundled skill", () => {
 		private: boolean;
 		files: string[];
 		pi: { extensions: string[]; skills?: string[] };
-		piExtension: { lifecycle: string };
 		peerDependencies: Record<string, string>;
 		repository: { directory: string };
 	};
@@ -25,7 +24,6 @@ test("package declares one generated extension without a bundled skill", () => {
 	assert.equal(manifest.repository.directory, "packages/pi-subagents");
 	assert.deepEqual(manifest.pi.extensions, ["./dist/index.ts"]);
 	assert.equal("skills" in manifest.pi, false);
-	assert.equal(manifest.piExtension.lifecycle, "stable");
 	assert.equal(manifest.peerDependencies["@earendil-works/pi-ai"], "*");
 	assert.equal(manifest.peerDependencies["@earendil-works/pi-coding-agent"], "*");
 	assert.ok(manifest.files.includes("src"));

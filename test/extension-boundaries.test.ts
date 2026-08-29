@@ -29,6 +29,17 @@ test("extension boundary validator accepts a complete build-backed dist entrypoi
 	}
 });
 
+test("extension boundary validator requires every active package in the root manifest", async () => {
+	const fixture = await createFixture({ entrypoint: "./src/index.ts", rootExtensions: [] });
+	try {
+		const result = runBoundaryCheck(fixture);
+		assert.notEqual(result.status, 0);
+		assert.match(result.stderr, /must list every active package entrypoint/u);
+	} finally {
+		await rm(fixture, { force: true, recursive: true });
+	}
+});
+
 test("extension boundary validator rejects unsupported and incomplete dist entrypoints", async () => {
 	const fixtureCases: Array<{ name: string; options: FixtureOptions; expected: RegExp }> = [
 		{
@@ -67,6 +78,7 @@ test("extension boundary validator rejects unsupported and incomplete dist entry
 interface FixtureOptions {
 	entrypoint: string;
 	files?: readonly string[];
+	rootExtensions?: readonly string[];
 	scripts?: Readonly<Record<string, string>>;
 }
 
@@ -79,7 +91,9 @@ async function createFixture(options: FixtureOptions) {
 		`${JSON.stringify({
 			name: "fixture-root",
 			private: true,
-			pi: { extensions: [] },
+			pi: {
+				extensions: options.rootExtensions ?? ["./packages/pi-fixture/src/index.ts"],
+			},
 		})}\n`,
 		"utf8",
 	);
@@ -98,7 +112,6 @@ async function createFixture(options: FixtureOptions) {
 			type: "module",
 			files: options.files ?? ["src", "dist"],
 			pi: { extensions: [options.entrypoint] },
-			piExtension: { lifecycle: "experimental" },
 			scripts: options.scripts ?? {
 				build: "node scripts/build-runtime.mjs",
 				prepack: "npm run build",

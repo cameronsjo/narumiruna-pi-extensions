@@ -22,9 +22,6 @@
 			"./src/index.ts"
 		]
 	},
-	"piExtension": {
-		"lifecycle": "stable"
-	},
 	"scripts": {
 		"check": "biome check . && npm run typecheck",
 		"format": "biome check --write .",

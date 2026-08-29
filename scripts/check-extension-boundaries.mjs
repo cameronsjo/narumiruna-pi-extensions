@@ -47,9 +47,6 @@ const activePackages = workspacePackages.filter(
 const libraryPackages = workspacePackages.filter(
 	({ packageJson }) => packageJson.pi?.extensions === undefined,
 );
-const experimentalPackageCount = activePackages.filter(
-	({ packageJson }) => packageJson.piExtension?.lifecycle === "experimental",
-).length;
 const libraryPackageNames = new Set(libraryPackages.map(({ name }) => name));
 const failures = [];
 const sourcePaths = activePackages.flatMap((extensionPackage) => {
@@ -67,7 +64,6 @@ try {
 	for (const libraryPackage of libraryPackages) checkLibraryPackage(libraryPackage);
 	for (const extensionPackage of activePackages) {
 		checkPiEntrypoint(extensionPackage);
-		checkExtensionLifecycle(extensionPackage);
 		checkPackageDependencies(extensionPackage);
 		checkSourceImports(extensionPackage);
 	}
@@ -82,7 +78,7 @@ if (failures.length > 0) {
 	process.exitCode = 1;
 } else {
 	console.log(
-		`Extension boundary check passed: ${libraryPackages.length} libraries and ${activePackages.length} active extensions (${experimentalPackageCount} experimental) have valid package boundaries.`,
+		`Extension boundary check passed: ${libraryPackages.length} libraries and ${activePackages.length} active extensions have valid package boundaries.`,
 	);
 }
 
@@ -120,7 +116,6 @@ function findWorkspacePackages(directory) {
 
 function checkRootPiManifest() {
 	const expectedEntries = activePackages
-		.filter(({ packageJson }) => packageJson.piExtension?.lifecycle === "stable")
 		.map(
 			({ directory }) =>
 				`./${relative(path.join(directory, "src", "index.ts"))
@@ -134,17 +129,12 @@ function checkRootPiManifest() {
 		JSON.stringify([...actualEntries].sort()) !== JSON.stringify(expectedEntries)
 	) {
 		failures.push(
-			`package.json pi.extensions must list every stable package entrypoint and no experimental entrypoints: ${JSON.stringify(expectedEntries)}.`,
+			`package.json pi.extensions must list every active package entrypoint: ${JSON.stringify(expectedEntries)}.`,
 		);
 	}
 }
 
 function checkLibraryPackage(libraryPackage) {
-	if (libraryPackage.packageJson.piExtension !== undefined) {
-		failures.push(
-			`${relative(libraryPackage.packagePath)} libraries must not declare piExtension metadata.`,
-		);
-	}
 	if (!libraryPackage.packageJson.scripts?.build) {
 		failures.push(`${relative(libraryPackage.packagePath)} libraries must define a build script.`);
 	}
@@ -218,15 +208,6 @@ function checkPiEntrypoint(extensionPackage) {
 	if (typeof prepack !== "string" || !/(?:^|\s)npm run build(?:\s|$)/u.test(prepack)) {
 		failures.push(
 			`${relative(extensionPackage.packagePath)} dist entrypoint prepack must run the package build.`,
-		);
-	}
-}
-
-function checkExtensionLifecycle(extensionPackage) {
-	const lifecycle = extensionPackage.packageJson.piExtension?.lifecycle;
-	if (lifecycle !== "stable" && lifecycle !== "experimental") {
-		failures.push(
-			`${relative(extensionPackage.packagePath)} piExtension.lifecycle must be "stable" or "experimental".`,
 		);
 	}
 }

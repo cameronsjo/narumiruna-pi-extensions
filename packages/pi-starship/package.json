@@ -26,9 +26,6 @@
 			"./dist/index.ts"
 		]
 	},
-	"piExtension": {
-		"lifecycle": "stable"
-	},
 	"scripts": {
 		"build": "node scripts/build-runtime.mjs",
 		"check": "npm run build && biome check --vcs-use-ignore-file=false src test scripts package.json tsconfig.json README.md NOTICES.md && npm run typecheck",

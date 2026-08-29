@@ -15,13 +15,12 @@
 - Keep package implementation source under `packages/<package>/src/`.
 - Keep small repository-only Pi extensions and their supporting implementation files under `.pi/extensions/<extension>/`, with `index.ts` as the entrypoint.
 - Each package owns its manifest, README, license, and TypeScript configuration.
-- Set each extension package's `piExtension.lifecycle` to `stable` or `experimental`.
+- Do not classify extension packages with repository-specific lifecycle metadata; treat every active packaged extension uniformly.
 - Treat `.pi/extensions/` as a self-contained project-resource boundary unrelated to extension packages under `packages/`.
 - Keep a project-local extension's implementation, helpers, documentation, and any requested tests inside its own `.pi/extensions/<extension>/` directory.
 - Do not add or modify package manifests, workspaces, Changesets, package tests, root test support, or shared TypeScript configuration for a project-local extension unless the user explicitly asks.
-- Project-local extensions do not require package manifests, lifecycle metadata, Changesets, publication files, or packaged-extension verification gates.
+- Project-local extensions do not require package manifests, Changesets, publication files, or packaged-extension verification gates.
 - Promote a project-local extension into `packages/` only when the user explicitly requests independent installation, reuse, versioning, or publication.
-- Omit `piExtension` from reusable libraries.
 - Keep deprecated reference packages under `deprecated/`, which active checks exclude.
 - Root files such as `package.json`, `package-lock.json`, `biome.json`, `tsconfig.json`, `justfile`, and `.github/workflows/*` own shared tooling.
 - Never edit `node_modules/`.
@@ -75,17 +74,15 @@ Run commands from the repository root unless a command says otherwise.
 - Keep extension implementation in descriptively named source modules.
 - Build and publish reusable libraries as JavaScript with declarations through their own build configuration and without `pi.extensions`.
 - Run `npm run check:boundaries` to verify package boundaries.
-- List every stable extension package's `src/index.ts` repository entrypoint in the root `package.json` under `pi.extensions`.
-- Do not list experimental extension package entrypoints in the root `package.json` under `pi.extensions`.
+- List every active extension package's `src/index.ts` repository entrypoint in the root `package.json` under `pi.extensions`.
 - Do not list `.pi/extensions/` entrypoints in the root `package.json`; Pi discovers them after the project is trusted.
 - Add a root workspace script or recipe only for a workflow users must run from the repository root.
 - Choose the first TUI layer that fully supports the flow: Pi core `ctx.ui` APIs and `@earendil-works/pi-tui` components, then `@narumitw/pi-tui-kit`, and finally an extension-owned custom component.
 - Create a new custom component only when the earlier layers cannot preserve the required state, interaction, or lifecycle behavior.
 - Keep domain state, persistence, confirmations, and specialized UI inside the owning extension.
 - Preserve each README's emoji title; npm, Pi, and license badges; and applicable `✨ Features`, `📦 Install`, `🚀 Quick start`, `⚙️ Settings`, `💬 Commands`, `🗂️ Package layout`, `🔎 Keywords`, and `📄 License` sections.
-- Show a user-facing warning for experimental extensions and features.
-- Keep experimental packages in root checks unless they are private.
-- Gate an experimental feature inside a stable package with explicit configuration that defaults to the existing stable behavior.
+- Show a user-facing warning for experimental features.
+- Gate an experimental feature with explicit configuration that defaults to the existing behavior.
 - Split source files over 1,000 lines by clear responsibilities or document why they must stay intact.
 - Do not mechanically split generated, vendored, migration, snapshot, or mainly declarative files.
 
@@ -157,8 +154,7 @@ Run commands from the repository root unless a command says otherwise.
 - Version every publishable package independently through Changesets.
 - Add a changeset when a pull request changes published package behavior.
 - Repository-only documentation, tests, tooling, and path migrations may omit a changeset.
-- Release experimental packages through the same Changesets workflow as stable packages.
-- Preserve experimental warnings in documentation and runtime behavior.
+- Preserve experimental feature warnings in documentation and runtime behavior.
 - Use `just npm-public <package>` only to change the visibility of an existing package.
 - Use `npm publish --workspace <package> --access public` only for the explicitly approved first publication of a new scoped package that still returns 404.
 - Except for that initial-publication exception, let `publish.yml` manage the version pull request, package tags, publications, and GitHub releases.

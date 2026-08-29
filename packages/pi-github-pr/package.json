@@ -24,9 +24,6 @@
 			"./dist/index.ts"
 		]
 	},
-	"piExtension": {
-		"lifecycle": "stable"
-	},
 	"scripts": {
 		"build": "node scripts/build-runtime.mjs",
 		"prepack": "npm run build",
