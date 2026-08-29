@@ -1,5 +1,12 @@
 # @narumitw/pi-usage
 
+## 0.57.0
+
+### Minor Changes
+
+- 5c4f8ec: Remove the xAI usage setting and always offer xAI OAuth subscription reporting through explicit `/usage` actions without background or statusline requests.
+- ac72cb1: Show compact Codex reset countdowns in the statusline by default, with a setting to restore the legacy window labels.
+
 ## 0.56.0
 
 ### Minor Changes
