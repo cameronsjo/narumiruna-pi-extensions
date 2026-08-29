@@ -56,6 +56,38 @@ jobs:
         env:
           NPM_CONFIG_PROVENANCE: "true"
           PUBLISH_FAILURES_FILE: ${{ runner.temp }}/package-publish-failures.ndjson
+          PUBLISHED_PACKAGES_FILE: ${{ runner.temp }}/published-packages.ndjson
+
+      - name: Summarize published packages
+        if: always()
+        env:
+          PUBLISHED_PACKAGES_FILE: ${{ runner.temp }}/published-packages.ndjson
+        run: |
+          if [[ ! -s "$PUBLISHED_PACKAGES_FILE" ]]; then
+            exit 0
+          fi
+
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from "node:fs";
+
+          const releases = readFileSync(process.env.PUBLISHED_PACKAGES_FILE, "utf8")
+            .trim()
+            .split("\n")
+            .map((line) => JSON.parse(line));
+          const rows = releases.map(
+            (release) => `| \`${release.packageName}\` | \`${release.version}\` |`,
+          );
+          const summary = [
+            "## Successfully published packages",
+            "",
+            "| Package | Version |",
+            "| --- | --- |",
+            ...rows,
+            "",
+          ].join("\n");
+
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
+          NODE
 
       - name: Fail after package publication errors
         if: steps.changesets.outcome == 'success'

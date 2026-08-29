@@ -196,6 +196,7 @@ test("sequential publishing reports a failure and continues with later packages"
 
 		const changesetsOutput = path.join(fixture, "changesets-output.ndjson");
 		const failuresPath = path.join(fixture, "publish-failures.ndjson");
+		const publishedPackagesPath = path.join(fixture, "published-packages.ndjson");
 		const callsPath = path.join(fixture, "publish-calls.ndjson");
 		const script = path.join(repositoryRoot, "scripts/publish-packages-sequentially.mjs");
 		const result = spawnSync(process.execPath, [script], {
@@ -207,6 +208,7 @@ test("sequential publishing reports a failure and continues with later packages"
 				PATH: `${binDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
 				PUBLISH_CALLS: callsPath,
 				PUBLISH_FAILURES_FILE: failuresPath,
+				PUBLISHED_PACKAGES_FILE: publishedPackagesPath,
 			},
 		});
 
@@ -280,20 +282,38 @@ test("sequential publishing reports a failure and continues with later packages"
 				},
 			],
 		);
+		assert.deepEqual(
+			readFileSync(publishedPackagesPath, "utf8")
+				.trim()
+				.split("\n")
+				.map((line) => JSON.parse(line)),
+			[
+				{ packageName: "@fixture/pi-alpha", version: "1.0.0" },
+				{ packageName: "@fixture/pi-omega", version: "3.0.0" },
+			],
+		);
 	} finally {
 		rmSync(fixture, { recursive: true, force: true });
 	}
 });
 
-test("publish workflow fails only after Changesets Action processes successful releases", () => {
+test("publish workflow summarizes successes before reporting publication failures", () => {
 	const workflow = readFileSync(path.join(repositoryRoot, ".github/workflows/publish.yml"), "utf8");
 	const actionStep = workflow.indexOf("uses: changesets/action@");
+	const summaryStep = workflow.indexOf("- name: Summarize published packages");
 	const failureStep = workflow.indexOf("- name: Fail after package publication errors");
 
 	assert.notEqual(actionStep, -1);
-	assert.ok(failureStep > actionStep);
+	assert.ok(summaryStep > actionStep);
+	assert.ok(failureStep > summaryStep);
 	const failuresFilePattern =
 		/PUBLISH_FAILURES_FILE: \$\{\{ runner\.temp \}\}\/package-publish-failures\.ndjson/u;
+	const publishedPackagesFilePattern =
+		/PUBLISHED_PACKAGES_FILE: \$\{\{ runner\.temp \}\}\/published-packages\.ndjson/u;
+	assert.match(workflow.slice(actionStep, summaryStep), publishedPackagesFilePattern);
+	assert.match(workflow.slice(summaryStep, failureStep), publishedPackagesFilePattern);
+	assert.match(workflow.slice(summaryStep, failureStep), /if: always\(\)/u);
+	assert.match(workflow.slice(summaryStep, failureStep), /process\.env\.GITHUB_STEP_SUMMARY/u);
 	assert.match(workflow.slice(actionStep, failureStep), failuresFilePattern);
 	assert.match(workflow.slice(failureStep), failuresFilePattern);
 	assert.match(workflow.slice(failureStep), /if: steps\.changesets\.outcome == 'success'/u);
