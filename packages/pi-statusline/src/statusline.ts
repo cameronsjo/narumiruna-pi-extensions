@@ -4,6 +4,7 @@ import {
 	type ExtensionContext,
 	getAgentDir,
 } from "@earendil-works/pi-coding-agent";
+import { getCapabilities } from "@earendil-works/pi-tui";
 import { completeStatuslineArguments } from "./command-contract.js";
 import type { StatuslineCommandOptions } from "./commands.js";
 import {
@@ -193,10 +194,27 @@ export default function statusline(pi: ExtensionAPI) {
 					const config = previewPalettePreset
 						? { ...loaded.config, palettePreset: previewPalettePreset }
 						: loaded.config;
-					const mainLine = renderStatusline(width, ctx, footerData, theme, config, runtime);
+					const trueColor = getCapabilities().trueColor;
+					const mainLine = renderStatusline(
+						width,
+						ctx,
+						footerData,
+						theme,
+						config,
+						runtime,
+						trueColor,
+					);
 					const lines = mainLine ? mainLine.split("\n") : [];
 					lines.push(
-						...renderExtensionStatusline(width, footerData, theme, config, runtime, mainLine),
+						...renderExtensionStatusline(
+							width,
+							footerData,
+							theme,
+							config,
+							runtime,
+							mainLine,
+							trueColor,
+						),
 					);
 					return lines;
 				},

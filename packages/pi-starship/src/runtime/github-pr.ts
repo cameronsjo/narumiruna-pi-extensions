@@ -1,3 +1,4 @@
+import { getCapabilities } from "@earendil-works/pi-tui";
 import type { GithubPrSnapshot, GithubPrState } from "../modules/types.js";
 import type { WorkspaceExec } from "./types.js";
 
@@ -219,7 +220,7 @@ function compactStatus(
 }
 
 function osc8Link(value: string, label: string): string {
-	if (hasTerminalControls(value)) return label;
+	if (!getCapabilities().hyperlinks || hasTerminalControls(value)) return label;
 	try {
 		const url = new URL(value);
 		if ((url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password) {

@@ -24,10 +24,11 @@ export function renderPowerlineStatusline(
 	width: number,
 	items: RenderItem[],
 	config: Pick<StatuslineConfig, "palettePreset" | "palette" | "density" | "separator">,
+	trueColor = true,
 ): string {
 	if (items.length === 0 || width <= 0) return "";
 	return splitLines(items)
-		.map((segments) => fitPowerlineSegments(segments, width, config))
+		.map((segments) => fitPowerlineSegments(segments, width, config, trueColor))
 		.join("\n");
 }
 
@@ -60,11 +61,12 @@ function fitPowerlineSegments(
 	segments: readonly RenderSegment[],
 	width: number,
 	config: Pick<StatuslineConfig, "palettePreset" | "palette" | "density" | "separator">,
+	trueColor: boolean,
 ): string {
 	if (segments.length === 0) return "";
 	const fitted = [...segments];
 	while (fitted.length > 1) {
-		const rendered = joinPowerlineSegments(fitted, config);
+		const rendered = joinPowerlineSegments(fitted, config, trueColor);
 		if (visibleWidth(rendered) <= width) return rendered;
 		let removalIndex = 0;
 		for (let index = 1; index < fitted.length; index += 1) {
@@ -80,33 +82,37 @@ function fitPowerlineSegments(
 		}
 		fitted.splice(removalIndex, 1);
 	}
-	const rendered = joinPowerlineSegments(fitted, config);
+	const rendered = joinPowerlineSegments(fitted, config, trueColor);
 	return visibleWidth(rendered) <= width ? rendered : "";
 }
 
 export function powerlineExtensionSeparator(
 	_theme: Theme,
 	palettePreset: PalettePreset = "tokyo-night",
+	trueColor = true,
 ): string {
-	return ansiStyle(" • ", { fg: resolvePreset(palettePreset).extensionSeparator });
+	return ansiStyle(" • ", { fg: resolvePreset(palettePreset).extensionSeparator }, trueColor);
 }
 
 function joinPowerlineSegments(
 	segments: RenderSegment[],
 	config: Pick<StatuslineConfig, "palettePreset" | "palette" | "density" | "separator">,
+	trueColor: boolean,
 ): string {
 	const preset = resolvePreset(config.palettePreset);
 	const blocks = contiguousBlocks(segments, preset, config.palettePreset, config.palette);
-	let line = ansiStyle("░▒▓", { fg: preset.lead });
+	let line = ansiStyle("░▒▓", { fg: preset.lead }, trueColor);
 
 	for (const [index, block] of blocks.entries()) {
 		const previous = index === 0 ? undefined : blocks[index - 1]?.colors;
-		if (previous) line += ansiStyle("", { fg: previous.bg, bg: block.colors.bg });
-		line += ansiStyle(formatBlockText(block, config), block.colors);
+		if (previous) {
+			line += ansiStyle("", { fg: previous.bg, bg: block.colors.bg }, trueColor);
+		}
+		line += ansiStyle(formatBlockText(block, config), block.colors, trueColor);
 	}
 
 	const lastBlock = blocks.at(-1);
-	if (lastBlock) line += ansiStyle("", { fg: lastBlock.colors.bg });
+	if (lastBlock) line += ansiStyle("", { fg: lastBlock.colors.bg }, trueColor);
 	return line;
 }
 

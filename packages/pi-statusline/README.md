@@ -17,6 +17,7 @@ A representative uncolored layout:
 - Shows when Pi is waiting for an extension UI prompt, streaming, or running tools.
 - Adds optional token, prompt-cache, provider usage, and cost details.
 - Offers three information levels, seven previewable palettes, and advanced custom layouts.
+- Uses ANSI-256 palette colors when Pi's effective terminal capabilities disable true color.
 - Loads a generated split runtime to reduce Pi package startup work.
 
 > **Need more customization?**
@@ -126,7 +127,7 @@ If the last remaining segment is itself wider than the row, that row renders emp
 - Clean repositories show no Git counters.
 - Dirty counters are `⇡` ahead, `⇣` behind, `+` staged, `~` modified/deleted, `?` untracked, and `!`
   conflicts.
-- A linked GitHub PR appears with the branch when possible, avoiding a duplicate extension status.
+- A linked or plain GitHub PR reference appears with the branch when possible, avoiding a duplicate extension status.
 - Context color changes to warning at 70% and error at 90%.
 - Git state is cached outside footer rendering and stale session results are ignored.
 
@@ -225,6 +226,7 @@ When `palettePreset` is `custom`, `palette` maps segment names to foreground/bac
 - Legacy string palettes such as `"palette": "ocean"` remain accepted.
 - Missing custom colors remain unstyled instead of inheriting Tokyo Night.
 - Adjacent segments with identical colors share one block; transitions use ``.
+- Hex palette colors render as ANSI-256 when Pi's effective terminal capabilities disable true color.
 
 `segmentText` values must be single-line text without terminal control characters.
 Use `line_break` for another row rather than inserting a newline into a prefix or suffix.

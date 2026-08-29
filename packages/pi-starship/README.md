@@ -251,7 +251,7 @@ Module output keeps its own style when embedded in an outer styled group.
 Style expressions support:
 
 - Named colors and ANSI numbers `0`–`255`.
-- Hex RGB (`#7aa2f7`).
+- Hex RGB (`#7aa2f7`), rendered as ANSI-256 when Pi's effective terminal capabilities disable true color.
 - `fg:<color>` and `bg:<color>`; an unprefixed color is foreground.
 - `bold`, `dimmed`, `italic`, `underline`, `blink`, `inverted`, `hidden`, and `strikethrough`.
 - `none` and `fg:none`, which make the complete expression unstyled regardless of position.
@@ -521,7 +521,7 @@ It never mutates Pi's environment, calls the GitHub API directly, or manages tok
 Variables have these values:
 
 - `$number`: digits such as `123`.
-- `$link`: an OSC 8 `#123` link for a safe HTTP(S) URL, otherwise plain `#123`.
+- `$link`: an OSC 8 `#123` link for a safe HTTP(S) URL when Pi's effective terminal capabilities enable hyperlinks, otherwise plain `#123`.
 - `$state`: `open`, `draft`, `merged`, or `closed`.
 - `$checks`: all non-zero check counts in passed, failed, pending order, or `-` when no checks exist.
 - `$review`: `R✓` for approved, `R×` for changes requested, `R?` for review required, or empty when unknown.

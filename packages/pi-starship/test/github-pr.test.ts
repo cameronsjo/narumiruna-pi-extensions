@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { test } from "vitest";
+import { getCapabilities, setCapabilities } from "@earendil-works/pi-tui";
+import { afterAll, beforeEach, test } from "vitest";
 import { BUILT_IN_CONFIG } from "../src/config.js";
 import { parseFormat } from "../src/format/formatter.js";
 import { githubPrModule } from "../src/modules/github-pr.js";
@@ -15,6 +16,15 @@ import type { WorkspaceExec, WorkspaceExecResult } from "../src/runtime/workspac
 
 const NOW = Date.parse("2026-08-01T12:00:00.000Z");
 const GH_FIELDS = "number,isDraft,url,state,closedAt,mergedAt,reviewDecision,statusCheckRollup";
+const ambientCapabilities = getCapabilities();
+
+beforeEach(() => {
+	setCapabilities({ ...ambientCapabilities, hyperlinks: true });
+});
+
+afterAll(() => {
+	setCapabilities(ambientCapabilities);
+});
 
 function rawPr(overrides: Record<string, unknown> = {}): Record<string, unknown> {
 	return {
@@ -222,6 +232,14 @@ test("github_pr creates terminal-safe GitHub Enterprise links and falls back to 
 		const snapshot = buildGithubPrSnapshot(rawPr({ url }), NOW);
 		assert.equal(snapshot?.link, "#123");
 	}
+});
+
+test("github_pr honors disabled effective hyperlink capability", () => {
+	setCapabilities({ ...ambientCapabilities, hyperlinks: false });
+	const snapshot = buildGithubPrSnapshot(rawPr(), NOW);
+
+	assert.equal(snapshot?.link, "#123");
+	assert.equal(snapshot?.link.includes("\u001b]8;;"), false);
 });
 
 test("gh invocation is direct on POSIX and Windows and strips repository overrides", () => {
