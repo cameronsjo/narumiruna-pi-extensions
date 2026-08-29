@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import Range from "semver/classes/range.js";
 
 export function publishPackagesSequentially({
 	cwd = process.cwd(),
@@ -138,20 +139,35 @@ function readInternalDependencies(cwd) {
 		.map((entry) =>
 			JSON.parse(readFileSync(path.join(cwd, "packages", entry.name, "package.json"), "utf8")),
 		);
-	const packageNames = new Set(manifests.map((manifest) => manifest.name));
+	const internalVersions = new Map(manifests.map((manifest) => [manifest.name, manifest.version]));
 	return new Map(
 		manifests.map((manifest) => {
 			const runtimeDependencies = {
+				...manifest.dependencies,
 				...manifest.peerDependencies,
 				...manifest.optionalDependencies,
-				...manifest.dependencies,
 			};
 			return [
 				manifest.name,
-				new Set(Object.keys(runtimeDependencies).filter((name) => packageNames.has(name))),
+				new Set(
+					Object.entries(runtimeDependencies)
+						.filter(([name, range]) => acceptsInternalVersion(range, internalVersions.get(name)))
+						.map(([name]) => name),
+				),
 			];
 		}),
 	);
+}
+
+function acceptsInternalVersion(range, version) {
+	if (typeof range !== "string" || typeof version !== "string" || range.includes(":")) {
+		return false;
+	}
+	try {
+		return new Range(range).test(version);
+	} catch {
+		return false;
+	}
 }
 
 function recordFailure(outputPath, release, reason) {
