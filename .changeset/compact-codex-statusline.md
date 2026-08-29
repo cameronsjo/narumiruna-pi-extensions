@@ -1,5 +1,5 @@
 ---
-"@narumitw/pi-usage": patch
+"@narumitw/pi-usage": minor
 ---
 
-Shorten Codex statusline reset countdowns.
+Show compact Codex reset countdowns in the statusline by default, with a setting to restore the legacy window labels.
