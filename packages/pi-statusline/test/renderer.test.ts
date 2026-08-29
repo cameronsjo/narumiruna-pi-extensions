@@ -179,6 +179,12 @@ test("UI prompt activity sanitizes and bounds titles with kind-only fallbacks", 
 
 	runtime.uiPrompt = { kind: "custom", title: "\x1b[31m\u202e" };
 	assert.equal(formatToolActivity(runtime), "⌨ waiting for custom");
+
+	runtime.uiPrompt = { kind: "input", title: `a${"\u0301".repeat(1_000)}` };
+	const zeroWidthTitle = (formatToolActivity(runtime) ?? "").replace("⌨ waiting for input · ", "");
+	assert.equal([...zeroWidthTitle].length, 256);
+	assert.match(zeroWidthTitle, /…$/u);
+	assert.ok(visibleWidth(zeroWidthTitle) <= 40);
 });
 
 test("cwd uses Starship repository and three-component directory defaults", () => {

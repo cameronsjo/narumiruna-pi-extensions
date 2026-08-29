@@ -994,6 +994,13 @@ test("activity handles UI prompts, tools, thinking, completed, and idle", () => 
 		text({ uiPrompt: { kind: "custom", title: "\x1b[31m\u202e" } }),
 		/waiting for custom$/u,
 	);
+	const zeroWidthTitle = text(
+		{ uiPrompt: { kind: "input", title: `a${"\u0301".repeat(1_000)}` } },
+		"$title",
+	);
+	assert.equal([...zeroWidthTitle].length, 256);
+	assert.match(zeroWidthTitle, /…$/u);
+	assert.ok(visibleWidth(zeroWidthTitle) <= 40);
 });
 
 test("extension status icons match arbitrary exact keys and explicit namespace wildcards", () => {

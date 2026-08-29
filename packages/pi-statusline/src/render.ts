@@ -251,12 +251,27 @@ export function contextColor(percent: number | null | undefined): ThemeColor {
 	return "success";
 }
 
+const MAX_UI_PROMPT_TITLE_CODE_POINTS = 256;
 const MAX_UI_PROMPT_TITLE_WIDTH = 40;
+
+function boundUIPromptTitleLength(title: string): string {
+	let end = 0;
+	let ellipsisEnd = 0;
+	let codePoints = 0;
+	while (end < title.length && codePoints < MAX_UI_PROMPT_TITLE_CODE_POINTS) {
+		const codePoint = title.codePointAt(end) ?? 0;
+		end += codePoint > 0xffff ? 2 : 1;
+		codePoints += 1;
+		if (codePoints < MAX_UI_PROMPT_TITLE_CODE_POINTS) ellipsisEnd = end;
+	}
+	return end < title.length ? `${title.slice(0, ellipsisEnd)}…` : title;
+}
 
 function formatUIPromptTitle(title: string | undefined): string {
 	const safeTitle = title ? sanitizeTerminalText(title).trim() : "";
-	if (visibleWidth(safeTitle) <= MAX_UI_PROMPT_TITLE_WIDTH) return safeTitle;
-	return `${sliceByColumn(safeTitle, 0, MAX_UI_PROMPT_TITLE_WIDTH - 1, true)}…`;
+	const boundedTitle = boundUIPromptTitleLength(safeTitle);
+	if (visibleWidth(boundedTitle) <= MAX_UI_PROMPT_TITLE_WIDTH) return boundedTitle;
+	return `${sliceByColumn(boundedTitle, 0, MAX_UI_PROMPT_TITLE_WIDTH - 1, true)}…`;
 }
 
 export function formatToolActivity(runtime: RuntimeState): string | undefined {
