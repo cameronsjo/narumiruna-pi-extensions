@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { stripVTControlCharacters } from "node:util";
 import {
 	type Component,
 	Container,
@@ -14,8 +15,34 @@ import {
 import { test } from "vitest";
 import { type BtwFullscreenTuiFactory, runBtwFullscreen } from "../src/fullscreen-ui.js";
 
+// Keep these tests together because selection, input priority, and cleanup share stateful harnesses.
 interface FakeComponent extends Component {
 	dispose(): void;
+}
+
+const BTW_TEST_KEYBINDINGS = {
+	...TUI_KEYBINDINGS,
+	"app.message.copy": {
+		defaultKeys: "ctrl+y",
+		description: "Copy the active fullscreen selection",
+	},
+} as const;
+
+type BtwTestCopyBinding = "ctrl+c" | "ctrl+x" | "ctrl+y" | "pageUp" | "x";
+
+function createBtwTestKeybindings(copyBinding: BtwTestCopyBinding = "ctrl+y"): KeybindingsManager {
+	return new KeybindingsManager(BTW_TEST_KEYBINDINGS, {
+		"app.message.copy": copyBinding,
+	});
+}
+
+function inputForCopyBinding(keybindings: KeybindingsManager): string {
+	const [binding] = keybindings.getKeys("app.message.copy");
+	assert.ok(binding);
+	if (binding === "pageUp") return "\u001b[5~";
+	if (binding.length === 1) return binding;
+	assert.match(binding, /^ctrl\+[a-z]$/u);
+	return String.fromCharCode(binding.charCodeAt("ctrl+".length) & 31);
 }
 
 function createHarness(options: { fullscreenStopError?: Error; layoutMountError?: Error } = {}) {
@@ -184,7 +211,7 @@ class MainInput implements Component, Focusable {
 	invalidate(): void {}
 }
 
-function createInputHandoffHarness() {
+function createInputHandoffHarness(keybindings = createBtwTestKeybindings()) {
 	const terminal = new InputHandoffTerminal();
 	const parent = new TuiMainScreen(terminal, false);
 	const editorContainer = new Container();
@@ -228,7 +255,7 @@ function createInputHandoffHarness() {
 							inverse: (text: string) => text,
 							bold: (text: string) => text,
 						},
-						{},
+						keybindings,
 						done,
 					);
 					const overlay = parent.showOverlay(component);
@@ -243,7 +270,7 @@ function createInputHandoffHarness() {
 	return { ctx, mainInput, parent, terminal };
 }
 
-function createNativeFullscreenHarness() {
+function createNativeFullscreenHarness(keybindings = createBtwTestKeybindings()) {
 	const events: string[] = [];
 	const writes: string[] = [];
 	let handleInput: ((data: string) => void) | undefined;
@@ -294,7 +321,7 @@ function createNativeFullscreenHarness() {
 				outerComponent = factory(
 					parent as never,
 					theme as never,
-					{} as never,
+					keybindings as never,
 					((value: unknown) => outerDone?.(value)) as never,
 				);
 				return result;
@@ -319,8 +346,18 @@ function createNativeFullscreenHarness() {
 	};
 }
 
-async function startClipboardSelection(copy: (text: string) => Promise<void>) {
-	const harness = createNativeFullscreenHarness();
+async function startClipboardSelection(
+	copy: (text: string) => Promise<void>,
+	options: {
+		copyOnSelect?: boolean;
+		copyBinding?: BtwTestCopyBinding;
+		select?: boolean;
+		onInput?: (data: string) => void;
+	} = {},
+) {
+	const copyBinding = options.copyBinding ?? "ctrl+y";
+	const keybindings = createBtwTestKeybindings(copyBinding);
+	const harness = createNativeFullscreenHarness(keybindings);
 	let sideTui: TUI | undefined;
 	let closeSide: (() => void) | undefined;
 	const running = runBtwFullscreen(
@@ -331,10 +368,12 @@ async function startClipboardSelection(copy: (text: string) => Promise<void>) {
 				closeSide = () => done("closed");
 				return {
 					render: () => ["\u001b[31mcopy me\u001b[39m"],
+					handleInput: options.onInput,
 					invalidate() {},
 					dispose() {},
 				};
 			}),
+		{ copyOnSelect: options.copyOnSelect },
 		{ copyToClipboard: copy },
 	);
 	await flushAsyncWork();
@@ -342,9 +381,17 @@ async function startClipboardSelection(copy: (text: string) => Promise<void>) {
 	assert.ok(closeSide);
 	sideTui.renderNow(true);
 	harness.writes.length = 0;
-	harness.input("\u001b[<0;1;1M");
-	harness.input("\u001b[<0;7;1m");
-	return { harness, running, sideTui, closeSide };
+	if (options.select !== false) {
+		harness.input("\u001b[<0;1;1M");
+		harness.input("\u001b[<0;7;1m");
+	}
+	return {
+		harness,
+		running,
+		sideTui,
+		closeSide,
+		copyInput: inputForCopyBinding(keybindings),
+	};
 }
 
 test("Ctrl+C hands input back without closing another parent overlay", async () => {
@@ -544,6 +591,20 @@ test("default fullscreen enables application-owned mouse selection and restores 
 	}
 });
 
+test("fullscreen also copies mouse selections when automatic copying is explicitly enabled", async () => {
+	const copied: string[] = [];
+	const { running, closeSide } = await startClipboardSelection(
+		async (text) => {
+			copied.push(text);
+		},
+		{ copyOnSelect: true },
+	);
+	await flushAsyncWork();
+	assert.deepEqual(copied, ["copy me"]);
+	closeSide();
+	assert.equal(await running, "closed");
+});
+
 test.each([
 	{
 		name: "successful host copy",
@@ -579,6 +640,209 @@ test.each([
 	assert.deepEqual(harness.events, ["parent.stop:true", "parent.start", "parent.renderNow:false"]);
 });
 
+test("manual fullscreen retains a selection and copies it through a non-default injected binding", async () => {
+	const copied: string[] = [];
+	const { harness, running, sideTui, closeSide, copyInput } = await startClipboardSelection(
+		async (text) => {
+			copied.push(text);
+		},
+		{ copyOnSelect: false, copyBinding: "ctrl+x" },
+	);
+	await flushAsyncWork();
+	assert.deepEqual(copied, []);
+	assert.equal((sideTui as TUI & { hasActiveSelection(): boolean }).hasActiveSelection(), true);
+
+	harness.input(copyInput);
+	await flushAsyncWork();
+	sideTui.renderNow(true);
+	assert.deepEqual(copied, ["copy me"]);
+	assert.equal(harness.writes.join("").includes("Copied!"), true);
+	closeSide();
+	assert.equal(await running, "closed");
+});
+
+test("manual fullscreen prioritizes its copy binding over a conflicting viewport shortcut", async () => {
+	let copyCalls = 0;
+	const { harness, running, closeSide, copyInput } = await startClipboardSelection(
+		async () => {
+			copyCalls += 1;
+		},
+		{ copyOnSelect: false, copyBinding: "pageUp" },
+	);
+
+	harness.input(copyInput);
+	await flushAsyncWork();
+	assert.equal(copyCalls, 1);
+	closeSide();
+	assert.equal(await running, "closed");
+});
+
+test("manual fullscreen defers a printable copy binding while transcript search owns focus", async () => {
+	let copyCalls = 0;
+	const { harness, running, sideTui, closeSide, copyInput } = await startClipboardSelection(
+		async () => {
+			copyCalls += 1;
+		},
+		{ copyOnSelect: false, copyBinding: "x" },
+	);
+	const searchableTui = sideTui as TUI & { hasFocusedOverlay(): boolean };
+
+	harness.input("\u001b[102;6u");
+	assert.equal(searchableTui.hasFocusedOverlay(), true);
+	harness.writes.length = 0;
+	harness.input(copyInput);
+	await flushAsyncWork();
+	sideTui.renderNow(true);
+	assert.equal(copyCalls, 0);
+	assert.match(stripVTControlCharacters(harness.writes.join("")), />\s+x/u);
+	closeSide();
+	assert.equal(await running, "closed");
+});
+
+test("manual fullscreen forwards split bracketed paste containing the copy binding", async () => {
+	let copyCalls = 0;
+	const receivedInput: string[] = [];
+	const { harness, running, closeSide, copyInput } = await startClipboardSelection(
+		async () => {
+			copyCalls += 1;
+		},
+		{
+			copyOnSelect: false,
+			copyBinding: "ctrl+x",
+			select: false,
+			onInput: (data) => receivedInput.push(data),
+		},
+	);
+
+	harness.input("\u001b[200~");
+	harness.input(copyInput);
+	harness.input("pasted");
+	harness.input("\u001b[201~");
+	await flushAsyncWork();
+	assert.equal(copyCalls, 0);
+	assert.deepEqual(receivedInput, ["\u001b[200~", copyInput, "pasted", "\u001b[201~"]);
+	closeSide();
+	assert.equal(await running, "closed");
+});
+
+test("manual fullscreen reports no selection without using another copy source", async () => {
+	let copyCalls = 0;
+	const { harness, running, sideTui, closeSide, copyInput } = await startClipboardSelection(
+		async () => {
+			copyCalls += 1;
+		},
+		{ copyOnSelect: false, copyBinding: "ctrl+x", select: false },
+	);
+
+	harness.input(copyInput);
+	await flushAsyncWork();
+	sideTui.renderNow(true);
+	assert.equal(copyCalls, 0);
+	assert.equal(harness.writes.join("").includes("No selection to copy"), true);
+	closeSide();
+	assert.equal(await running, "closed");
+});
+
+test("manual fullscreen contains clipboard failure and reports it", async () => {
+	const { harness, running, sideTui, closeSide, copyInput } = await startClipboardSelection(
+		async () => {
+			throw new Error("clipboard unavailable");
+		},
+		{ copyOnSelect: false },
+	);
+
+	harness.input(copyInput);
+	await flushAsyncWork();
+	sideTui.renderNow(true);
+	assert.equal(harness.writes.join("").includes("Copy failed"), true);
+	closeSide();
+	assert.equal(await running, "closed");
+});
+
+test("manual fullscreen fails safely when Pi lacks manual selection APIs", async () => {
+	const harness = createNativeFullscreenHarness();
+	let runCalled = false;
+	await assert.rejects(
+		runBtwFullscreen(
+			harness.ctx,
+			async () => {
+				runCalled = true;
+				return "unused";
+			},
+			{ copyOnSelect: false },
+			{ manualSelectionCopySupported: false },
+		),
+		/update Pi or enable automatic selection copying/i,
+	);
+	assert.equal(runCalled, false);
+	assert.deepEqual(harness.events, ["parent.stop:true", "parent.start", "parent.renderNow:false"]);
+});
+
+test("manual fullscreen ignores a release event for the configured copy binding", async () => {
+	let copyCalls = 0;
+	const { harness, running, closeSide, copyInput } = await startClipboardSelection(
+		async () => {
+			copyCalls += 1;
+		},
+		{ copyOnSelect: false, copyBinding: "ctrl+x" },
+	);
+
+	harness.input("\u001b[120;5:3u");
+	await flushAsyncWork();
+	assert.equal(copyCalls, 0);
+	harness.input(copyInput);
+	await flushAsyncWork();
+	assert.equal(copyCalls, 1);
+	closeSide();
+	assert.equal(await running, "closed");
+});
+
+test("Ctrl+C preempts a conflicting manual-copy binding and restores same-batch parent input", async () => {
+	const keybindings = createBtwTestKeybindings("ctrl+c");
+	const harness = createInputHandoffHarness(keybindings);
+	let sideTui: TUI | undefined;
+	let copyCalls = 0;
+	const running = runBtwFullscreen(
+		harness.ctx,
+		(ctx) =>
+			ctx.ui.custom<"closed">((tui, _theme, _keys, done) => {
+				sideTui = tui;
+				return {
+					focused: false,
+					render: () => ["copy me"],
+					handleInput(data: string) {
+						if (data === "\u0003") done("closed");
+					},
+					invalidate() {},
+				};
+			}),
+		{ copyOnSelect: false },
+		{
+			copyToClipboard: async () => {
+				copyCalls += 1;
+			},
+		},
+	);
+	try {
+		await flushAsyncWork();
+		assert.ok(sideTui);
+		sideTui.renderNow(true);
+		harness.terminal.send("\u001b[<0;1;1M");
+		harness.terminal.send("\u001b[<0;7;1m");
+		assert.equal((sideTui as TUI & { hasActiveSelection(): boolean }).hasActiveSelection(), true);
+
+		harness.terminal.send(inputForCopyBinding(keybindings));
+		harness.terminal.send("x");
+
+		assert.equal(await running, "closed");
+		assert.equal(copyCalls, 0);
+		assert.equal(harness.mainInput.text, "x");
+	} finally {
+		await running.catch(() => undefined);
+		harness.parent.stop();
+	}
+});
+
 test.each(["resolve", "reject"] as const)(
 	"a host clipboard promise may %s after close without blocking restoration or rejecting outward",
 	async (settlement) => {
@@ -594,7 +858,12 @@ test.each(["resolve", "reject"] as const)(
 		const onUnhandled = (error: unknown) => unhandled.push(error);
 		process.on("unhandledRejection", onUnhandled);
 		try {
-			const { harness, running, closeSide } = await startClipboardSelection(copy);
+			const { harness, running, closeSide, copyInput } = await startClipboardSelection(copy, {
+				copyOnSelect: false,
+			});
+			await flushAsyncWork();
+			assert.equal(Boolean(settleCopy), false);
+			harness.input(copyInput);
 			await flushAsyncWork();
 			assert.ok(settleCopy);
 			closeSide();
@@ -624,7 +893,12 @@ test("disposal restores the parent while a clipboard copy is pending and contain
 	const onUnhandled = (error: unknown) => unhandled.push(error);
 	process.on("unhandledRejection", onUnhandled);
 	try {
-		const { harness, running } = await startClipboardSelection(copy);
+		const { harness, running, copyInput } = await startClipboardSelection(copy, {
+			copyOnSelect: false,
+		});
+		await flushAsyncWork();
+		assert.equal(Boolean(rejectCopy), false);
+		harness.input(copyInput);
 		await flushAsyncWork();
 		assert.ok(rejectCopy);
 		assert.ok(harness.outerComponent);
@@ -704,6 +978,7 @@ test("default fullscreen activates OSC-8 links through the configured URL opener
 					dispose() {},
 				};
 			}),
+		{},
 		{ openUrl: (target: string) => opened.push(target) },
 	);
 	await flushAsyncWork();
@@ -733,6 +1008,7 @@ test("dedicated fullscreen owns the terminal while side custom UI runs and resto
 				return immediateComponent(done, harness.events);
 			});
 		},
+		{},
 		{ createTui: harness.createTui },
 	);
 
@@ -769,6 +1045,7 @@ test("dedicated fullscreen mounts only opt-in components as explicit viewport la
 					getFullscreenLayout: () => layoutRoot,
 				};
 			}),
+		{},
 		{ createTui: harness.createTui },
 	);
 	await flushAsyncWork();
@@ -798,6 +1075,7 @@ test("a layout mount failure clears the root, disposes the component, and restor
 						invalidate() {},
 					}),
 				})),
+			{},
 			{ createTui: harness.createTui },
 		),
 		/layout mount failed/,
@@ -823,6 +1101,7 @@ test("dedicated fullscreen keeps ordinary custom components on the implicit docu
 					dispose() {},
 				};
 			}),
+		{},
 		{ createTui: harness.createTui },
 	);
 	await flushAsyncWork();
@@ -843,6 +1122,7 @@ test("dedicated fullscreen restores the parent before propagating a side-flow er
 			async () => {
 				throw new Error("side failed");
 			},
+			{},
 			{ createTui: harness.createTui },
 		),
 		/side failed/,
@@ -860,7 +1140,7 @@ test("dedicated fullscreen restores the parent before propagating a side-flow er
 test("a fullscreen stop failure still restarts the parent before it propagates", async () => {
 	const harness = createHarness({ fullscreenStopError: new Error("fullscreen stop failed") });
 	await assert.rejects(
-		runBtwFullscreen(harness.ctx, async () => "done", { createTui: harness.createTui }),
+		runBtwFullscreen(harness.ctx, async () => "done", {}, { createTui: harness.createTui }),
 		/fullscreen stop failed/,
 	);
 
@@ -890,6 +1170,7 @@ test("disposing the fullscreen host closes active side UI and restores terminal 
 					},
 				};
 			}),
+		{},
 		{ createTui: harness.createTui },
 	);
 	await Promise.resolve();
@@ -916,6 +1197,7 @@ test("disposal restores the parent and disposes a custom component whose factory
 						releaseFactory = resolve;
 					}),
 			),
+		{},
 		{ createTui: harness.createTui },
 	);
 	await Promise.resolve();
@@ -948,6 +1230,7 @@ test("done wins over a later asynchronous custom factory rejection", async () =>
 				done("completed result");
 				return Promise.reject(new Error("factory failed after done"));
 			}),
+		{},
 		{ createTui: harness.createTui },
 	);
 
@@ -970,6 +1253,7 @@ test("done restores the parent without waiting for an asynchronous custom factor
 					releaseFactory = resolve;
 				});
 			}),
+		{},
 		{ createTui: harness.createTui },
 	);
 	let observed: unknown = "pending";

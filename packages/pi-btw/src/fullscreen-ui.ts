@@ -30,6 +30,7 @@ type BtwCustomFactory<T> = (
 type BtwFullscreenTui = TUI & {
 	flash?: (message: string, durationMs?: number) => void;
 	setLayoutRoot(component: Component | undefined): void;
+	addInputListenerBeforeAll?(listener: TuiInputListener): () => void;
 	addInputListenerBeforeViewport?(listener: TuiInputListener): () => void;
 };
 
@@ -37,17 +38,28 @@ export interface BtwFullscreenLayoutComponent extends Component {
 	getFullscreenLayout(): Component;
 }
 
-export type BtwFullscreenTuiFactory = (parent: TUI, theme: Theme) => BtwFullscreenTui;
+export interface BtwFullscreenOptions {
+	copyOnSelect?: boolean;
+}
+
+export type BtwFullscreenTuiFactory = (
+	parent: TUI,
+	theme: Theme,
+	keybindings: KeybindingsManager,
+	options: BtwFullscreenOptions,
+) => BtwFullscreenTui;
 
 export interface BtwFullscreenDependencies {
 	createTui?: BtwFullscreenTuiFactory;
 	openUrl?: (url: string) => void;
 	copyToClipboard?: (text: string) => Promise<void>;
+	manualSelectionCopySupported?: boolean;
 }
 
 export type RunBtwFullscreen = <T>(
 	ctx: ExtensionCommandContext,
 	run: (ctx: ExtensionCommandContext) => Promise<T>,
+	options?: BtwFullscreenOptions,
 ) => Promise<T>;
 
 type FullscreenOutcome<T> = { kind: "completed"; value: T } | { kind: "failed"; error: unknown };
@@ -62,14 +74,23 @@ class FullscreenUiDisposedError extends Error {
 export async function runBtwFullscreen<T>(
 	ctx: ExtensionCommandContext,
 	run: (ctx: ExtensionCommandContext) => Promise<T>,
+	options: BtwFullscreenOptions = {},
 	dependencies: BtwFullscreenDependencies = {},
 ): Promise<T> {
 	const createTui =
 		dependencies.createTui ??
-		((parent: TUI, theme: Theme) =>
+		((
+			parent: TUI,
+			theme: Theme,
+			keybindings: KeybindingsManager,
+			fullscreenOptions: BtwFullscreenOptions,
+		) =>
 			createBtwFullscreenTui(
 				parent,
 				theme,
+				keybindings,
+				fullscreenOptions.copyOnSelect ?? true,
+				dependencies.manualSelectionCopySupported ?? hasManualSelectionCopyApi(),
 				dependencies.openUrl ?? openUrlInBrowser,
 				dependencies.copyToClipboard ?? copyToHostClipboard,
 			));
@@ -94,6 +115,7 @@ export async function runBtwFullscreen<T>(
 					done(value);
 				},
 				createTui,
+				options,
 			);
 			return host;
 		},
@@ -114,6 +136,7 @@ export async function runBtwFullscreen<T>(
 }
 
 type BtwInputListeners = {
+	beforeAll: Set<TuiInputListener>;
 	beforeViewport: Set<TuiInputListener>;
 	regular: Set<TuiInputListener>;
 };
@@ -122,7 +145,7 @@ const btwInputListeners = new WeakMap<BtwTuiAltScreen, BtwInputListeners>();
 
 function dispatchBtwInput(listeners: BtwInputListeners, data: string): TuiInputListenerResult {
 	let current = data;
-	for (const group of [listeners.beforeViewport, listeners.regular]) {
+	for (const group of [listeners.beforeAll, listeners.beforeViewport, listeners.regular]) {
 		for (const listener of group) {
 			const result = listener(current);
 			if (result?.consume) return result;
@@ -133,10 +156,15 @@ function dispatchBtwInput(listeners: BtwInputListeners, data: string): TuiInputL
 }
 
 class BtwTuiAltScreen extends TuiAltScreen {
+	hasFocusedOverlay(): boolean {
+		return this.isOverlayFocused();
+	}
+
 	override addInputListener(listener: TuiInputListener): () => void {
 		let listeners = btwInputListeners.get(this);
 		if (!listeners) {
 			const registeredListeners: BtwInputListeners = {
+				beforeAll: new Set(),
 				beforeViewport: new Set(),
 				regular: new Set(),
 			};
@@ -146,6 +174,13 @@ class BtwTuiAltScreen extends TuiAltScreen {
 		}
 		listeners.regular.add(listener);
 		return () => listeners.regular.delete(listener);
+	}
+
+	addInputListenerBeforeAll(listener: TuiInputListener): () => void {
+		const listeners = btwInputListeners.get(this);
+		if (!listeners) return super.addInputListener(listener);
+		listeners.beforeAll.add(listener);
+		return () => listeners.beforeAll.delete(listener);
 	}
 
 	addInputListenerBeforeViewport(listener: TuiInputListener): () => void {
@@ -161,33 +196,85 @@ class BtwTuiAltScreen extends TuiAltScreen {
 			super.removeInputListener(listener);
 			return;
 		}
+		listeners.beforeAll.delete(listener);
 		listeners.beforeViewport.delete(listener);
 		listeners.regular.delete(listener);
 	}
 }
 
+const BRACKETED_PASTE_START = "\u001b[200~";
+const BRACKETED_PASTE_END = "\u001b[201~";
+
+function hasManualSelectionCopyApi(): boolean {
+	return (
+		typeof TuiAltScreen.prototype.hasActiveSelection === "function" &&
+		typeof TuiAltScreen.prototype.copyActiveSelectionToClipboard === "function"
+	);
+}
+
 function createBtwFullscreenTui(
 	parent: TUI,
 	theme: Theme,
+	keybindings: KeybindingsManager,
+	copyOnSelect: boolean,
+	manualSelectionCopySupported: boolean,
 	openUrl: (url: string) => void,
 	copyToClipboard: (text: string) => Promise<void>,
 ): BtwFullscreenTui {
+	if (!copyOnSelect && !manualSelectionCopySupported) {
+		throw new Error(
+			"Manual fullscreen selection copying is unavailable in this Pi version; update Pi or enable automatic selection copying.",
+		);
+	}
 	const styleSearchMatch = (text: string) =>
 		theme.bg("searchMatchBg", theme.fg("searchMatchText", text));
-	return new BtwTuiAltScreen(parent.terminal, parent.getShowHardwareCursor(), undefined, {
-		mouse: true,
-		searchMatchStyle: (text) => theme.underline(styleSearchMatch(text)),
-		searchCurrentMatchStyle: (text) => theme.bold(theme.inverse(styleSearchMatch(text))),
-		openUrl,
-		copySelection: async (text) => {
-			try {
-				await copyToClipboard(text);
-				return true;
-			} catch {
-				return false;
-			}
+	const fullscreen = new BtwTuiAltScreen(
+		parent.terminal,
+		parent.getShowHardwareCursor(),
+		undefined,
+		{
+			mouse: true,
+			copyOnSelect,
+			searchMatchStyle: (text) => theme.underline(styleSearchMatch(text)),
+			searchCurrentMatchStyle: (text) => theme.bold(theme.inverse(styleSearchMatch(text))),
+			openUrl,
+			copySelection: async (text) => {
+				try {
+					await copyToClipboard(text);
+					return true;
+				} catch {
+					return false;
+				}
+			},
 		},
-	});
+	);
+	if (!copyOnSelect) {
+		let isInBracketedPaste = false;
+		fullscreen.addInputListenerBeforeViewport((data) => {
+			const wasInBracketedPaste = isInBracketedPaste;
+			const startsBracketedPaste = data.includes(BRACKETED_PASTE_START);
+			if (startsBracketedPaste) isInBracketedPaste = true;
+			if (isInBracketedPaste && data.includes(BRACKETED_PASTE_END)) {
+				isInBracketedPaste = false;
+			}
+			if (
+				wasInBracketedPaste ||
+				startsBracketedPaste ||
+				fullscreen.hasFocusedOverlay() ||
+				isKeyRelease(data) ||
+				!keybindings.matches(data, "app.message.copy")
+			) {
+				return undefined;
+			}
+			if (!fullscreen.hasActiveSelection()) {
+				fullscreen.flash("No selection to copy");
+				return { consume: true };
+			}
+			void fullscreen.copyActiveSelectionToClipboard().catch(() => fullscreen.flash("Copy failed"));
+			return { consume: true };
+		});
+	}
+	return fullscreen;
 }
 
 // Pi does not export its browser opener, so mirror its shell-free launcher for this isolated TUI.
@@ -226,6 +313,7 @@ class BtwFullscreenHost<T> implements Component {
 		private readonly run: (ctx: ExtensionCommandContext) => Promise<T>,
 		private readonly done: (outcome: FullscreenOutcome<T>) => void,
 		private readonly createTui: BtwFullscreenTuiFactory,
+		private readonly options: BtwFullscreenOptions,
 	) {
 		queueMicrotask(() => void this.start());
 	}
@@ -255,11 +343,12 @@ class BtwFullscreenHost<T> implements Component {
 			this.parent.stop({ preserveScreen: true });
 			this.parentStopped = true;
 			if (this.disposed) throw new FullscreenUiDisposedError();
-			this.fullscreen = this.createTui(this.parent, this.theme);
+			this.fullscreen = this.createTui(this.parent, this.theme, this.keybindings, this.options);
 			this.fullscreenCreated = true;
 			this.fullscreen.start();
 			// Waiting for the custom promise would leave follow-up keys bound to the side TUI.
 			const addHardCancelListener =
+				this.fullscreen.addInputListenerBeforeAll?.bind(this.fullscreen) ??
 				this.fullscreen.addInputListenerBeforeViewport?.bind(this.fullscreen) ??
 				this.fullscreen.addInputListener.bind(this.fullscreen);
 			this.removeHardCancelListener = addHardCancelListener((data) => {
