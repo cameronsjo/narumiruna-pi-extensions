@@ -18,7 +18,6 @@ Every active package README must present these elements in this order:
 9. `## 🔎 Keywords`.
 10. `## 📄 License`.
 
-Experimental packages must show a user-facing warning near the introduction.
 Reusable libraries omit the Pi extension badge and may make Quick start an import example rather than a Pi command.
 
 ## Standard section labels

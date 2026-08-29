@@ -28,7 +28,7 @@ Install the repository source as one Pi package:
 pi install git:github.com/narumiruna/pi-extensions
 ```
 
-This Git installation enables every stable extension listed in the repository root manifest, including Pi Subagents.
+This Git installation enables every extension listed in the repository root manifest, including Pi Subagents.
 
 To install only Pi Subagents, clone the repository, install dependencies, build its generated runtime, and install its package directory:
 

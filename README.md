@@ -131,7 +131,7 @@ Install the repository as one Pi package:
 pi install git:github.com/narumiruna/pi-extensions
 ```
 
-The repository root Pi manifest explicitly lists every stable extension under `packages/`, so this enables all of them. Packages marked with the experimental lifecycle are intentionally excluded from the root Git package.
+The repository root Pi manifest explicitly lists every extension under `packages/`, so this enables all of them.
 
 To load only selected extensions, replace the installed package entry in `~/.pi/agent/settings.json` with a resource filter:
 
@@ -200,8 +200,7 @@ independently.
 npm publish --workspace @narumitw/pi-new-extension --access public
 ```
 
-After the initial publication, Changesets handles stable extensions, experimental extensions, and
-libraries through independent package versions.
+After the initial publication, Changesets handles extensions and libraries through independent package versions.
 
 </details>
 
@@ -229,7 +228,7 @@ consumer together.
 ## 🗂️ Repository structure
 
 ```text
-packages/                Stable extensions, experimental extensions, and reusable libraries
+packages/                Extension packages and reusable libraries
 deprecated/              Reference packages excluded from active workspace scripts
 docs/                    Repository conventions and plans
 scripts/                 Shared checks, tests, versioning, and release helpers
@@ -237,7 +236,7 @@ test/                    Root integration and repository tests
 ```
 
 Each active package contains its own `package.json`, `README.md`, `LICENSE`, `tsconfig.json`, and TypeScript source under `src/`.
-Every extension keeps a thin `src/index.ts` source forwarder and declares a stable or experimental lifecycle.
+Every extension keeps a thin `src/index.ts` source forwarder and declares one package entrypoint.
 An extension package may load that source entrypoint directly or publish a build-backed `dist/index.ts` bundle for Pi's Jiti runtime.
 Reusable libraries publish built ESM and declarations from `dist/`.
 
