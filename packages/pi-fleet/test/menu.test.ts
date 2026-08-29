@@ -60,7 +60,6 @@ function source(overrides: Partial<FleetMenuSource> = {}) {
 	const calls: unknown[] = [];
 	const value: FleetMenuSource = {
 		snapshot: async () => disconnected,
-		acceptExperimentalWarning: async () => true,
 		spawn: async (_ctx, input) => {
 			calls.push({ kind: "spawn", input });
 		},
@@ -332,12 +331,14 @@ test("cancelled direction choice creates no spawn side effects", async () => {
 	assert.deepEqual(calls, []);
 });
 
-test("cancelled warning and dialogs create no group, join, or spawn side effects", async () => {
-	const { source: menuSource, calls } = source({
-		acceptExperimentalWarning: async () => false,
-	});
+test("cancelled dialogs create no group or join side effects", async () => {
+	const { source: menuSource, calls } = source();
 	const { menu } = createFleetMenu(menuSource);
-	const context = createMockContext({ mode: "tui", hasUI: true });
+	const context = createMockContext({
+		mode: "tui",
+		hasUI: true,
+		confirm: async () => false,
+	});
 	assert.deepEqual(
 		await menu.actions.start({
 			ctx: context.ctx,

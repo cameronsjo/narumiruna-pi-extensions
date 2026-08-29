@@ -159,14 +159,14 @@ async function fixture(run: (path: string) => Promise<void>): Promise<void> {
 	}
 }
 
-test("registers /chat, warns each UI session, and does not create settings at startup", async () => {
+test("registers /chat without notifying or creating settings at startup", async () => {
 	await fixture(async (settingsPath) => {
 		const mock = createMockPi();
 		createPiChatExtension({ settingsPath })(mock.pi);
 		assert.ok(mock.commands.has("chat"));
 		const ctx = createMockContext({ hasUI: true, mode: "tui" });
 		await emit(mock, "session_start", { reason: "startup" }, ctx.ctx);
-		assert.match(ctx.notifications[0]?.message ?? "", /experimental/i);
+		assert.deepEqual(ctx.notifications, []);
 		await assert.rejects(readFile(settingsPath), { code: "ENOENT" });
 	});
 });

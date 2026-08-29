@@ -8,9 +8,6 @@ import type { RecallMenuSource } from "./menu.js";
 import { extractMessageCandidates, normalizeCwd } from "./messages.js";
 import { RecallStore } from "./store.js";
 
-const EXPERIMENTAL_WARNING =
-	"Pi Recall is experimental; its storage format and interaction flow may change.";
-
 interface RecallDependencies {
 	getAgentDir(): string;
 	createStore(path: string): RecallStore;
@@ -76,7 +73,6 @@ export function createRecallExtension(
 			sessionController = new AbortController();
 			generation += 1;
 			activeSessionManager = ctx.sessionManager;
-			if (ctx.hasUI) safeNotify(ctx, EXPERIMENTAL_WARNING, "warning");
 		});
 
 		pi.on("session_shutdown", (_event, ctx) => {

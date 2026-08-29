@@ -43,7 +43,7 @@ async function emit(
 	for (const handler of mock.events.get(name) ?? []) await handler(event, ctx);
 }
 
-test("registers /recall and warns visibly on every started UI session", async () => {
+test("registers /recall without notifying on session start", async () => {
 	const mock = createMockPi();
 	createRecallExtension({ getAgentDir: () => "/agent", createStore: () => emptyStore() })(mock.pi);
 	assert.ok(mock.commands.has("recall"));
@@ -51,8 +51,8 @@ test("registers /recall and warns visibly on every started UI session", async ()
 	const second = createMockContext({ hasUI: true, mode: "rpc" });
 	await emit(mock, "session_start", { reason: "startup" }, first.ctx);
 	await emit(mock, "session_start", { reason: "new" }, second.ctx);
-	assert.match(first.notifications[0]?.message ?? "", /Pi Recall is experimental/i);
-	assert.match(second.notifications[0]?.message ?? "", /Pi Recall is experimental/i);
+	assert.deepEqual(first.notifications, []);
+	assert.deepEqual(second.notifications, []);
 });
 
 test("rejects arguments and print/json modes before opening interactive UI", async () => {

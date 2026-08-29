@@ -2,10 +2,6 @@
 
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-recall)](https://www.npmjs.com/package/@narumitw/pi-recall) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-> [!WARNING]
-> Pi Recall is experimental.
-> Its storage format and interaction flow may change between releases.
-
 Save selected user or assistant messages, find them in another Pi session, and quote them into a new draft.
 Saved content stays local until you submit that draft.
 

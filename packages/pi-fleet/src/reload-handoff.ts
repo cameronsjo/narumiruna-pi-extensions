@@ -6,7 +6,6 @@ export interface FleetReloadHandoff {
 	launchId?: string;
 	kickoffCapability?: string;
 	kickoffConsumed: boolean;
-	warningAccepted: boolean;
 	expiresAt: number;
 }
 

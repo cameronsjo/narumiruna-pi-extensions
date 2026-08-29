@@ -37,7 +37,7 @@ export function createPiFleetExtension(
 		});
 
 		pi.registerCommand("fleet", {
-			description: "Spawn and connect experimental local Pi sessions",
+			description: "Spawn and connect local Pi sessions",
 			handler: async (rawArgs, ctx) => {
 				const args = rawArgs.trim();
 				if (ctx.mode !== "tui" && ctx.mode !== "rpc") {
@@ -70,7 +70,7 @@ async function joinDirectInvite(
 		throw new Error(USAGE);
 	}
 	const signal = controller.sessionSignal;
-	if (!(await controller.acceptExperimentalWarning(ctx, signal)) || signal.aborted) return;
+	if (signal.aborted) return;
 	const confirmed = await ctx.ui.confirm(
 		"Join local Pi Fleet group?",
 		"The bearer invite permits local peer messages. Incoming agent requests start blocked.",
@@ -79,7 +79,7 @@ async function joinDirectInvite(
 	if (!confirmed || signal.aborted || !controller.isCurrent(ctx)) return;
 	await controller.joinInvite(ctx, invite, false, signal);
 	if (controller.isCurrent(ctx)) {
-		ctx.ui.notify("Joined the experimental local Pi Fleet group.", "info");
+		ctx.ui.notify("Joined the local Pi Fleet group.", "info");
 	}
 }
 
@@ -94,8 +94,6 @@ function menuSource(
 			...settings.get(),
 			settingsPath: settings.getPath(),
 		}),
-		acceptExperimentalWarning: (commandContext, signal) =>
-			controller.acceptExperimentalWarning(commandContext, signal),
 		spawn: async (commandContext, input, signal) => {
 			const result = await controller.spawn(commandContext, input, signal);
 			if (controller.isCurrent(commandContext)) {
@@ -109,7 +107,7 @@ function menuSource(
 		start: async (commandContext, signal) => {
 			await controller.startNewGroup(commandContext, false, signal);
 			if (controller.isCurrent(commandContext)) {
-				commandContext.ui.notify("Started an experimental local Pi Fleet group.", "info");
+				commandContext.ui.notify("Started a local Pi Fleet group.", "info");
 			}
 		},
 		join: async (commandContext, invite, signal) => {

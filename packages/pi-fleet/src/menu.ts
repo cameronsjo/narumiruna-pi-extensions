@@ -11,7 +11,6 @@ export interface FleetMenuState extends FleetSnapshot, FleetSettingsState {
 
 export interface FleetMenuSource {
 	snapshot(signal?: AbortSignal): Promise<FleetMenuState>;
-	acceptExperimentalWarning(ctx: ExtensionCommandContext, signal?: AbortSignal): Promise<boolean>;
 	spawn(
 		ctx: ExtensionCommandContext,
 		input: SpawnSessionInput,
@@ -177,7 +176,7 @@ export function createFleetMenu(source: FleetMenuSource) {
 				kind: "detail",
 				title: "Pi Fleet help",
 				lines: [
-					"Pi Fleet is experimental and connects explicit sessions owned by one OS user.",
+					"Pi Fleet connects explicit sessions owned by one OS user.",
 					"New Pi session creates a separate process in a terminal split and preserves the parent.",
 					"Automatic selection prefers tmux, then Zellij 0.44+, then Ghostty 1.3+ on macOS.",
 					"Notify messages do not start turns, requests require recipient permission, and replies do not auto-trigger another turn.",
@@ -226,9 +225,6 @@ export function createFleetMenu(source: FleetMenuSource) {
 				return { kind: "close" };
 			},
 			start: async ({ ctx, signal }) => {
-				if (!(await source.acceptExperimentalWarning(ctx, signal)) || signal.aborted) {
-					return { kind: "stay" };
-				}
 				const confirmed = await ctx.ui.confirm(
 					"Start local Pi Fleet group?",
 					"This creates one owner-only Unix socket and an ephemeral bearer invite. Incoming requests start blocked.",
@@ -239,9 +235,6 @@ export function createFleetMenu(source: FleetMenuSource) {
 				return { kind: "stay" };
 			},
 			join: async ({ ctx, signal, value }) => {
-				if (!(await source.acceptExperimentalWarning(ctx, signal)) || signal.aborted) {
-					return { kind: "stay" };
-				}
 				if (!value) return { kind: "rejected", error: new Error("Pi Fleet invite is required") };
 				const confirmed = await ctx.ui.confirm(
 					"Join local Pi Fleet group?",
@@ -399,7 +392,7 @@ function mainScreen(state: FleetMenuState) {
 		return {
 			kind: "actions" as const,
 			title: "Pi Fleet · disconnected",
-			lines: ["Experimental local Pi sessions with configured terminal launches and messaging."],
+			lines: ["Local Pi sessions with configured terminal launches and messaging."],
 			items: [
 				{
 					id: "spawn",

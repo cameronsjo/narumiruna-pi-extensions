@@ -80,11 +80,19 @@ These extensions are part of my daily Pi setup:
 Current Plan and Goal releases can coexist on the characterized Pi runtime through their anonymous cooperative workflow mutex.
 The deprecated combined `pi-workflow` package has no atomic Plan-to-Goal replacement; follow its [archived migration instructions](./deprecated/pi-workflow/README.md#-migration-from-pi-workflow).
 
+### Local collaboration
+
+| Package | Use it for | Install |
+| --- | --- | --- |
+| [`pi-chat`](./packages/pi-chat) | Join ephemeral peer-to-peer chat rooms that stay separate from Pi sessions, prompts, and model context. | `pi install npm:@narumitw/pi-chat` |
+| [`pi-fleet`](./packages/pi-fleet) | Start a separate Pi process in a terminal split and connect explicit local Pi sessions for bounded messages and one-turn requests. | `pi install npm:@narumitw/pi-fleet` |
+
 ### Accounts and data
 
 | Package | Use it for | Install |
 | --- | --- | --- |
 | [`pi-accounts`](./packages/pi-accounts) | Switch named OpenAI Codex, Anthropic, GitHub Copilot, Kimi For Coding, OpenRouter, Radius, and xAI OAuth accounts with `/accounts`. | `pi install npm:@narumitw/pi-accounts` |
+| [`pi-recall`](./packages/pi-recall) | Save selected text messages locally and preview or quote them across Pi sessions. | `pi install npm:@narumitw/pi-recall` |
 | [`pi-usage`](./packages/pi-usage) | View current-account Codex subscription limits or OpenRouter API-key spend limits with `/usage`. | `pi install npm:@narumitw/pi-usage` |
 | [`pi-sync`](./packages/pi-sync) | Sync allowlisted Pi settings and optional sessions through Cloudflare R2 or S3-compatible storage. | `pi install npm:@narumitw/pi-sync` |
 
@@ -92,6 +100,7 @@ The deprecated combined `pi-workflow` package has no atomic Plan-to-Goal replace
 
 | Package | Use it for | Install |
 | --- | --- | --- |
+| [`pi-analytics`](./packages/pi-analytics) | Review private, content-free local metrics for model calls, skills, tools, response cycles, and observed provider reliability through `/analytics`. | `pi install npm:@narumitw/pi-analytics` |
 | [`pi-github-pr`](./packages/pi-github-pr) | Show current-branch pull request checks, reviews, and comment counts through the authenticated `gh` CLI. | `pi install npm:@narumitw/pi-github-pr` |
 | [`pi-langfuse`](./packages/pi-langfuse) | Send agent runs, generations, token usage, costs, and tool activity to Langfuse. | `pi install npm:@narumitw/pi-langfuse` |
 | [`pi-stamp`](./packages/pi-stamp) | Show configurable timestamps with opt-in assistant metadata, response timing, and tool timing in the TUI transcript. | `pi install npm:@narumitw/pi-stamp` |
@@ -110,18 +119,6 @@ Choose either `pi-starship` or `pi-statusline`; do not enable both footer extens
 Libraries are runtime dependencies for extension authors, not standalone Pi extensions. New standard
 manager menus should use `@narumitw/pi-tui-kit`; extensions continue to own domain state,
 commands, settings persistence, confirmations, and specialized UI.
-
-## 🧪 Experimental extensions
-
-> [!WARNING]
-> Experimental extensions are published and installable, but their interaction models and package APIs may change between releases.
-
-| Package | Use it for | Install |
-| --- | --- | --- |
-| [`pi-analytics`](./packages/pi-analytics) | Review private, content-free local metrics for model calls, skills, tools, response cycles, and observed provider reliability through `/analytics`. | `pi install npm:@narumitw/pi-analytics` |
-| [`pi-chat`](./packages/pi-chat) | Join ephemeral peer-to-peer chat rooms that stay separate from Pi sessions, prompts, and model context. | `pi install npm:@narumitw/pi-chat` |
-| [`pi-fleet`](./packages/pi-fleet) | Start a separate Pi process in a Ghostty split and connect explicit local Pi sessions for bounded messages and one-turn requests. | `pi install npm:@narumitw/pi-fleet` |
-| [`pi-recall`](./packages/pi-recall) | Save selected text messages locally and preview or quote them across Pi sessions. | `pi install npm:@narumitw/pi-recall` |
 
 ## 🔧 Advanced installation
 

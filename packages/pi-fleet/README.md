@@ -2,10 +2,6 @@
 
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-fleet)](https://www.npmjs.com/package/@narumitw/pi-fleet) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-> [!WARNING]
-> Pi Fleet is experimental.
-> Its local protocol, terminal automation, tool schemas, and agent-request behavior may change between releases.
-
 Launch another Pi process in a terminal split without replacing the current session.
 You can also connect trusted local Pi sessions for bounded notifications and one-turn requests.
 
@@ -14,7 +10,7 @@ Pi Fleet detects tmux, Zellij, or Ghostty automatically, and you can pin a backe
 ## ✨ Features
 
 - Opens a distinct Pi process in tmux, Ghostty, or Zellij while preserving the parent session.
-- Inherits the cwd, model, thinking level, and optional first task after consent and launch review.
+- Inherits the cwd, model, thinking level, and optional first task after launch review.
 - Waits for the child to authenticate before reporting that the new session is ready.
 - Connects explicitly joined same-user sessions through owner-only local sockets and ephemeral invites.
 - Delivers notifications without a model turn and bounds each allowed request to one turn.
@@ -53,14 +49,14 @@ Review extension source before installing it.
 ## 🚀 Quick start
 
 Run `/fleet`, choose **New Pi session…**, select a split direction, and optionally enter a first task.
-Before creating a split, Pi Fleet asks for one-time experimental consent and any configured launch confirmation.
+Before creating a split, Pi Fleet asks for the configured launch confirmation.
 
 ## 🧭 Launch flow
 
 Use **Settings** to pin a terminal backend or change final launch confirmation.
 With the default settings, Pi Fleet detects the current supported terminal.
 
-After consent and any configured launch confirmation, Pi Fleet:
+After any configured launch confirmation, Pi Fleet:
 
 1. Creates or reuses an ephemeral local group.
 2. Creates the selected terminal split.
@@ -85,7 +81,7 @@ Creates a separate Pi process in a terminal split.
 | `name` | No | Child session display name. |
 | `cwd` | No | Existing directory; defaults to the current cwd. |
 
-The tool supports only TUI and RPC modes because launch requires experimental consent and may require confirmation.
+The tool supports only TUI and RPC modes because launch may require confirmation.
 In JSON and print modes, it fails before creating a group, launcher, or split.
 Successful details include `terminal`, `terminalId`, and `terminalVersion`.
 Ghostty results also retain `ghosttyVersion` for compatibility.
@@ -110,7 +106,7 @@ Peer-list text and details share a 40 KiB UTF-8 result budget below Pi's tool-ou
 | Command | Modes | Description |
 | --- | --- | --- |
 | `/fleet` | TUI, RPC | Open the state-aware Pi Fleet manager. |
-| `/fleet <pifleet:v1:invite>` | TUI, RPC | Review warnings and join one ephemeral local group. |
+| `/fleet <pifleet:v1:invite>` | TUI, RPC | Review the join confirmation and join one ephemeral local group. |
 
 Unknown and trailing arguments are rejected.
 JSON and print command routes fail before opening sockets or custom UI.
@@ -197,7 +193,6 @@ Pi Fleet stores user settings in `<getAgentDir()>/pi-fleet.json`, normally `~/.p
 | `confirmSessionLaunch` | `true`, `false` | `true` | Shows or skips the final launch preview for menu and tool launches. |
 
 An explicit `session_spawn.terminal` value strictly overrides `defaultTerminal` for that launch and never accepts `auto`.
-Disabling launch confirmation does not disable one-time experimental consent.
 Pi Fleet reads standard terminal context variables only for automatic selection and does not treat them as settings overrides.
 Pi Fleet does not read project settings or extension-specific environment-variable overrides.
 A missing file uses the defaults without creating the file.
@@ -258,7 +253,7 @@ Enabling them permits trusted invite holders to start paid model turns that may 
 - No automatic trust or discovery of every Pi process.
 - No backend fallback after automatic resolution, adapter preflight, or launch failure.
 - No automatic close of a split after partial child startup.
-- Protocol version 2 intentionally rejects version-1 manifests and frames while the package remains experimental.
+- Protocol version 2 intentionally rejects version-1 manifests and frames.
 - One request uses one short-lived socket connection; there is no persistent multiplexed channel or delivery stream.
 - Server connections use an absolute request deadline rather than an activity-reset timeout, and at most eight message deliveries run concurrently.
 - Per-sender and endpoint-wide rate limits are fixed windows, so a busy response can require waiting before retrying.

@@ -71,7 +71,7 @@ export function createShowcaseMenu(
 				kind: "actions",
 				title: "Pi TUI Kit Showcase",
 				lines: [
-					"Experimental local demo for maintainers.",
+					"Local demo for maintainers.",
 					"It stores no settings and uses only public @narumitw/pi-tui-kit exports.",
 					`Current demo state: ${state.profile} · ${state.density} · ${state.accent}`,
 				],

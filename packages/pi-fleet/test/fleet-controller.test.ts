@@ -103,7 +103,7 @@ test("factory and ordinary session start create no resources or warning", async 
 	assert.equal(context.statuses.get("fleet"), undefined);
 });
 
-test("child launch envelope is consumed, redacted, named, and joined after warning", async () => {
+test("child launch envelope is consumed, redacted, named, and joined quietly", async () => {
 	const mock = createMockPi();
 	const environment: NodeJS.ProcessEnv = {
 		PI_FLEET_INVITE: formatInvite(createGroup(Buffer.alloc(32, 9)).secret),
@@ -149,7 +149,7 @@ test("child launch envelope is consumed, redacted, named, and joined after warni
 	assert.deepEqual(deps.transports[0]?.options.seenMessageIds, ["msg_previous_1234"]);
 	assert.equal(deps.transports[0]?.options.kickoffCapability, "kickoff_1234567890abcdef");
 	assert.equal(deps.transports[0]?.options.kickoffConsumed, true);
-	assert.match(context.notifications[0]?.message ?? "", /experimental/u);
+	assert.deepEqual(context.notifications, []);
 	assert.equal(mock.sessionName, "Child");
 	assert.deepEqual(mock.setModels, [inheritedModel]);
 	assert.deepEqual(mock.thinkingLevels, ["high"]);
@@ -172,7 +172,6 @@ test("reload hands membership only to the same session manager", async () => {
 	};
 	const context = createMockContext({ mode: "tui", hasUI: true, sessionManager });
 	await first.sessionStart({ reason: "startup" }, context.ctx);
-	assert.equal(await first.acceptExperimentalWarning(context.ctx), true);
 	await first.startNewGroup(context.ctx, false);
 	const groupId = firstDeps.transports[0]?.options.group.id;
 	await first.sessionShutdown({ reason: "reload" }, context.ctx);

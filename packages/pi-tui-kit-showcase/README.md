@@ -2,10 +2,6 @@
 
 [![private](https://img.shields.io/badge/npm-private-lightgrey)](./package.json) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-> [!WARNING]
-> Pi TUI Kit Showcase is experimental and private.
-> It is a local maintainer demo, not a published extension.
-
 This local maintainer demo previews the public `@narumitw/pi-tui-kit` screens and standalone interactions in one menu.
 
 All demo state stays in memory, and the showcase writes no settings.

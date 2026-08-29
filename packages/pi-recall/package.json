@@ -1,7 +1,7 @@
 {
 	"name": "@narumitw/pi-recall",
 	"version": "0.50.6",
-	"description": "Experimental Pi extension for saving and recalling messages across sessions.",
+	"description": "Pi extension for saving and recalling messages across sessions.",
 	"type": "module",
 	"license": "MIT",
 	"private": false,
@@ -26,7 +26,7 @@
 		]
 	},
 	"piExtension": {
-		"lifecycle": "experimental"
+		"lifecycle": "stable"
 	},
 	"scripts": {
 		"build": "node scripts/build-runtime.mjs",
