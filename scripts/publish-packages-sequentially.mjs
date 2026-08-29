@@ -10,18 +10,21 @@ export function publishPackagesSequentially({
 	cwd = process.cwd(),
 	changesetsOutput = process.env.CHANGESETS_OUTPUT,
 	publishFailuresFile = process.env.PUBLISH_FAILURES_FILE,
+	publishedPackagesFile = process.env.PUBLISHED_PACKAGES_FILE,
 	run = spawnSync,
 } = {}) {
-	if (!changesetsOutput || !publishFailuresFile) {
+	if (!changesetsOutput || !publishFailuresFile || !publishedPackagesFile) {
 		throw new Error(
-			"CHANGESETS_OUTPUT and PUBLISH_FAILURES_FILE are required by the release workflow.",
+			"CHANGESETS_OUTPUT, PUBLISH_FAILURES_FILE, and PUBLISHED_PACKAGES_FILE are required by the release workflow.",
 		);
 	}
 
 	mkdirSync(path.dirname(changesetsOutput), { recursive: true });
 	mkdirSync(path.dirname(publishFailuresFile), { recursive: true });
+	mkdirSync(path.dirname(publishedPackagesFile), { recursive: true });
 	writeFileSync(changesetsOutput, "");
 	writeFileSync(publishFailuresFile, "");
+	writeFileSync(publishedPackagesFile, "");
 
 	const temporaryDirectory = mkdtempSync(path.join(os.tmpdir(), "pi-publish-plan-"));
 	const planPath = path.join(temporaryDirectory, "publish-plan.json");
@@ -82,6 +85,7 @@ export function publishPackagesSequentially({
 
 				if (!result.error && result.status === 0) {
 					writeTagEvent(changesetsOutput, release, tag);
+					recordPublishedPackage(publishedPackagesFile, release);
 					published.push(tag);
 					continue;
 				}
@@ -154,6 +158,14 @@ function recordFailure(outputPath, release, reason) {
 	writeFileSync(
 		outputPath,
 		`${JSON.stringify({ packageName: release.name, version: release.version, reason })}\n`,
+		{ flag: "a" },
+	);
+}
+
+function recordPublishedPackage(outputPath, release) {
+	writeFileSync(
+		outputPath,
+		`${JSON.stringify({ packageName: release.name, version: release.version })}\n`,
 		{ flag: "a" },
 	);
 }
