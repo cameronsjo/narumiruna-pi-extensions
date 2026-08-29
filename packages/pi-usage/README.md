@@ -109,7 +109,7 @@ The `codexFastMode` preference defaults to Off.
 
 Fast currently applies only to official `openai-codex-responses` requests for `gpt-5.4`, `gpt-5.5`, `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna` at `https://chatgpt.com`.
 It sends `service_tier: "priority"` while enabled and explicit `service_tier: "default"` otherwise.
-The statusline adds `fast` only while the preference is effective, for example `codex fast 59% 5h`.
+The statusline adds `fast` only while the preference is effective, for example `codex fast 59% ↻ 2h30m` with the default reset countdown.
 Unsupported models and custom or proxy origins are left unchanged.
 
 `/fast` supports TUI and RPC mode, accepts no arguments, and rejects print or JSON mode before mutation.

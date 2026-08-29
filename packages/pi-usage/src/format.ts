@@ -362,13 +362,14 @@ function formatCodexStatusline(
 	for (const bucket of buckets) {
 		if (bucket.remaining === undefined) continue;
 		const percent = `${clampPercent(bucket.remaining).toFixed(0)}%`;
+		const fallback = bucket.id.endsWith(":secondary") ? "weekly" : "5h";
+		const window = formatWindowLabel(bucket.windowMinutes, fallback, true);
 		if (!showResetCountdown) {
-			const fallback = bucket.id.endsWith(":secondary") ? "weekly" : "5h";
-			parts.push(`${percent} ${formatWindowLabel(bucket.windowMinutes, fallback, true)}`);
+			parts.push(`${percent} ${window}`);
 			continue;
 		}
 		const reset = formatResetCountdown(bucket.resetsAt, now);
-		parts.push(`${percent}${reset ? ` ↻ ${reset}` : ""}`);
+		parts.push(`${percent} ${reset ? `↻ ${reset}` : window}`);
 	}
 	return parts.length > 1 ? parts.join(" ") : formatCodexCreditsStatus(report);
 }

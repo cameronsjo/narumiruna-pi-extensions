@@ -6,7 +6,7 @@ import {
 	setKeybindings,
 	TUI_KEYBINDINGS,
 } from "@earendil-works/pi-tui";
-import { test } from "vitest";
+import { test, vi } from "vitest";
 import { createMockContext, createMockPi } from "../../../test/support.js";
 import { OAUTH_CREDENTIAL_SOURCE_CHANNEL } from "../src/oauth-credential-source.js";
 import type { UsageSettingsRuntime, UsageSettingsState } from "../src/settings.js";
@@ -71,11 +71,12 @@ function memorySettingsRuntime(
 	xaiUsage = true,
 	failUpdates = false,
 	kind: UsageSettingsState["kind"] = "loaded",
+	codexStatusResetCountdown = false,
 ): { runtime: UsageSettingsRuntime; state: () => UsageSettingsState } {
 	let state: UsageSettingsState = {
 		kind,
 		path: "/tmp/pi-usage.json",
-		settings: { codexFastMode: false, codexStatusResetCountdown: false, xaiUsage },
+		settings: { codexFastMode: false, codexStatusResetCountdown, xaiUsage },
 		...(kind === "invalid"
 			? { issue: "invalid test settings" }
 			: { document: { codexFastMode: false, xaiUsage } }),
@@ -340,7 +341,7 @@ test("current Codex usage can redeem a selected reset and refresh account state"
 	});
 	assert.equal(new Headers(consume.init?.headers).get("chatgpt-account-id"), "account-123");
 	assert.ok(usageRequests >= 2);
-	assert.equal(statuses.get("usage"), "codex 100%");
+	assert.equal(statuses.get("usage"), "codex 100% 5h");
 	assert.match(titles.at(-1) ?? "", /Usage reset.*0 usage limit resets left/isu);
 });
 
@@ -1291,6 +1292,73 @@ test("session shutdown clears status through the shutdown context", async (t) =>
 	assert.equal(statuses.get("usage"), undefined);
 });
 
+test("Codex reset countdown repaints locally and stops across replacement and shutdown", async (t) => {
+	const originalFetch = globalThis.fetch;
+	vi.useFakeTimers();
+	t.onTestFinished(() => {
+		globalThis.fetch = originalFetch;
+		vi.useRealTimers();
+	});
+	const now = Date.parse("2026-08-29T00:00:00Z");
+	vi.setSystemTime(now);
+	let fetches = 0;
+	globalThis.fetch = async () => {
+		fetches += 1;
+		return new Response(
+			JSON.stringify({
+				rate_limit: {
+					primary_window: {
+						used_percent: 20,
+						limit_window_seconds: 18_000,
+						reset_at: (now + 150_000) / 1_000,
+					},
+				},
+			}),
+			{ status: 200 },
+		);
+	};
+	const settings = memorySettingsRuntime(false, false, "loaded", true);
+	const mock = createMockPi();
+	usageExtension(mock.pi, { settingsRuntime: settings.runtime });
+	const { ctx, statuses } = createMockContext({
+		model: codexModel,
+		modelRegistry: {
+			getProviderAuth: async () => ({ auth: { apiKey: codexToken } }),
+			getAvailable: () => [codexModel],
+			getAll: () => [codexModel],
+			getProviderAuthStatus: () => ({ configured: true }),
+			getProviderDisplayName: (provider: string) => provider,
+		},
+	});
+
+	mock.events.get("session_start")?.[0]?.({}, ctx);
+	await vi.advanceTimersByTimeAsync(0);
+	assert.equal(statuses.get("usage"), "codex 80% ↻ 3m");
+	assert.equal(fetches, 1);
+
+	await vi.advanceTimersByTimeAsync(60_000);
+	assert.equal(statuses.get("usage"), "codex 80% ↻ 2m");
+	assert.equal(fetches, 1);
+
+	Object.assign(ctx, { model: undefined });
+	mock.events.get("session_start")?.[0]?.({}, ctx);
+	await vi.advanceTimersByTimeAsync(60_000);
+	assert.equal(statuses.get("usage"), undefined);
+	assert.equal(fetches, 1);
+
+	Object.assign(ctx, { model: codexModel });
+	mock.events.get("model_select")?.[0]?.({ model: codexModel }, ctx);
+	await vi.advanceTimersByTimeAsync(0);
+	assert.equal(statuses.get("usage"), "codex 80% ↻ 1m");
+	assert.equal(fetches, 2);
+
+	mock.events.get("session_shutdown")?.[0]?.({}, ctx);
+	assert.equal(statuses.get("usage"), undefined);
+	await vi.advanceTimersByTimeAsync(60_000);
+	assert.equal(statuses.get("usage"), undefined);
+	assert.equal(fetches, 2);
+});
+
 test("a slow command cannot overwrite status after the selected model changes", async (t) => {
 	const originalFetch = globalThis.fetch;
 	t.onTestFinished(() => {
@@ -1336,11 +1404,11 @@ test("a slow command cannot overwrite status after the selected model changes", 
 	Object.assign(ctx, { model: codexModel });
 	mock.events.get("model_select")?.[0]?.({ model: codexModel }, ctx);
 	await settle();
-	assert.equal(statuses.get("usage"), "codex 80%");
+	assert.equal(statuses.get("usage"), "codex 80% 5h");
 
 	resolveSlowFetch(await usageFetch("https://openrouter.ai/api/v1/key"));
 	await commandPromise;
-	assert.equal(statuses.get("usage"), "codex 80%");
+	assert.equal(statuses.get("usage"), "codex 80% 5h");
 });
 
 test("statusline follows runtime auth changes and clears for unsupported selected providers", async (t) => {
