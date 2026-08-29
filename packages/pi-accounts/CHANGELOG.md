@@ -1,5 +1,11 @@
 # @narumitw/pi-accounts
 
+## 0.51.0
+
+### Minor Changes
+
+- f6b3000: Keep OAuth account selections local to each Pi session and restore them after resume or reload.
+
 ## 0.50.0
 
 ### Minor Changes
