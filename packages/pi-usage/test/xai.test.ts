@@ -66,9 +66,8 @@ function resolvedAuth(): ResolvedUsageAuth {
 	};
 }
 
-test("xAI is discovered by default and can be disabled through settings", () => {
+test("xAI is always registered for explicit usage actions", () => {
 	assert.equal(adapterForProvider("xai"), XAI_ADAPTER);
-	assert.equal(adapterForProvider("xai", false), undefined);
 });
 
 test("normalizes current credits while keeping allowance, on-demand, and prepaid values distinct", async () => {

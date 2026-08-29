@@ -5,7 +5,7 @@
 Inspect usage and DeepSeek API balance for Pi's active provider account, query other configured providers, and toggle Fast mode for supported OpenAI Codex models.
 
 The extension keeps each provider's native quota, allowance, and spending semantics instead of treating unlike values as equivalent.
-xAI OAuth subscription reporting defaults to On and follows the reviewed Grok Build contract.
+xAI OAuth subscription reporting follows the reviewed Grok Build contract and runs only after an explicit `/usage` action.
 
 ## ✨ Features
 
@@ -15,7 +15,7 @@ xAI OAuth subscription reporting defaults to On and follows the reviewed Grok Bu
 - Reports GitHub Copilot allowances and OpenRouter per-key limits and spending windows.
 - Reports exact DeepSeek API balances with separate CNY and USD values.
 - Reports OpenCode Go plan windows and Z.AI Coding Plan quotas.
-- Reports xAI OAuth subscription allowances and credits when enabled.
+- Reports xAI OAuth subscription allowances and credits.
 - Toggles persistent Codex Fast routing through `/fast` or the usage menu.
 - Redeems eligible Codex resets only after fresh account matching and explicit confirmation.
 - Refreshes one or all configured providers with bounded concurrency while preserving partial results.
@@ -89,7 +89,7 @@ Successful, already-completed, not-needed, and no-credit outcomes are reported s
 
 ## ⚙️ Settings
 
-Choose **Settings** in `/usage` to edit Codex Fast mode, the Codex reset countdown, and xAI usage through Pi's settings-list interaction in TUI mode.
+Choose **Settings** in `/usage` to edit Codex Fast mode and the Codex reset countdown through Pi's settings-list interaction in TUI mode.
 RPC mode reports the active manual settings path instead of opening terminal UI.
 
 These preferences live in `pi-usage.json` under Pi's user agent directory, normally `~/.pi/agent/pi-usage.json`.
@@ -127,22 +127,6 @@ Turn **Codex reset countdown** Off in the TUI Settings screen, or set it to `fal
   "codexStatusResetCountdown": false
 }
 ```
-
-### xAI usage
-
-The `xaiUsage` preference defaults to `true` when the settings file or field is absent.
-Turn it Off in the TUI Settings screen or edit the active user file manually, then run `/reload`:
-
-```json
-{
-  "xaiUsage": false
-}
-```
-
-While enabled, xAI is available only through explicit `/usage` current, configured-provider, or all-provider actions.
-It does not schedule xAI requests or publish xAI data to the statusline.
-The disabled, malformed, and invalid-settings states perform no xAI usage auth resolution or consumer requests.
-Turning it Off clears xAI cache state and prevents stale in-flight results from being published.
 
 ## 📋 Provider semantics
 
@@ -255,7 +239,7 @@ Other origins fail before the credential is sent.
 - Identity route: `GET https://cli-chat-proxy.grok.com/v1/user?include=subscription`
 - Billing route: `GET https://cli-chat-proxy.grok.com/v1/billing?format=credits`
 - Displayed data: included allowance or legacy monetary limit, period and reset, on-demand spend and cap, prepaid balance, and a sanitized optional plan tier
-- Statusline: not published; xAI is queried only through an explicit `/usage` action while xAI usage is enabled
+- Statusline: not published; xAI is queried only through an explicit `/usage` action
 
 The adapter accepts only the official Pi inference origin `https://api.x.ai` and a freshly resolved bearer that exactly matches one complete Pi OAuth credential.
 Pi's reviewed OAuth scope is `openid profile email offline_access grok-cli:access api:access`.
@@ -283,7 +267,7 @@ The implementation also sends the non-secret client headers present on both rout
 The sanitized identity shape contained a string `userId` and nullable `subscriptionTier`.
 The billing shape contained a `config` object with period and distinct on-demand and prepaid wrappers, without retaining field values.
 
-Disable `xaiUsage` to stop all xAI consumer usage traffic while preserving other provider behavior.
+xAI identity and billing requests occur only after an explicit current, configured-provider, or all-provider `/usage` action.
 
 ### Z.AI (GLM Coding Plan)
 

@@ -23,7 +23,7 @@ export async function showUsageSettings(
 	settingsRuntime: UsageSettingsRuntime,
 	parentSignal: AbortSignal,
 	isCurrent: () => boolean,
-	onApplied: (id: UsageSettingId, previous: boolean, next: boolean) => void,
+	onApplied: (id: UsageSettingId) => void,
 ): Promise<boolean> {
 	if (ctx.mode !== "tui") {
 		if (ctx.hasUI) ctx.ui.notify(`Edit settings manually: ${settingsRuntime.get().path}`, "info");
@@ -53,13 +53,6 @@ export async function showUsageSettings(
 				currentValue: state.settings.codexStatusResetCountdown ? ON : OFF,
 				values: [OFF, ON],
 			},
-			{
-				id: "xaiUsage",
-				label: "xAI usage",
-				description: "Report OAuth subscription allowance and credits.",
-				currentValue: state.kind !== "invalid" && state.settings.xaiUsage ? ON : OFF,
-				values: [OFF, ON],
-			},
 		];
 		const container = new Container();
 		container.addChild(new Text(theme.fg("accent", theme.bold("pi-usage Settings")), 1, 1));
@@ -82,8 +75,7 @@ export async function showUsageSettings(
 				saveQueue = saveQueue.then(async () => {
 					const previous = settingsRuntime.get().settings[settingId];
 					if (settingsRuntime.get().kind === "invalid") {
-						const effectivePrevious = settingId === "xaiUsage" ? false : previous;
-						settingsList.updateValue(id, displayValue(settingId, effectivePrevious));
+						settingsList.updateValue(id, displayValue(previous));
 						if (!signal.aborted && isCurrent()) {
 							ctx.ui.notify("Repair pi-usage.json and reload before changing settings.", "error");
 							tui.requestRender();
@@ -94,17 +86,17 @@ export async function showUsageSettings(
 						await settingsRuntime.update({ [settingId]: requested }, signal);
 					} catch (error) {
 						if (signal.aborted || !isCurrent()) return;
-						settingsList.updateValue(id, displayValue(settingId, previous));
+						settingsList.updateValue(id, displayValue(previous));
 						ctx.ui.notify(`Could not save pi-usage.json: ${errorMessage(error)}`, "error");
 						tui.requestRender();
 						return;
 					}
 					if (previous !== requested) {
 						changed = true;
-						onApplied(settingId, previous, requested);
+						onApplied(settingId);
 					}
 					if (signal.aborted || !isCurrent()) return;
-					settingsList.updateValue(id, displayValue(settingId, requested));
+					settingsList.updateValue(id, displayValue(requested));
 					tui.requestRender();
 				});
 			},
@@ -130,6 +122,6 @@ export async function showUsageSettings(
 	});
 }
 
-function displayValue(_id: UsageSettingId, enabled: boolean): string {
+function displayValue(enabled: boolean): string {
 	return enabled ? ON : OFF;
 }

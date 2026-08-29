@@ -245,15 +245,14 @@ export const XAI_ADAPTER: UsageProviderAdapter = {
 	},
 };
 
-export function usageAdapters(xaiUsage = true): readonly UsageProviderAdapter[] {
-	return xaiUsage ? [...SUPPORTED_ADAPTERS, XAI_ADAPTER] : SUPPORTED_ADAPTERS;
+export function usageAdapters(): readonly UsageProviderAdapter[] {
+	return [...SUPPORTED_ADAPTERS, XAI_ADAPTER];
 }
 
 export function adapterForProvider(
 	providerId: string | undefined,
-	xaiUsage = true,
 ): UsageProviderAdapter | undefined {
-	return usageAdapters(xaiUsage).find((adapter) => adapter.id === providerId);
+	return usageAdapters().find((adapter) => adapter.id === providerId);
 }
 
 export function isStaleExtensionContextError(error: unknown): boolean {
