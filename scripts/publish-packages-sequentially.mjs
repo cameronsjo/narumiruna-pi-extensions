@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,14 +9,19 @@ import { fileURLToPath } from "node:url";
 export function publishPackagesSequentially({
 	cwd = process.cwd(),
 	changesetsOutput = process.env.CHANGESETS_OUTPUT,
+	publishFailuresFile = process.env.PUBLISH_FAILURES_FILE,
 	run = spawnSync,
 } = {}) {
-	if (!changesetsOutput) {
-		throw new Error("CHANGESETS_OUTPUT is required by the Changesets Action.");
+	if (!changesetsOutput || !publishFailuresFile) {
+		throw new Error(
+			"CHANGESETS_OUTPUT and PUBLISH_FAILURES_FILE are required by the release workflow.",
+		);
 	}
 
 	mkdirSync(path.dirname(changesetsOutput), { recursive: true });
+	mkdirSync(path.dirname(publishFailuresFile), { recursive: true });
 	writeFileSync(changesetsOutput, "");
+	writeFileSync(publishFailuresFile, "");
 
 	const temporaryDirectory = mkdtempSync(path.join(os.tmpdir(), "pi-publish-plan-"));
 	const planPath = path.join(temporaryDirectory, "publish-plan.json");
@@ -32,8 +37,11 @@ export function publishPackagesSequentially({
 		if (planResult.status !== 0) return planResult.status ?? 1;
 
 		const plan = readPublishPlan(planPath);
+		const internalDependencies = readInternalDependencies(cwd);
+		const blockedPackages = new Set();
 		const published = [];
 		const failed = [];
+		const skipped = [];
 		const tagged = [];
 
 		for (const chunk of plan) {
@@ -42,6 +50,18 @@ export function publishPackagesSequentially({
 				if (release.kind === "tag-only") {
 					writeTagEvent(changesetsOutput, release, tag);
 					tagged.push(tag);
+					continue;
+				}
+
+				const blockers = [...(internalDependencies.get(release.name) ?? [])].filter((dependency) =>
+					blockedPackages.has(dependency),
+				);
+				if (blockers.length > 0) {
+					const reason = `blocked by failed release(s): ${blockers.join(", ")}`;
+					blockedPackages.add(release.name);
+					skipped.push(`${tag}: ${reason}`);
+					recordFailure(publishFailuresFile, release, reason);
+					writeErrorAnnotation(`Skipped dependent release ${tag}`, reason);
 					continue;
 				}
 
@@ -68,7 +88,9 @@ export function publishPackagesSequentially({
 
 				const reason =
 					result.error?.message ?? `npm publish exited with code ${result.status ?? 1}`;
+				blockedPackages.add(release.name);
 				failed.push(`${tag}: ${reason}`);
+				recordFailure(publishFailuresFile, release, reason);
 				writeErrorAnnotation(`Failed to publish ${tag}`, reason);
 			}
 		}
@@ -76,7 +98,8 @@ export function publishPackagesSequentially({
 		printSummary("Published", published);
 		printSummary("Tags to create", tagged);
 		printSummary("Failed", failed);
-		return failed.length > 0 ? 1 : 0;
+		printSummary("Skipped dependents", skipped);
+		return 0;
 	} finally {
 		rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
@@ -103,6 +126,36 @@ function readPublishPlan(planPath) {
 		}
 	}
 	return value.plan;
+}
+
+function readInternalDependencies(cwd) {
+	const manifests = readdirSync(path.join(cwd, "packages"), { withFileTypes: true })
+		.filter((entry) => entry.isDirectory())
+		.map((entry) =>
+			JSON.parse(readFileSync(path.join(cwd, "packages", entry.name, "package.json"), "utf8")),
+		);
+	const packageNames = new Set(manifests.map((manifest) => manifest.name));
+	return new Map(
+		manifests.map((manifest) => {
+			const runtimeDependencies = {
+				...manifest.peerDependencies,
+				...manifest.optionalDependencies,
+				...manifest.dependencies,
+			};
+			return [
+				manifest.name,
+				new Set(Object.keys(runtimeDependencies).filter((name) => packageNames.has(name))),
+			];
+		}),
+	);
+}
+
+function recordFailure(outputPath, release, reason) {
+	writeFileSync(
+		outputPath,
+		`${JSON.stringify({ packageName: release.name, version: release.version, reason })}\n`,
+		{ flag: "a" },
+	);
 }
 
 function writeTagEvent(outputPath, release, tag) {

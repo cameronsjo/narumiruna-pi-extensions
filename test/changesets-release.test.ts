@@ -115,8 +115,24 @@ test("sequential publishing reports a failure and continues with later packages"
 				[
 					{
 						kind: "publish",
+						name: "@fixture/pi-dependent",
+						version: "2.1.0",
+						access: "public",
+						tag: "latest",
+					},
+					{
+						kind: "publish",
 						name: "@fixture/pi-omega",
 						version: "3.0.0",
+						access: "public",
+						tag: "latest",
+					},
+				],
+				[
+					{
+						kind: "publish",
+						name: "@fixture/pi-transitive",
+						version: "3.1.0",
 						access: "public",
 						tag: "latest",
 					},
@@ -129,6 +145,27 @@ test("sequential publishing reports a failure and continues with later packages"
 			],
 		};
 		writeJson(path.join(fixture, "publish-plan.fixture.json"), plan);
+		writeJson(path.join(fixture, "packages/pi-alpha/package.json"), {
+			name: "@fixture/pi-alpha",
+		});
+		writeJson(path.join(fixture, "packages/pi-broken/package.json"), {
+			name: "@fixture/pi-broken",
+		});
+		writeJson(path.join(fixture, "packages/pi-dependent/package.json"), {
+			name: "@fixture/pi-dependent",
+			dependencies: { "@fixture/pi-broken": "^2.0.0" },
+		});
+		writeJson(path.join(fixture, "packages/pi-omega/package.json"), {
+			name: "@fixture/pi-omega",
+			devDependencies: { "@fixture/pi-broken": "^2.0.0" },
+		});
+		writeJson(path.join(fixture, "packages/pi-transitive/package.json"), {
+			name: "@fixture/pi-transitive",
+			peerDependencies: { "@fixture/pi-dependent": "^2.1.0" },
+		});
+		writeJson(path.join(fixture, "packages/pi-tag-only/package.json"), {
+			name: "@fixture/pi-tag-only",
+		});
 
 		const changesetsBin = path.join(fixture, "node_modules/@changesets/cli/bin.js");
 		mkdirSync(path.dirname(changesetsBin), { recursive: true });
@@ -158,6 +195,7 @@ test("sequential publishing reports a failure and continues with later packages"
 		);
 
 		const changesetsOutput = path.join(fixture, "changesets-output.ndjson");
+		const failuresPath = path.join(fixture, "publish-failures.ndjson");
 		const callsPath = path.join(fixture, "publish-calls.ndjson");
 		const script = path.join(repositoryRoot, "scripts/publish-packages-sequentially.mjs");
 		const result = spawnSync(process.execPath, [script], {
@@ -168,13 +206,22 @@ test("sequential publishing reports a failure and continues with later packages"
 				CHANGESETS_OUTPUT: changesetsOutput,
 				PATH: `${binDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
 				PUBLISH_CALLS: callsPath,
+				PUBLISH_FAILURES_FILE: failuresPath,
 			},
 		});
 
-		assert.equal(result.status, 1);
+		assert.equal(result.status, 0);
 		assert.match(
 			result.stderr,
 			/::error title=Failed to publish @fixture\/pi-broken@2\.0\.0::npm publish exited with code 17/u,
+		);
+		assert.match(
+			result.stderr,
+			/::error title=Skipped dependent release @fixture\/pi-dependent@2\.1\.0::blocked by failed release\(s\): @fixture\/pi-broken/u,
+		);
+		assert.match(
+			result.stderr,
+			/::error title=Skipped dependent release @fixture\/pi-transitive@3\.1\.0::blocked by failed release\(s\): @fixture\/pi-dependent/u,
 		);
 		assert.deepEqual(
 			readFileSync(callsPath, "utf8")
@@ -185,6 +232,29 @@ test("sequential publishing reports a failure and continues with later packages"
 				["publish", "--workspace", "@fixture/pi-alpha", "--access", "public", "--tag", "latest"],
 				["publish", "--workspace", "@fixture/pi-broken", "--access", "restricted", "--tag", "next"],
 				["publish", "--workspace", "@fixture/pi-omega", "--access", "public", "--tag", "latest"],
+			],
+		);
+		assert.deepEqual(
+			readFileSync(failuresPath, "utf8")
+				.trim()
+				.split("\n")
+				.map((line) => JSON.parse(line)),
+			[
+				{
+					packageName: "@fixture/pi-broken",
+					version: "2.0.0",
+					reason: "npm publish exited with code 17",
+				},
+				{
+					packageName: "@fixture/pi-dependent",
+					version: "2.1.0",
+					reason: "blocked by failed release(s): @fixture/pi-broken",
+				},
+				{
+					packageName: "@fixture/pi-transitive",
+					version: "3.1.0",
+					reason: "blocked by failed release(s): @fixture/pi-dependent",
+				},
 			],
 		);
 		assert.deepEqual(
@@ -213,6 +283,22 @@ test("sequential publishing reports a failure and continues with later packages"
 	} finally {
 		rmSync(fixture, { recursive: true, force: true });
 	}
+});
+
+test("publish workflow fails only after Changesets Action processes successful releases", () => {
+	const workflow = readFileSync(path.join(repositoryRoot, ".github/workflows/publish.yml"), "utf8");
+	const actionStep = workflow.indexOf("uses: changesets/action@");
+	const failureStep = workflow.indexOf("- name: Fail after package publication errors");
+
+	assert.notEqual(actionStep, -1);
+	assert.ok(failureStep > actionStep);
+	const failuresFilePattern =
+		/PUBLISH_FAILURES_FILE: \$\{\{ runner\.temp \}\}\/package-publish-failures\.ndjson/u;
+	assert.match(workflow.slice(actionStep, failureStep), failuresFilePattern);
+	assert.match(workflow.slice(failureStep), failuresFilePattern);
+	assert.match(workflow.slice(failureStep), /if: steps\.changesets\.outcome == 'success'/u);
+	assert.match(workflow.slice(failureStep), /if \[\[ -s "\$PUBLISH_FAILURES_FILE" \]\]; then/u);
+	assert.match(workflow.slice(failureStep), /exit 1/u);
 });
 
 function readJson(filePath: string): {

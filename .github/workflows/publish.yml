@@ -55,3 +55,14 @@ jobs:
           push-with-git-cli: false
         env:
           NPM_CONFIG_PROVENANCE: "true"
+          PUBLISH_FAILURES_FILE: ${{ runner.temp }}/package-publish-failures.ndjson
+
+      - name: Fail after package publication errors
+        if: steps.changesets.outcome == 'success'
+        env:
+          PUBLISH_FAILURES_FILE: ${{ runner.temp }}/package-publish-failures.ndjson
+        run: |
+          if [[ -s "$PUBLISH_FAILURES_FILE" ]]; then
+            echo "::error::One or more packages failed to publish or were skipped."
+            exit 1
+          fi
