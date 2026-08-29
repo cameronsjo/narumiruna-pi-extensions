@@ -966,7 +966,7 @@ test("activity handles UI prompts, tools, thinking, completed, and idle", () => 
 		["read", 2],
 		["bash", 1],
 	]);
-	assert.match(text({ activeTools }), /read×2\+1/);
+	assert.match(text({ activeTools }), /⚙️ read×2\+1/);
 	assert.match(text({ isStreaming: true, lastCompletedTool: undefined }), /thinking/);
 	assert.match(text({ lastCompletedTool: "bash" }), /completed bash/);
 	assert.match(text({ lastCompletedTool: undefined }), /idle/);

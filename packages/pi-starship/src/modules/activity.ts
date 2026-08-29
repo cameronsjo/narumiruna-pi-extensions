@@ -31,7 +31,7 @@ export const activityModule = defineModule({
 	variables: ["symbol", "state", "tool", "count", "kind", "title", "text"],
 	defaults: {
 		format: "[ $text ]($style)",
-		symbol: "⚙",
+		symbol: "⚙️",
 		style: "bold yellow",
 		disabled: false,
 	},

@@ -284,7 +284,7 @@ export function formatToolActivity(runtime: RuntimeState): string | undefined {
 	if (active.length > 0) {
 		const [name, count] = active[0] ?? ["tool", 1];
 		const suffix = count > 1 ? `×${count}` : active.length > 1 ? `+${active.length - 1}` : "";
-		return `⚙ ${name}${suffix}`;
+		return `⚙️ ${name}${suffix}`;
 	}
 
 	return runtime.isStreaming ? "💭 thinking" : undefined;
