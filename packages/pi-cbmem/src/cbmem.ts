@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { lstat } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -11,10 +10,17 @@ import type {
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "@earendil-works/pi-coding-agent";
 import { sanitizeTerminalText } from "@narumitw/pi-tui-kit/terminal-text";
 import {
+	type CodebaseMemorySessionRegistry,
 	type DaemonEnsurer,
 	ensureCodebaseMemoryDaemon,
-	registerDaemonLifecycle,
+	registerCodebaseMemoryLifecycle,
 } from "./daemon.js";
+import {
+	type CodebaseMemorySession,
+	type CodebaseMemorySessionFactory,
+	createCodebaseMemorySession,
+	type DaemonClientVerifier,
+} from "./mcp-session.js";
 import { renderCodebaseMemoryResult } from "./render-result.js";
 import { type BridgeToolDefinition, TOOL_DEFINITIONS, type ToolName } from "./tool-definitions.js";
 import {
@@ -29,169 +35,53 @@ import {
 export { TOOL_NAMES } from "./tool-definitions.js";
 
 const BIN = join(homedir(), ".local", "bin", "codebase-memory-mcp");
-const STDERR_MAX_BYTES = 8 * 1024;
-const FORCE_KILL_DELAY_MS = 250;
+const ERROR_MAX_BYTES = 8 * 1024;
 
 export interface CbmemToolDetails {
 	truncated: boolean;
 	totalBytes: number;
 	totalLines: number;
+	bridge: CodebaseMemorySession["bridge"];
 	projectResolution?: ProjectResolution;
 }
 
-class BoundedPrefixCollector {
-	readonly maxBytes: number;
-	text = "";
-	totalBytes = 0;
-	newlines = 0;
-	endsWithNewline = false;
-	truncated = false;
-
-	constructor(maxBytes: number) {
-		this.maxBytes = maxBytes;
-	}
-
-	append(chunk: string): void {
-		const chunkBytes = Buffer.byteLength(chunk, "utf8");
-		this.totalBytes += chunkBytes;
-		this.newlines += countOccurrences(chunk, "\n");
-		if (chunk.length > 0) this.endsWithNewline = chunk.endsWith("\n");
-
-		const remaining = this.maxBytes - Buffer.byteLength(this.text, "utf8");
-		if (remaining <= 0) {
-			if (chunkBytes > 0) this.truncated = true;
-			return;
-		}
-		const kept = takeUtf8Prefix(chunk, remaining, Number.POSITIVE_INFINITY);
-		this.text += kept;
-		if (kept.length !== chunk.length) this.truncated = true;
-	}
-
-	get totalLines(): number {
-		if (this.totalBytes === 0) return 0;
-		return this.newlines + (this.endsWithNewline ? 0 : 1);
-	}
-}
-
-class BoundedTailCollector {
-	readonly maxBytes: number;
-	text = "";
-	truncated = false;
-
-	constructor(maxBytes: number) {
-		this.maxBytes = maxBytes;
-	}
-
-	append(chunk: string): void {
-		this.text += chunk;
-		if (Buffer.byteLength(this.text, "utf8") <= this.maxBytes) return;
-		this.text = takeUtf8Suffix(this.text, this.maxBytes);
-		this.truncated = true;
-	}
-}
-
 export async function callCodebaseMemory(
+	session: CodebaseMemorySession,
 	tool: ToolName,
 	args: Record<string, unknown>,
 	signal: AbortSignal | undefined,
-	cwd: string,
-	binary = BIN,
 ): Promise<AgentToolResult<CbmemToolDetails>> {
 	signal?.throwIfAborted();
-	const input = JSON.stringify(args);
-
-	return await new Promise((resolve, reject) => {
-		const stdout = new BoundedPrefixCollector(DEFAULT_MAX_BYTES);
-		const stderr = new BoundedTailCollector(STDERR_MAX_BYTES);
-		const child = spawn(binary, ["cli", tool], {
-			cwd,
-			stdio: ["pipe", "pipe", "pipe"],
-			env: { ...process.env, CBM_LOG_LEVEL: "error" },
-		});
-		let settled = false;
-		let forceKillTimer: NodeJS.Timeout | undefined;
-
-		const cleanup = () => {
-			signal?.removeEventListener("abort", onAbort);
-			if (forceKillTimer) clearTimeout(forceKillTimer);
-		};
-		const fail = (error: unknown) => {
-			if (settled) return;
-			settled = true;
-			cleanup();
-			if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-			reject(error);
-		};
-		const succeed = (result: AgentToolResult<CbmemToolDetails>) => {
-			if (settled) return;
-			settled = true;
-			cleanup();
-			resolve(result);
-		};
-		const onAbort = () => {
-			if (child.exitCode !== null || child.signalCode !== null) return;
-			child.kill("SIGTERM");
-			forceKillTimer = setTimeout(() => {
-				if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-			}, FORCE_KILL_DELAY_MS);
-			forceKillTimer.unref();
-		};
-
-		signal?.addEventListener("abort", onAbort, { once: true });
-		if (signal?.aborted) onAbort();
-
-		child.stdout.setEncoding("utf8");
-		child.stderr.setEncoding("utf8");
-		child.stdout.on("data", (chunk: string) => stdout.append(chunk));
-		child.stderr.on("data", (chunk: string) => stderr.append(chunk));
-		child.stdout.on("error", fail);
-		child.stderr.on("error", fail);
-		child.stdin.on("error", () => {
-			// Spawn and exit errors are reported by the child process events below.
-		});
-		child.on("error", fail);
-		child.on("close", (code) => {
-			if (settled) return;
-			if (signal?.aborted) {
-				fail(abortReason(signal));
-				return;
-			}
-			if (code !== 0) {
-				fail(cliFailure(tool, code, stderr));
-				return;
-			}
-			if (stdout.truncated) {
-				fail(
-					new Error(
-						`codebase-memory-mcp ${tool} exceeded ${formatSize(DEFAULT_MAX_BYTES)} before a complete JSON response could be validated`,
-					),
-				);
-				return;
-			}
-
-			try {
-				const response = extractLastJson(stdout.text);
-				const bounded = boundOutput(response, stdout);
-				succeed({
-					content: [{ type: "text", text: bounded.text }],
-					details: {
-						truncated: bounded.truncated,
-						totalBytes: stdout.totalBytes,
-						totalLines: stdout.totalLines,
-					},
-				});
-			} catch (error) {
-				const diagnostic = stderr.text.trim();
-				const suffix = diagnostic ? `: ${diagnostic}` : "";
-				fail(
-					new Error(`codebase-memory-mcp ${tool} returned no JSON response${suffix}`, {
-						cause: error,
-					}),
-				);
-			}
-		});
-		child.stdin.end(input);
-	});
+	const response = await session.callTool(tool, args, signal);
+	signal?.throwIfAborted();
+	const text = mcpTextContent(response.content, tool);
+	if (response.isError) {
+		const diagnostic = sanitizeTerminalText(takeUtf8Prefix(text, ERROR_MAX_BYTES, 20).trim());
+		const suffix = diagnostic ? `: ${diagnostic}` : "";
+		throw new Error(`codebase-memory-mcp ${tool} failed${suffix}`);
+	}
+	const totalBytes = Buffer.byteLength(text, "utf8");
+	const totalLines = countLines(text);
+	if (totalBytes > DEFAULT_MAX_BYTES) {
+		throw new Error(
+			`codebase-memory-mcp ${tool} exceeded ${formatSize(DEFAULT_MAX_BYTES)} before a complete JSON response could be returned`,
+		);
+	}
+	try {
+		JSON.parse(text);
+	} catch (error) {
+		throw new Error(`codebase-memory-mcp ${tool} returned invalid JSON`, { cause: error });
+	}
+	const bounded = boundOutput(text, totalBytes, totalLines);
+	return {
+		content: [{ type: "text", text: bounded.text }],
+		details: {
+			truncated: bounded.truncated,
+			totalBytes,
+			totalLines,
+			bridge: response.bridge,
+		},
+	};
 }
 
 export default function cbmem(
@@ -199,23 +89,32 @@ export default function cbmem(
 	binary = BIN,
 	projectResolutionService = defaultProjectResolutionService,
 	ensureDaemon: DaemonEnsurer = ensureCodebaseMemoryDaemon,
+	createSession: CodebaseMemorySessionFactory = createCodebaseMemorySession,
+	verifyDaemonClient?: DaemonClientVerifier,
 ): void {
-	registerDaemonLifecycle(pi, binary, ensureDaemon);
+	const sessions = registerCodebaseMemoryLifecycle(
+		pi,
+		binary,
+		ensureDaemon,
+		createSession,
+		verifyDaemonClient,
+	);
 	for (const definition of TOOL_DEFINITIONS) {
-		registerBridgeTool(pi, definition, binary, projectResolutionService);
+		registerBridgeTool(pi, definition, sessions, projectResolutionService);
 	}
 }
 
 function registerBridgeTool(
 	pi: ExtensionAPI,
 	definition: BridgeToolDefinition,
-	binary: string,
+	sessions: CodebaseMemorySessionRegistry,
 	projectResolutionService: ProjectResolutionService,
 ): void {
 	pi.registerTool({
 		...definition,
 		renderResult: renderCodebaseMemoryResult,
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			const session = sessions.get(ctx.sessionManager);
 			const tool = definition.name as ToolName;
 			let args = params as Record<string, unknown>;
 			let resolution: ProjectResolution | undefined;
@@ -224,7 +123,7 @@ function registerBridgeTool(
 				queryArgs: Record<string, unknown>,
 				querySignal: AbortSignal | undefined,
 			): Promise<unknown> => {
-				const result = await callCodebaseMemory(queryTool, queryArgs, querySignal, ctx.cwd, binary);
+				const result = await callCodebaseMemory(session, queryTool, queryArgs, querySignal);
 				querySignal?.throwIfAborted();
 				return parseJsonResult(result, queryTool);
 			};
@@ -242,7 +141,7 @@ function registerBridgeTool(
 
 			await confirmDestructiveCall(tool, args, signal, ctx);
 			signal?.throwIfAborted();
-			let result = await callCodebaseMemory(tool, args, signal, ctx.cwd, binary);
+			let result = await callCodebaseMemory(session, tool, args, signal);
 			signal?.throwIfAborted();
 			if (!resolution) return result;
 			if (resolution.kind === "borrowed" && tool === "get_code_snippet") {
@@ -462,39 +361,34 @@ function safeArgument(value: unknown, fallback: string): string {
 	return sanitizeTerminalText(value) || fallback;
 }
 
-function extractLastJson(output: string): string {
-	const trimmed = output.trim();
-	if (!trimmed) throw new Error("empty stdout");
-	try {
-		JSON.parse(trimmed);
-		return trimmed;
-	} catch {
-		const lines = trimmed.split("\n");
-		for (let index = lines.length - 1; index >= 0; index--) {
-			const line = lines[index].trim();
-			if (!line) continue;
-			try {
-				JSON.parse(line);
-				return line;
-			} catch {
-				// Keep scanning for the last complete JSON response.
-			}
-		}
-		throw new Error("stdout did not contain JSON");
+function mcpTextContent(content: unknown, tool: ToolName): string {
+	if (!Array.isArray(content) || content.length === 0) {
+		throw new Error(`codebase-memory-mcp ${tool} returned no MCP content`);
 	}
+	const text: string[] = [];
+	for (const item of content) {
+		if (
+			!item ||
+			typeof item !== "object" ||
+			Array.isArray(item) ||
+			(item as { type?: unknown }).type !== "text" ||
+			typeof (item as { text?: unknown }).text !== "string"
+		) {
+			throw new Error(`codebase-memory-mcp ${tool} returned unsupported MCP content`);
+		}
+		text.push((item as { text: string }).text);
+	}
+	return text.join("\n");
 }
 
 function boundOutput(
 	text: string,
-	collector: BoundedPrefixCollector,
+	totalBytes: number,
+	totalLines: number,
 ): { text: string; truncated: boolean } {
-	const textBytes = Buffer.byteLength(text, "utf8");
-	const textLines = countLines(text);
-	const truncated =
-		collector.truncated || textBytes > DEFAULT_MAX_BYTES || textLines > DEFAULT_MAX_LINES;
-	if (!truncated) return { text, truncated: false };
+	if (totalLines <= DEFAULT_MAX_LINES) return { text, truncated: false };
 
-	const notice = `[Output truncated: Codebase Memory produced ${collector.totalLines} lines (${formatSize(collector.totalBytes)}); additional output was omitted.]`;
+	const notice = `[Output truncated: Codebase Memory produced ${totalLines} lines (${formatSize(totalBytes)}); additional output was omitted.]`;
 	const separator = "\n";
 	const body = takeUtf8Prefix(
 		text,
@@ -505,19 +399,6 @@ function boundOutput(
 		text: body ? `${body}${body.endsWith("\n") ? "" : separator}${notice}` : notice,
 		truncated: true,
 	};
-}
-
-function cliFailure(tool: ToolName, code: number | null, stderr: BoundedTailCollector): Error {
-	const diagnostic = stderr.text.trim();
-	const truncation = stderr.truncated ? "[earlier stderr omitted] " : "";
-	const suffix = diagnostic ? `: ${truncation}${diagnostic}` : "";
-	return new Error(`codebase-memory-mcp ${tool} exited with code ${code ?? "unknown"}${suffix}`);
-}
-
-function abortReason(signal: AbortSignal): unknown {
-	return signal.reason instanceof Error
-		? signal.reason
-		: new DOMException("Codebase Memory tool call was aborted", "AbortError");
 }
 
 function takeUtf8Prefix(text: string, maxBytes: number, maxLines: number): string {
@@ -533,19 +414,6 @@ function takeUtf8Prefix(text: string, maxBytes: number, maxLines: number): strin
 		lines = nextLines;
 	}
 	return result;
-}
-
-function takeUtf8Suffix(text: string, maxBytes: number): string {
-	let bytes = 0;
-	const characters = Array.from(text);
-	let start = characters.length;
-	while (start > 0) {
-		const characterBytes = Buffer.byteLength(characters[start - 1], "utf8");
-		if (bytes + characterBytes > maxBytes) break;
-		bytes += characterBytes;
-		start--;
-	}
-	return characters.slice(start).join("");
 }
 
 function countOccurrences(text: string, character: string): number {

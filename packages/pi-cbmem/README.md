@@ -2,13 +2,13 @@
 
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-cbmem)](https://www.npmjs.com/package/@narumitw/pi-cbmem) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-Connect Pi to the local Codebase Memory CLI and give the model graph-first operating guidance.
+Connect Pi to the local Codebase Memory daemon through a persistent MCP stdio session and give the model graph-first operating guidance.
 
 ## ✨ Features
 
 - Registers 15 Codebase Memory tools for graph queries, search, indexing, coverage, tracing, and architecture.
 - Detects the local Codebase Memory daemon when a Pi session starts and starts a permanent daemon when needed.
-- Runs the local `codebase-memory-mcp` CLI with cancellation, failure reporting, and bounded output.
+- Opens one verified daemon-backed MCP stdio session per Pi session with request cancellation, failure reporting, and bounded output.
 - Bundles the `codebase-memory` skill for graph-first, evidence-tier workflows.
 - Resolves `@current` to an exact current-root index or a matching clean canonical-checkout graph for approved read tools.
 - Loads the extension and skill from one package.
@@ -81,10 +81,11 @@ The extension registers these tools:
 - `manage_adr`
 - `ingest_traces`
 
-Each tool sends JSON arguments to `codebase-memory-mcp cli <tool>` over standard input and returns the final JSON response from standard output.
+Each tool sends its arguments through MCP `tools/call` on the Pi session's persistent `codebase-memory-mcp` stdio child.
+The extension verifies at startup that the child PID is a committed client of the active account daemon before exposing a ready session.
 Validated JSON longer than 2,000 lines is truncated with an omission notice.
-Standard output over 50 KB fails because the extension cannot validate a complete JSON response within its capture limit.
-Spawn failures, nonzero exits, oversized output, and missing JSON responses fail the tool call.
+MCP text content over 50 KB fails before partial structured output can be returned.
+MCP protocol failures, tool errors, oversized output, unsupported content, and invalid JSON fail the tool call.
 
 ## 🔒 Security and privacy
 
@@ -95,15 +96,18 @@ Repository content returned by graph tools can be sent to the selected model pro
 Terminal controls are removed at the TUI display boundary, while the validated raw result remains available to the model.
 Extension factory loading starts no background work.
 Session startup runs bounded `daemon status` and, when needed, `daemon start` control processes in the active session directory.
+It then starts one MCP stdio child in that directory, completes the MCP initialize handshake, and verifies the child under the daemon's committed client list.
 The permanent account-scoped daemon survives Pi session replacement and shutdown until the user runs `codebase-memory-mcp daemon stop`.
-Session replacement and shutdown cancel and await any in-flight daemon control process but do not stop the permanent daemon.
-Each tool call starts one local CLI child process in the active session directory.
-Cancelling the tool call terminates that child process.
+Session replacement and shutdown cancel startup, close the session's MCP child, and await cleanup without stopping the permanent daemon.
+Cancelling one tool call sends MCP request cancellation without terminating the session or unrelated calls.
+A closed or failed MCP session does not fall back to one-shot CLI execution because that would make transport behavior ambiguous.
+Run `/reload` to create a new verified MCP session after a binary, daemon, or stdio failure.
 
 ## 🚧 Limitations
 
-- The package requires a current `~/.local/bin/codebase-memory-mcp` with the public daemon control commands for the current user.
+- The package requires a current `~/.local/bin/codebase-memory-mcp` with daemon control commands, no-argument MCP stdio mode, and committed-client PID reporting for the current user.
 - It does not install or update the Codebase Memory binary, and it does not stop the permanent daemon.
+- It does not reconnect automatically inside a failed Pi session; use `/reload` after correcting the underlying problem.
 - Static tool schemas match the bundled skill, while the installed CLI performs final argument validation.
 - Worktree base reuse requires an exact clean snapshot and does not cover branch changes, dirty files, source-code search, change detection, index mutation, project forking, or overlays.
 
@@ -116,8 +120,9 @@ packages/pi-cbmem/
 │   └── build-runtime.mjs           # Deterministic runtime builder and validator
 ├── src/
 │   ├── index.ts                    # Thin Pi entrypoint
-│   ├── cbmem.ts                    # Bounded Codebase Memory CLI runner
-│   ├── daemon.ts                   # Session-start daemon detection and startup
+│   ├── cbmem.ts                    # Bounded Pi-to-MCP tool adapter
+│   ├── daemon.ts                   # Daemon control and session lifecycle
+│   ├── mcp-session.ts              # Persistent verified MCP stdio client
 │   ├── render-result.ts            # Terminal-safe result rendering
 │   ├── tool-definitions.ts         # Pi tool metadata and TypeBox schemas
 │   └── worktree-project.ts         # Safe current-worktree project resolution
@@ -125,7 +130,9 @@ packages/pi-cbmem/
 │   └── SKILL.md                    # Graph-first operating guidance
 ├── test/
 │   ├── build-runtime.test.ts       # Generated-runtime and Jiti loader coverage
-│   └── cbmem.test.ts               # Tool registration coverage
+│   ├── cbmem.test.ts               # Tool and lifecycle coverage
+│   ├── mcp-session.test.ts         # MCP protocol and process coverage
+│   └── worktree-project.test.ts    # Worktree resolution coverage
 ├── package.json                    # Pi extension and skill declarations
 ├── tsconfig.json
 ├── README.md

@@ -52,7 +52,9 @@
 		"typescript": "7.0.2"
 	},
 	"dependencies": {
-		"@narumitw/pi-tui-kit": "^0.59.0"
+		"@modelcontextprotocol/sdk": "^1.30.0",
+		"@narumitw/pi-tui-kit": "^0.59.0",
+		"zod": "^4.5.4"
 	},
 	"repository": {
 		"type": "git",

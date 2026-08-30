@@ -1,6 +1,12 @@
 import { execFile } from "node:child_process";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { sanitizeTerminalText } from "@narumitw/pi-tui-kit/terminal-text";
+import {
+	type CodebaseMemorySession,
+	type CodebaseMemorySessionFactory,
+	createCodebaseMemorySession,
+	type DaemonClientVerifier,
+} from "./mcp-session.js";
 
 const COMMAND_TIMEOUT_MS = 15_000;
 const FORCE_KILL_DELAY_MS = 250;
@@ -16,6 +22,8 @@ interface DaemonSessionLifecycle {
 	generation: number;
 	controller?: AbortController;
 	startup?: Promise<void>;
+	session?: CodebaseMemorySession;
+	failure?: Error;
 }
 
 export interface DaemonEnsureResult {
@@ -27,6 +35,10 @@ export type DaemonEnsurer = (
 	cwd: string,
 	signal: AbortSignal,
 ) => Promise<DaemonEnsureResult>;
+
+export interface CodebaseMemorySessionRegistry {
+	get(sessionManager: ExtensionContext["sessionManager"]): CodebaseMemorySession;
+}
 
 export async function ensureCodebaseMemoryDaemon(
 	binary: string,
@@ -44,11 +56,29 @@ export async function ensureCodebaseMemoryDaemon(
 	return { started: true };
 }
 
-export function registerDaemonLifecycle(
+export async function verifyCodebaseMemoryDaemonClient(
+	binary: string,
+	cwd: string,
+	pid: number,
+	signal: AbortSignal,
+): Promise<void> {
+	signal.throwIfAborted();
+	const status = await runDaemonCommand(binary, ["daemon", "status"], cwd, signal);
+	signal.throwIfAborted();
+	if (status.code !== 0) throw commandFailure("status", status);
+	const committedPids = daemonClientPids(status.stdout);
+	if (!committedPids.has(pid)) {
+		throw new Error(`Codebase Memory MCP child ${pid} is not committed to the active daemon`);
+	}
+}
+
+export function registerCodebaseMemoryLifecycle(
 	pi: ExtensionAPI,
 	binary: string,
 	ensureDaemon: DaemonEnsurer = ensureCodebaseMemoryDaemon,
-): void {
+	createSession: CodebaseMemorySessionFactory = createCodebaseMemorySession,
+	verifyDaemonClient: DaemonClientVerifier = verifyCodebaseMemoryDaemonClient,
+): CodebaseMemorySessionRegistry {
 	const sessions = new WeakMap<ExtensionContext["sessionManager"], DaemonSessionLifecycle>();
 
 	pi.on("session_start", async (_event, ctx) => {
@@ -57,8 +87,13 @@ export function registerDaemonLifecycle(
 		sessions.set(sessionManager, lifecycle);
 		const currentGeneration = ++lifecycle.generation;
 		const previousStartup = lifecycle.startup;
+		const previousSession = lifecycle.session;
 		lifecycle.controller?.abort(abortError("Codebase Memory session replaced"));
+		lifecycle.controller = undefined;
+		lifecycle.session = undefined;
+		lifecycle.failure = undefined;
 		if (previousStartup) await previousStartup.catch(() => undefined);
+		if (previousSession) await previousSession.close();
 		if (sessions.get(sessionManager) !== lifecycle || currentGeneration !== lifecycle.generation) {
 			return;
 		}
@@ -68,14 +103,25 @@ export function registerDaemonLifecycle(
 		let startup!: Promise<void>;
 		startup = (async () => {
 			try {
-				const result = await ensureDaemon(binary, ctx.cwd, controller.signal);
+				const daemon = await ensureDaemon(binary, ctx.cwd, controller.signal);
 				if (controller.signal.aborted || currentGeneration !== lifecycle.generation) return;
-				if (result.started && ctx.hasUI) {
+				const session = await createSession(binary, ctx.cwd, controller.signal, verifyDaemonClient);
+				if (
+					controller.signal.aborted ||
+					currentGeneration !== lifecycle.generation ||
+					sessions.get(sessionManager) !== lifecycle
+				) {
+					await session.close();
+					return;
+				}
+				lifecycle.session = session;
+				if (daemon.started && ctx.hasUI) {
 					ctx.ui.notify("Started the Codebase Memory daemon.", "info");
 				}
 			} catch (error) {
 				if (controller.signal.aborted || currentGeneration !== lifecycle.generation) return;
-				const failure = daemonStartupFailure(error);
+				const failure = sessionStartupFailure(error);
+				lifecycle.failure = failure;
 				if (!ctx.hasUI) throw failure;
 				ctx.ui.notify(failure.message, "warning");
 			} finally {
@@ -99,14 +145,32 @@ export function registerDaemonLifecycle(
 		if (!lifecycle) return;
 		const shutdownGeneration = ++lifecycle.generation;
 		const startup = lifecycle.startup;
+		const session = lifecycle.session;
 		lifecycle.controller?.abort(abortError("Codebase Memory session shut down"));
+		lifecycle.controller = undefined;
+		lifecycle.session = undefined;
 		if (startup) await startup.catch(() => undefined);
+		if (session) await session.close();
 		if (sessions.get(sessionManager) === lifecycle && shutdownGeneration === lifecycle.generation) {
 			sessions.delete(sessionManager);
-			lifecycle.controller = undefined;
 			lifecycle.startup = undefined;
+			lifecycle.failure = undefined;
 		}
 	});
+
+	return {
+		get(sessionManager) {
+			const lifecycle = sessions.get(sessionManager);
+			if (lifecycle?.session) return lifecycle.session;
+			if (lifecycle?.failure) {
+				throw new Error(
+					`${lifecycle.failure.message} Run /reload to retry the Codebase Memory MCP session.`,
+					{ cause: lifecycle.failure },
+				);
+			}
+			throw new Error("Codebase Memory MCP session is not ready; run /reload to reconnect");
+		},
+	};
 }
 
 function runDaemonCommand(
@@ -177,6 +241,15 @@ function runDaemonCommand(
 	});
 }
 
+function daemonClientPids(output: string): Set<number> {
+	const pids = new Set<number>();
+	for (const match of output.matchAll(/^\s*-\s+pid\s+(\d+)\s*$/gmu)) {
+		const pid = Number(match[1]);
+		if (Number.isSafeInteger(pid) && pid > 0) pids.add(pid);
+	}
+	return pids;
+}
+
 function commandFailure(command: string, result: CommandResult): Error {
 	const diagnostic = sanitizeTerminalText(result.stderr.trim() || result.stdout.trim());
 	const suffix = diagnostic ? `: ${diagnostic}` : "";
@@ -185,9 +258,9 @@ function commandFailure(command: string, result: CommandResult): Error {
 	);
 }
 
-function daemonStartupFailure(error: unknown): Error {
+function sessionStartupFailure(error: unknown): Error {
 	const detail = sanitizeTerminalText(error instanceof Error ? error.message : String(error));
-	return new Error(`Could not start the Codebase Memory daemon: ${detail}`, { cause: error });
+	return new Error(`Could not start the Codebase Memory session: ${detail}`, { cause: error });
 }
 
 function abortError(message: string): DOMException {

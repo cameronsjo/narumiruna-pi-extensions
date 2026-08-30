@@ -53,6 +53,8 @@ async function loadBuilder(): Promise<RuntimeBuilder> {
 function validMetadata(): BuildMetadata {
 	const entryImports: Array<{ external?: boolean; kind?: string; path: string }> = [
 		{ path: "@earendil-works/pi-coding-agent", kind: "import-statement", external: true },
+		{ path: "@modelcontextprotocol/sdk/client/index.js", kind: "import-statement", external: true },
+		{ path: "@modelcontextprotocol/sdk/client/stdio.js", kind: "import-statement", external: true },
 		{ path: "@narumitw/pi-tui-kit/terminal-text", kind: "import-statement", external: true },
 	];
 	const outputs: NonNullable<BuildMetadata["outputs"]> = {
