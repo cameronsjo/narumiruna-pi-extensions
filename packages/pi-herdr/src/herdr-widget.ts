@@ -240,15 +240,15 @@ function stateStyle(theme: Theme, state: HerdrAgentStatus, text: string): string
 function stateSymbol(state: HerdrAgentStatus): string {
 	switch (state) {
 		case "blocked":
-			return "!";
+			return "×";
 		case "done":
 			return "✓";
 		case "working":
-			return "●";
+			return "◐";
 		case "idle":
 			return "○";
 		case "unknown":
-			return "?";
+			return "·";
 	}
 }
 

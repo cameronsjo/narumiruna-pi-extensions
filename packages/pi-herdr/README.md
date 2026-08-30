@@ -69,6 +69,7 @@ Session shutdown aborts in-flight reporting and prevents stale session work from
 
 The widget lists only recognized agents in the current Herdr workspace and excludes the pane running the current Pi session.
 Each row presents state, agent, pane, and workspace in that order, using theme hierarchy instead of repeating field labels.
+State icons follow Herdr's distinct static symbols: `×` blocked, `◐` working, `✓` done, `○` idle, and `·` unknown.
 Agent identity prefers the name assigned by `herdr agent rename`, then Herdr display metadata, and finally the detected agent kind.
 Pane identity uses its label or metadata title with a short pane ID, while workspace identity uses its label with a short workspace ID.
 Terminal titles are not used as agent identity.

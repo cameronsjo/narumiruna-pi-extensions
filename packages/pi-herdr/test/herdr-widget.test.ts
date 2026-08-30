@@ -204,6 +204,53 @@ test("tracks moved current panes plus agent detection, release, and exit", () =>
 	assert.equal(model.snapshot(), undefined);
 });
 
+test("renders Herdr's distinct static symbol for every agent state", () => {
+	const theme = {
+		bold: (text: string) => text,
+		fg: (_role: string, text: string) => text,
+	} as Theme;
+	const widget = createHerdrWidget(
+		{
+			totalAgents: 5,
+			hiddenAgents: 0,
+			rows: [
+				{
+					agent: "a",
+					pane: "p1",
+					paneId: "w1:p1",
+					space: "w1",
+					state: "blocked",
+					stateLabel: "blocked",
+				},
+				{
+					agent: "b",
+					pane: "p2",
+					paneId: "w1:p2",
+					space: "w1",
+					state: "working",
+					stateLabel: "working",
+				},
+				{ agent: "c", pane: "p3", paneId: "w1:p3", space: "w1", state: "done", stateLabel: "done" },
+				{ agent: "d", pane: "p4", paneId: "w1:p4", space: "w1", state: "idle", stateLabel: "idle" },
+				{
+					agent: "e",
+					pane: "p5",
+					paneId: "w1:p5",
+					space: "w1",
+					state: "unknown",
+					stateLabel: "unknown",
+				},
+			],
+		},
+		theme,
+	);
+
+	const rendered = widget.render(80).join("\n");
+	for (const state of ["× blocked", "◐ working", "✓ done", "○ idle", "· unknown"]) {
+		assert.ok(rendered.includes(state), `missing ${state}`);
+	}
+});
+
 test("sanitizes before sorting and renders terminal-width-safe themed rows", () => {
 	const model = new HerdrWidgetModel();
 	model.reset(
