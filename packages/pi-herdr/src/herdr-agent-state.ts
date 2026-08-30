@@ -1,6 +1,14 @@
 import path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createBestEffortSender, type HerdrRequest } from "./herdr-client.js";
+import {
+	createHerdrMetadataClearSnapshot,
+	createHerdrMetadataRequest,
+	createHerdrMetadataSnapshot,
+	HERDR_METADATA_REFRESH_MS,
+	type HerdrMetadataSnapshot,
+	herdrMetadataSnapshotsEqual,
+} from "./herdr-metadata.js";
 import { createHerdrWidgetObserver, type HerdrWidgetObserver } from "./herdr-observer.js";
 
 const SOURCE = "herdr:pi";
@@ -18,6 +26,13 @@ interface QueuedState {
 	message?: string;
 	seq: number;
 	signal: AbortSignal;
+}
+
+interface QueuedMetadata {
+	snapshot: HerdrMetadataSnapshot;
+	seq: number;
+	signal: AbortSignal;
+	generation: number;
 }
 
 export interface HerdrAgentStateOptions {
@@ -77,6 +92,7 @@ export function createHerdrAgentStateExtension(
 
 		let sessionGeneration = 0;
 		let sessionController = new AbortController();
+		let activeSession: ExtensionContext["sessionManager"] | undefined;
 		let currentAgentSessionId: string | undefined;
 		let currentAgentSessionPath: string | undefined;
 		let agentActive = false;
@@ -87,6 +103,13 @@ export function createHerdrAgentStateExtension(
 		let rootSession = false;
 		let queuedState: QueuedState | undefined;
 		let drainTask: Promise<void> | undefined;
+		let queuedMetadata: QueuedMetadata | undefined;
+		let metadataDrainTask: Promise<void> | undefined;
+		let lastMetadataSnapshot: HerdrMetadataSnapshot | undefined;
+		let metadataRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+		let shutdownClearController: AbortController | undefined;
+		let shutdownSession: ExtensionContext["sessionManager"] | undefined;
+		let shutdownTask: Promise<void> | undefined;
 
 		function requestId(kind?: "session"): string {
 			const segment = kind ? `${kind}:` : "";
@@ -163,6 +186,38 @@ export function createHerdrAgentStateExtension(
 			};
 		}
 
+		function readMetadataSnapshot(ctx: ExtensionContext): HerdrMetadataSnapshot {
+			let session: string | undefined;
+			let contextUsagePercent: number | null | undefined;
+			try {
+				session = pi.getSessionName();
+			} catch {
+				// Metadata is best-effort and optional Pi fields can be unavailable.
+			}
+			try {
+				contextUsagePercent = ctx.getContextUsage()?.percent;
+			} catch {
+				// Clear unknown usage instead of retaining a stale percentage.
+			}
+			return createHerdrMetadataSnapshot({
+				model: ctx.model?.id,
+				provider: ctx.model?.provider,
+				thinking: ctx.thinkingLevel,
+				session,
+				contextUsagePercent,
+			});
+		}
+
+		function metadataRequest(metadata: QueuedMetadata): HerdrRequest {
+			return createHerdrMetadataRequest({
+				id: requestId(),
+				paneId: environment.paneId,
+				source: SOURCE,
+				seq: metadata.seq,
+				snapshot: metadata.snapshot,
+			});
+		}
+
 		async function drainStateQueue(): Promise<void> {
 			while (queuedState) {
 				const next = queuedState;
@@ -185,6 +240,65 @@ export function createHerdrAgentStateExtension(
 			});
 		}
 
+		async function drainMetadataQueue(): Promise<void> {
+			while (queuedMetadata) {
+				const next = queuedMetadata;
+				queuedMetadata = undefined;
+				if (next.signal.aborted || next.generation !== sessionGeneration || !rootSession) {
+					continue;
+				}
+				await safeSend(metadataRequest(next), next.signal);
+			}
+		}
+
+		function startMetadataDrain(): void {
+			if (metadataDrainTask) return;
+			metadataDrainTask = drainMetadataQueue().finally(() => {
+				metadataDrainTask = undefined;
+				if (queuedMetadata) startMetadataDrain();
+			});
+		}
+
+		function scheduleMetadataRefresh(generation: number): void {
+			if (metadataRefreshTimer) clearTimeout(metadataRefreshTimer);
+			metadataRefreshTimer = setTimeout(() => {
+				metadataRefreshTimer = undefined;
+				if (
+					generation !== sessionGeneration ||
+					sessionController.signal.aborted ||
+					!rootSession ||
+					!lastMetadataSnapshot
+				) {
+					return;
+				}
+				queueMetadata(lastMetadataSnapshot, true);
+			}, HERDR_METADATA_REFRESH_MS);
+			metadataRefreshTimer.unref?.();
+		}
+
+		function queueMetadata(snapshot: HerdrMetadataSnapshot, force = false): void {
+			if (!rootSession || sessionController.signal.aborted) return;
+			if (!force && herdrMetadataSnapshotsEqual(lastMetadataSnapshot, snapshot)) return;
+			lastMetadataSnapshot = snapshot;
+			queuedMetadata = {
+				snapshot,
+				seq: nextReportSeq(),
+				signal: sessionController.signal,
+				generation: sessionGeneration,
+			};
+			scheduleMetadataRefresh(sessionGeneration);
+			startMetadataDrain();
+		}
+
+		function owns(ctx: ExtensionContext): boolean {
+			return rootSession && ctx.sessionManager === activeSession;
+		}
+
+		function publishMetadata(ctx: ExtensionContext): void {
+			if (!owns(ctx)) return;
+			queueMetadata(readMetadataSnapshot(ctx));
+		}
+
 		function desiredState(): { state: AgentState; message?: string } {
 			if (blockedCount > 0) return { state: "blocked", message: blockedMessage };
 			if (agentActive) return { state: "working" };
@@ -199,15 +313,15 @@ export function createHerdrAgentStateExtension(
 			queueState(next.state, next.message);
 		}
 
-		pi.on("ui_prompt_start", (event) => {
-			if (!rootSession) return;
+		pi.on("ui_prompt_start", (event, ctx) => {
+			if (!owns(ctx)) return;
 			blockedCount += 1;
 			blockedMessage = event.title?.trim() || event.kind;
 			publishState();
 		});
 
-		pi.on("ui_prompt_end", () => {
-			if (!rootSession) return;
+		pi.on("ui_prompt_end", (_event, ctx) => {
+			if (!owns(ctx)) return;
 			blockedCount = Math.max(0, blockedCount - 1);
 			if (blockedCount === 0) blockedMessage = undefined;
 			publishState();
@@ -215,8 +329,16 @@ export function createHerdrAgentStateExtension(
 
 		pi.on("session_start", async (event, ctx) => {
 			const generation = ++sessionGeneration;
-			sessionController.abort(new DOMException("Herdr session replaced", "AbortError"));
+			const replaced = new DOMException("Herdr session replaced", "AbortError");
+			sessionController.abort(replaced);
+			shutdownClearController?.abort(replaced);
+			shutdownClearController = undefined;
+			if (metadataRefreshTimer) clearTimeout(metadataRefreshTimer);
+			metadataRefreshTimer = undefined;
+			queuedMetadata = undefined;
+			lastMetadataSnapshot = undefined;
 			sessionController = new AbortController();
+			activeSession = ctx.sessionManager;
 			rootSession = ctx.mode === "tui";
 			if (rootSession) widgetObserver.start(ctx);
 			agentActive = false;
@@ -227,7 +349,9 @@ export function createHerdrAgentStateExtension(
 			if (!rootSession) return;
 
 			updateSessionRef(ctx);
-			await reportSession(event.reason);
+			const sessionReport = reportSession(event.reason);
+			publishMetadata(ctx);
+			await sessionReport;
 			if (generation !== sessionGeneration || sessionController.signal.aborted || !rootSession) {
 				return;
 			}
@@ -236,7 +360,7 @@ export function createHerdrAgentStateExtension(
 		});
 
 		pi.on("agent_start", (_event, ctx) => {
-			if (!rootSession) return;
+			if (!owns(ctx)) return;
 			updateSessionRef(ctx);
 			void reportSession();
 			agentActive = true;
@@ -244,19 +368,71 @@ export function createHerdrAgentStateExtension(
 		});
 
 		pi.on("agent_settled", (_event, ctx) => {
-			if (!rootSession || !ctx.isIdle()) return;
+			if (!owns(ctx)) return;
+			publishMetadata(ctx);
+			if (!ctx.isIdle()) return;
 			agentActive = false;
 			publishState();
 		});
 
+		pi.on("session_info_changed", (_event, ctx) => publishMetadata(ctx));
+		pi.on("model_select", (_event, ctx) => publishMetadata(ctx));
+		pi.on("thinking_level_select", (_event, ctx) => publishMetadata(ctx));
+		pi.on("session_compact", (_event, ctx) => publishMetadata(ctx));
+
 		pi.on("session_shutdown", async (_event, ctx) => {
-			++sessionGeneration;
-			rootSession = false;
-			sessionController.abort(new DOMException("Herdr session shut down", "AbortError"));
-			queuedState = undefined;
-			await Promise.all([drainTask, widgetObserver.shutdown(ctx)]);
-			currentAgentSessionId = undefined;
-			currentAgentSessionPath = undefined;
+			if (ctx.sessionManager !== activeSession) {
+				await Promise.allSettled([widgetObserver.shutdown(ctx)]);
+				return;
+			}
+			if (shutdownTask && shutdownSession === ctx.sessionManager) {
+				await shutdownTask;
+				return;
+			}
+
+			const session = ctx.sessionManager;
+			const task = (async () => {
+				const shouldClearMetadata = rootSession;
+				const shutdownGeneration = ++sessionGeneration;
+				rootSession = false;
+				if (metadataRefreshTimer) clearTimeout(metadataRefreshTimer);
+				metadataRefreshTimer = undefined;
+				sessionController.abort(new DOMException("Herdr session shut down", "AbortError"));
+				queuedState = undefined;
+				queuedMetadata = undefined;
+				await Promise.allSettled([drainTask, metadataDrainTask, widgetObserver.shutdown(ctx)]);
+				const stillOwnsShutdown =
+					shutdownGeneration === sessionGeneration && activeSession === session && !rootSession;
+				if (shouldClearMetadata && stillOwnsShutdown) {
+					const controller = new AbortController();
+					shutdownClearController = controller;
+					await safeSend(
+						createHerdrMetadataRequest({
+							id: requestId(),
+							paneId: environment.paneId,
+							source: SOURCE,
+							seq: nextReportSeq(),
+							snapshot: createHerdrMetadataClearSnapshot(),
+						}),
+						controller.signal,
+					);
+					if (shutdownClearController === controller) shutdownClearController = undefined;
+				}
+				if (shutdownGeneration !== sessionGeneration || activeSession !== session || rootSession) {
+					return;
+				}
+				lastMetadataSnapshot = undefined;
+				currentAgentSessionId = undefined;
+				currentAgentSessionPath = undefined;
+				activeSession = undefined;
+			})();
+			shutdownSession = session;
+			shutdownTask = task;
+			await task;
+			if (shutdownTask === task) {
+				shutdownTask = undefined;
+				shutdownSession = undefined;
+			}
 		});
 	};
 }

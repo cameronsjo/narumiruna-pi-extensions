@@ -225,13 +225,13 @@ export class HerdrWidgetModel {
 function stateStyle(theme: Theme, state: HerdrAgentStatus, text: string): string {
 	switch (state) {
 		case "blocked":
-			return theme.fg("warning", text);
+			return theme.fg("error", text);
 		case "done":
-			return theme.fg("success", text);
-		case "working":
 			return theme.fg("accent", text);
+		case "working":
+			return theme.fg("warning", text);
 		case "idle":
-			return theme.fg("muted", text);
+			return theme.fg("success", text);
 		case "unknown":
 			return theme.fg("dim", text);
 	}

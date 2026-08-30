@@ -204,10 +204,14 @@ test("tracks moved current panes plus agent detection, release, and exit", () =>
 	assert.equal(model.snapshot(), undefined);
 });
 
-test("renders Herdr's distinct static symbol for every agent state", () => {
+test("renders Herdr's distinct static symbol and semantic theme role for every agent state", () => {
+	const roles = new Map<string, string>();
 	const theme = {
 		bold: (text: string) => text,
-		fg: (_role: string, text: string) => text,
+		fg: (role: string, text: string) => {
+			if (/^[×◐✓○·] /u.test(text)) roles.set(text, role);
+			return text;
+		},
 	} as Theme;
 	const widget = createHerdrWidget(
 		{
@@ -249,6 +253,13 @@ test("renders Herdr's distinct static symbol for every agent state", () => {
 	for (const state of ["× blocked", "◐ working", "✓ done", "○ idle", "· unknown"]) {
 		assert.ok(rendered.includes(state), `missing ${state}`);
 	}
+	assert.deepEqual(Object.fromEntries(roles), {
+		"× blocked": "error",
+		"◐ working": "warning",
+		"✓ done": "accent",
+		"○ idle": "success",
+		"· unknown": "dim",
+	});
 });
 
 test("sanitizes before sorting and renders terminal-width-safe themed rows", () => {
