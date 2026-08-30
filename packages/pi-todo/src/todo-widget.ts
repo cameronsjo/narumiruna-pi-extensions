@@ -17,6 +17,7 @@ export const TODO_CONTEXT_VERSION = 2;
 export const TODO_DETAILS_VERSION = 2;
 export const TODO_RESTORED_BOUNDARY_ENTRY_TYPE = "todo-restored-context-boundary";
 const TODO_RESTORED_BOUNDARY_VERSION = 1;
+const LEGACY_TODO_CONTEXT_VERSION = 1;
 const LEGACY_TODO_DETAILS_VERSION = 1;
 export const MAX_TODOS = 50;
 export const MAX_TODO_STEP_LENGTH = 300;
@@ -267,9 +268,7 @@ export function sanitizeTodoStep(value: string): string {
 }
 
 function todoContextContent(todos: readonly Todo[]): string {
-	return `[PI TODO STATUS v${TODO_CONTEXT_VERSION}]
-Current todo list as JSON data:
-${JSON.stringify({ todos })}`;
+	return `${todoContextPrefix(TODO_CONTEXT_VERSION)}${JSON.stringify({ todos })}`;
 }
 
 function reconstructRestoredTodoBoundary(
@@ -301,18 +300,45 @@ function isRestoredTodoBoundaryData(
 	) {
 		return false;
 	}
-	const prefix = `[PI TODO STATUS v${TODO_CONTEXT_VERSION}]\nCurrent todo list as JSON data:\n`;
-	if (!data.content.startsWith(prefix)) return false;
+	return isCanonicalTodoContextContent(data.content);
+}
+
+function isCanonicalTodoContextContent(content: string): boolean {
+	const currentPrefix = todoContextPrefix(TODO_CONTEXT_VERSION);
+	if (content.startsWith(currentPrefix)) {
+		try {
+			const restoredTodos = todosFromToolArguments(JSON.parse(content.slice(currentPrefix.length)));
+			return (
+				restoredTodos !== undefined &&
+				restoredTodos.length > 0 &&
+				todoContextContent(restoredTodos) === content
+			);
+		} catch {
+			return false;
+		}
+	}
+
+	const legacyPrefix = todoContextPrefix(LEGACY_TODO_CONTEXT_VERSION);
+	if (!content.startsWith(legacyPrefix)) return false;
 	try {
-		const restoredTodos = todosFromToolArguments(JSON.parse(data.content.slice(prefix.length)));
+		const restoredItems: unknown = JSON.parse(content.slice(legacyPrefix.length));
 		return (
-			restoredTodos !== undefined &&
-			restoredTodos.length > 0 &&
-			todoContextContent(restoredTodos) === data.content
+			isLegacyTodoItems(restoredItems) &&
+			restoredItems.length > 0 &&
+			legacyTodoContextContent(restoredItems) === content
 		);
 	} catch {
 		return false;
 	}
+}
+
+function todoContextPrefix(version: number): string {
+	return `[PI TODO STATUS v${version}]\nCurrent todo list as JSON data:\n`;
+}
+
+function legacyTodoContextContent(items: readonly LegacyTodoItem[]): string {
+	const canonicalItems = items.map((item) => ({ text: item.text, status: item.status }));
+	return `${todoContextPrefix(LEGACY_TODO_CONTEXT_VERSION)}${JSON.stringify(canonicalItems)}`;
 }
 
 function hasModelVisibleTodoState(
