@@ -426,7 +426,8 @@ export async function resolveUsageAuth(
 		if (!result.ok) throw new Error(redactUsageError(result.error));
 		return authorizationFrom(result) ? result : undefined;
 	};
-	if (adapter.id !== "deepseek") modelAuth = await resolveCurrentModelAuth();
+	const resolveSelectedAuthLast = ["deepseek", "minimax", "minimax-cn"].includes(adapter.id);
+	if (!resolveSelectedAuthLast) modelAuth = await resolveCurrentModelAuth();
 	if (typeof registry.getProviderAuth !== "function") {
 		throw new Error("pi-usage requires Pi 0.81.0 or newer to validate resolved provider auth.");
 	}
@@ -439,9 +440,9 @@ export async function resolveUsageAuth(
 			`${adapter.displayName} usage cannot send a proxy-resolved credential to the official usage endpoint.`,
 		);
 	}
-	// DeepSeek reads selected-model auth last so a rotation during provider-origin validation
-	// cannot leave the earlier credential queued for the balance request.
-	if (adapter.id === "deepseek") modelAuth = await resolveCurrentModelAuth();
+	// Providers with credential-change retries read selected-model auth last so a rotation during
+	// provider-origin validation cannot leave the earlier credential queued for the usage request.
+	if (resolveSelectedAuthLast) modelAuth = await resolveCurrentModelAuth();
 	const auth = modelAuth ?? providerResult?.auth;
 	if (!auth) return undefined;
 	if (adapter.id === "github-copilot") {

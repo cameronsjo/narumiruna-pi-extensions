@@ -284,6 +284,33 @@ test("MiniMax runtime auth accepts only its matching official region", async () 
 	}
 });
 
+test("MiniMax reads current model auth after provider validation when the key rotates", async () => {
+	for (const providerId of ["minimax", "minimax-cn"] as const) {
+		const model = MODELS[providerId];
+		let activeKey = `stale-${providerId}-key`;
+		const { ctx } = createMockContext({
+			model,
+			modelRegistry: {
+				getApiKeyAndHeaders: async () => {
+					const resolvedKey = activeKey;
+					await Promise.resolve();
+					return { ok: true, apiKey: resolvedKey };
+				},
+				getProviderAuth: async () => {
+					activeKey = `current-${providerId}-key`;
+					return { auth: { apiKey: activeKey, baseUrl: model.baseUrl } };
+				},
+				getAvailable: () => [model],
+				getAll: () => [model],
+			},
+		});
+
+		const auth = await resolveUsageAuth(ctx, miniMaxAdapter(providerId));
+		assert.deepEqual(auth?.headers, { Authorization: `Bearer current-${providerId}-key` });
+		assert.ok(!auth?.secrets.includes(`stale-${providerId}-key`));
+	}
+});
+
 test("MiniMax endpoint selection follows the Bearer credential actually sent", async () => {
 	const requests: string[] = [];
 	vi.stubGlobal(
