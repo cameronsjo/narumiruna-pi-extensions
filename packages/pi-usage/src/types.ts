@@ -119,6 +119,13 @@ export type OpenRouterKeyPayload = {
 	data?: unknown;
 };
 
+export type MoonshotBalancePayload = {
+	code?: unknown;
+	data?: unknown;
+	scode?: unknown;
+	status?: unknown;
+};
+
 export type VercelAIGatewayCreditsPayload = {
 	balance?: unknown;
 	total_used?: unknown;

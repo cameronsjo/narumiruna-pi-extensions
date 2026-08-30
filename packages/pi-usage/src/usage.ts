@@ -284,6 +284,8 @@ export default function usageExtension(
 		const requiresRequestBoundaryGuard = [
 			"deepseek",
 			"fireworks",
+			"moonshotai",
+			"moonshotai-cn",
 			"vercel-ai-gateway",
 			"xai",
 		].includes(adapter.id);
