@@ -4,9 +4,10 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DefaultResourceLoader, SettingsManager } from "@earendil-works/pi-coding-agent";
-import { afterAll, beforeAll, test } from "vitest";
+import { afterAll, afterEach, beforeAll, test, vi } from "vitest";
 import { createMockContext, createMockPi } from "../../../test/support.js";
 import type { HerdrAgentStateOptions } from "../src/herdr-agent-state.js";
+import { HERDR_METADATA_REFRESH_MS, HERDR_METADATA_TOKEN_KEYS } from "../src/herdr-metadata.js";
 
 type HerdrModule = typeof import("../src/herdr-agent-state.js");
 type HerdrRequest = Parameters<NonNullable<HerdrAgentStateOptions["sendRequest"]>>[0];
@@ -27,6 +28,10 @@ afterAll(async () => {
 	if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 	else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 	await rm(agentDir, { force: true, recursive: true });
+});
+
+afterEach(() => {
+	vi.useRealTimers();
 });
 
 function enabledOptions(requests: HerdrRequest[]): HerdrAgentStateOptions {
@@ -223,16 +228,268 @@ test("TUI sessions start and shut down the widget observer", async () => {
 	assert.deepEqual(events, ["start:tui", "shutdown:tui"]);
 });
 
+test("publishes changed metadata from every authoritative event and refreshes bounded TTL", async () => {
+	vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+	const requests: HerdrRequest[] = [];
+	const mock = createMockPi();
+	mock.rawPi.setSessionName("Initial session");
+	let contextUsagePercent: number | null = 24.4;
+	const started = tuiContext();
+	const mutableContext = started.ctx as unknown as {
+		model?: { id: string; provider: string };
+		thinkingLevel?: string;
+	};
+	mutableContext.model = { id: "claude-sonnet", provider: "anthropic" };
+	mutableContext.thinkingLevel = "high";
+	(started.ctx as unknown as { getContextUsage(): unknown }).getContextUsage = () => ({
+		tokens: 24,
+		contextWindow: 100,
+		percent: contextUsagePercent,
+	});
+	herdrModule.createHerdrAgentStateExtension(enabledOptions(requests))(mock.pi);
+
+	await emit(mock, "session_start", { reason: "startup" }, started.ctx);
+	await flushReporting();
+	const metadataRequests = () => requests.filter(({ method }) => method === "pane.report_metadata");
+	assert.deepEqual(metadataRequests().at(-1)?.params.tokens, {
+		model: "claude-sonnet",
+		provider: "anthropic",
+		thinking: "high",
+		session: "Initial session",
+		context_usage: "24%",
+	});
+	assert.equal(metadataRequests().at(-1)?.params.ttl_ms, 3_600_000);
+
+	for (const name of [
+		"session_info_changed",
+		"model_select",
+		"thinking_level_select",
+		"agent_settled",
+		"session_compact",
+	]) {
+		await emit(mock, name, {}, started.ctx);
+	}
+	await flushReporting();
+	assert.equal(metadataRequests().length, 1);
+
+	mock.rawPi.setSessionName("Renamed session");
+	await emit(mock, "session_info_changed", { name: "Renamed session" }, started.ctx);
+	mutableContext.model = { id: "gpt-5", provider: "openai" };
+	await emit(mock, "model_select", {}, started.ctx);
+	mutableContext.thinkingLevel = "medium";
+	await emit(mock, "thinking_level_select", {}, started.ctx);
+	contextUsagePercent = 49.6;
+	await emit(mock, "agent_settled", {}, started.ctx);
+	contextUsagePercent = null;
+	await emit(mock, "session_compact", {}, started.ctx);
+	await flushReporting();
+	assert.deepEqual(metadataRequests().at(-1)?.params.tokens, {
+		model: "gpt-5",
+		provider: "openai",
+		thinking: "medium",
+		session: "Renamed session",
+		context_usage: null,
+	});
+	assert.equal(metadataRequests().length, 6);
+
+	const beforeRefresh = metadataRequests().length;
+	await vi.advanceTimersByTimeAsync(HERDR_METADATA_REFRESH_MS - 1);
+	assert.equal(metadataRequests().length, beforeRefresh);
+	await vi.advanceTimersByTimeAsync(1);
+	assert.equal(metadataRequests().length, beforeRefresh + 1);
+	assert.deepEqual(
+		metadataRequests().at(-1)?.params.tokens,
+		metadataRequests().at(-2)?.params.tokens,
+	);
+
+	mock.rawPi.setSessionName(undefined as never);
+	await emit(mock, "session_info_changed", { name: undefined }, started.ctx);
+	await flushReporting();
+	const renamedMetadata = metadataRequests().at(-1);
+	assert.ok(renamedMetadata);
+	assert.equal((renamedMetadata.params.tokens as Record<string, unknown>).session, null);
+	await emit(mock, "session_shutdown", { reason: "quit" }, started.ctx);
+	const clear = metadataRequests().at(-1);
+	assert.deepEqual(
+		clear?.params.tokens,
+		Object.fromEntries(HERDR_METADATA_TOKEN_KEYS.map((key) => [key, null])),
+	);
+	assert.deepEqual(Object.keys(clear?.params.tokens as object), [...HERDR_METADATA_TOKEN_KEYS]);
+	const afterShutdown = metadataRequests().length;
+	await vi.advanceTimersByTimeAsync(HERDR_METADATA_REFRESH_MS * 2);
+	assert.equal(metadataRequests().length, afterShutdown);
+});
+
+test("coalesces rapid metadata changes behind one delayed send", async () => {
+	const requests: HerdrRequest[] = [];
+	let release!: () => void;
+	const delayed = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	let delayedMetadata = true;
+	const mock = createMockPi();
+	const started = tuiContext();
+	const mutableContext = started.ctx as unknown as {
+		model?: { id: string; provider: string };
+	};
+	mutableContext.model = { id: "first", provider: "provider" };
+	herdrModule.createHerdrAgentStateExtension({
+		...enabledOptions(requests),
+		async sendRequest(request) {
+			requests.push(request);
+			if (request.method === "pane.report_metadata" && delayedMetadata) {
+				delayedMetadata = false;
+				await delayed;
+			}
+		},
+	})(mock.pi);
+
+	await emit(mock, "session_start", { reason: "startup" }, started.ctx);
+	await flushReporting();
+	mutableContext.model = { id: "second", provider: "provider" };
+	await emit(mock, "model_select", {}, started.ctx);
+	mutableContext.model = { id: "latest", provider: "provider" };
+	await emit(mock, "model_select", {}, started.ctx);
+	assert.equal(requests.filter(({ method }) => method === "pane.report_metadata").length, 1);
+	release();
+	await flushReporting();
+	await flushReporting();
+	const metadata = requests.filter(({ method }) => method === "pane.report_metadata");
+	assert.equal(metadata.length, 2);
+	assert.ok(metadata[0]);
+	assert.ok(metadata[1]);
+	assert.equal((metadata[0].params.tokens as Record<string, unknown>).model, "first");
+	assert.equal((metadata[1].params.tokens as Record<string, unknown>).model, "latest");
+	await emit(mock, "session_shutdown", { reason: "quit" }, started.ctx);
+});
+
+test("replacement aborts stale metadata and prevents an older shutdown clear", async () => {
+	const requests: Array<{ request: HerdrRequest; signal: AbortSignal }> = [];
+	let release!: () => void;
+	const delayed = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	let delayFirstMetadata = true;
+	const mock = createMockPi();
+	herdrModule.createHerdrAgentStateExtension({
+		...enabledOptions([]),
+		async sendRequest(request, signal) {
+			requests.push({ request, signal });
+			if (request.method === "pane.report_metadata" && delayFirstMetadata) {
+				delayFirstMetadata = false;
+				await delayed;
+			}
+		},
+	})(mock.pi);
+	const oldSession = tuiContext();
+	const replacement = tuiContext();
+	(oldSession.ctx as unknown as { model: unknown }).model = {
+		id: "old",
+		provider: "provider",
+	};
+	(replacement.ctx as unknown as { model: unknown }).model = {
+		id: "replacement",
+		provider: "provider",
+	};
+
+	await emit(mock, "session_start", { reason: "startup" }, oldSession.ctx);
+	await flushReporting();
+	const stoppingOld = emit(mock, "session_shutdown", { reason: "reload" }, oldSession.ctx);
+	const oldMetadata = requests.find(({ request }) => request.method === "pane.report_metadata");
+	assert.equal(oldMetadata?.signal.aborted, true);
+	await emit(mock, "session_start", { reason: "reload" }, replacement.ctx);
+	release();
+	await stoppingOld;
+	await flushReporting();
+	const metadataBeforeFinalShutdown = requests
+		.map(({ request }) => request)
+		.filter(({ method }) => method === "pane.report_metadata");
+	assert.equal(
+		metadataBeforeFinalShutdown.some(({ params }) =>
+			Object.values(params.tokens as Record<string, unknown>).every((value) => value === null),
+		),
+		false,
+	);
+	const firstMetadata = metadataBeforeFinalShutdown[0];
+	const latestMetadata = metadataBeforeFinalShutdown.at(-1);
+	assert.ok(firstMetadata);
+	assert.ok(latestMetadata);
+	assert.equal((latestMetadata.params.tokens as Record<string, unknown>).model, "replacement");
+	assert.ok(Number(firstMetadata.params.seq) < Number(latestMetadata.params.seq));
+	const beforeStaleEvents = metadataBeforeFinalShutdown.length;
+	await emit(mock, "agent_settled", {}, replacement.ctx);
+	await emit(mock, "model_select", {}, oldSession.ctx);
+	await flushReporting();
+	assert.equal(
+		requests.filter(({ request }) => request.method === "pane.report_metadata").length,
+		beforeStaleEvents,
+	);
+	await emit(mock, "session_shutdown", { reason: "quit" }, replacement.ctx);
+});
+
+test("repeated shutdown shares cleanup and sends exactly one clear patch", async () => {
+	const requests: HerdrRequest[] = [];
+	let release!: () => void;
+	const delayed = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	let delayMetadata = true;
+	const mock = createMockPi();
+	herdrModule.createHerdrAgentStateExtension({
+		...enabledOptions(requests),
+		async sendRequest(request) {
+			requests.push(request);
+			if (request.method === "pane.report_metadata" && delayMetadata) {
+				delayMetadata = false;
+				await delayed;
+			}
+		},
+	})(mock.pi);
+	const started = tuiContext();
+	await emit(mock, "session_start", { reason: "startup" }, started.ctx);
+	await flushReporting();
+	const metadataBeforeShutdown = requests.filter(
+		({ method }) => method === "pane.report_metadata",
+	).length;
+	const firstShutdown = emit(mock, "session_shutdown", { reason: "quit" }, started.ctx);
+	const repeatedShutdown = emit(mock, "session_shutdown", { reason: "quit" }, started.ctx);
+	release();
+	await Promise.all([firstShutdown, repeatedShutdown]);
+	const metadataAfterShutdown = requests.filter(({ method }) => method === "pane.report_metadata");
+	assert.equal(metadataAfterShutdown.length, metadataBeforeShutdown + 1);
+	const clearPatch = metadataAfterShutdown.at(-1);
+	assert.ok(clearPatch);
+	assert.equal(
+		Object.values(clearPatch.params.tokens as Record<string, unknown>).every(
+			(value) => value === null,
+		),
+		true,
+	);
+});
+
+test("metadata failures never interrupt lifecycle or orderly shutdown", async () => {
+	const mock = createMockPi();
+	herdrModule.createHerdrAgentStateExtension({
+		...enabledOptions([]),
+		async sendRequest() {
+			throw new Error("socket unavailable");
+		},
+	})(mock.pi);
+	const started = tuiContext();
+	await emit(mock, "session_start", { reason: "startup" }, started.ctx);
+	await emit(mock, "model_select", {}, started.ctx);
+	await emit(mock, "session_shutdown", { reason: "quit" }, started.ctx);
+});
+
 test("socket transport retries one failed delivery and preserves the request", async () => {
 	const socketPath = join(agentDir, "herdr-test.sock");
 	const received: HerdrRequest[] = [];
-	let connectionCount = 0;
+	const attemptsById = new Map<string, number>();
 	let reportState!: () => void;
 	const stateReceived = new Promise<void>((resolve) => {
 		reportState = resolve;
 	});
 	const server = net.createServer((socket) => {
-		connectionCount += 1;
 		let input = "";
 		socket.on("error", () => {
 			// The client closes immediately after Herdr acknowledges delivery.
@@ -243,7 +500,9 @@ test("socket transport retries one failed delivery and preserves the request", a
 			if (newline < 0) return;
 			const request = JSON.parse(input.slice(0, newline)) as HerdrRequest;
 			received.push(request);
-			if (connectionCount === 1) socket.end();
+			const attempts = (attemptsById.get(request.id) ?? 0) + 1;
+			attemptsById.set(request.id, attempts);
+			if (request.method === "pane.report_agent_session" && attempts === 1) socket.end();
 			else socket.write("{}\n");
 			if (request.method === "pane.report_agent") reportState();
 		});
@@ -265,10 +524,16 @@ test("socket transport retries one failed delivery and preserves the request", a
 	try {
 		await emit(mock, "session_start", { reason: "startup" }, started.ctx);
 		await stateReceived;
-		assert.equal(connectionCount, 3);
-		assert.equal(received[0]?.id, received[1]?.id);
-		assert.equal(received[0]?.method, "pane.report_agent_session");
-		assert.equal(received[2]?.params.state, "idle");
+		const sessionReports = received.filter(
+			(request) => request.method === "pane.report_agent_session",
+		);
+		assert.equal(sessionReports.length, 2);
+		assert.equal(sessionReports[0]?.id, sessionReports[1]?.id);
+		assert.equal(
+			received.some((request) => request.method === "pane.report_metadata"),
+			true,
+		);
+		assert.equal(stateRequests(received).at(-1)?.params.state, "idle");
 	} finally {
 		await emit(mock, "session_shutdown", { reason: "quit" }, started.ctx);
 		await new Promise<void>((resolve, reject) => {
@@ -298,14 +563,20 @@ test("shutdown aborts a delayed session report before it can publish state", asy
 
 	const starting = emit(mock, "session_start", { reason: "startup" }, started.ctx);
 	await flushReporting();
-	assert.equal(requests.length, 1);
+	assert.equal(requests.filter(({ method }) => method === "pane.report_agent_session").length, 1);
+	assert.equal(requests.filter(({ method }) => method === "pane.report_metadata").length, 1);
 	const shuttingDown = emit(mock, "session_shutdown", { reason: "reload" }, started.ctx);
 	assert.equal(firstSignal?.aborted, true);
 	release();
 	await Promise.all([starting, shuttingDown]);
 	await flushReporting();
 	assert.equal(stateRequests(requests).length, 0);
+	assert.deepEqual(
+		requests.filter(({ method }) => method === "pane.report_metadata").at(-1)?.params.tokens,
+		Object.fromEntries(HERDR_METADATA_TOKEN_KEYS.map((key) => [key, null])),
+	);
 
+	const requestCount = requests.length;
 	await emit(
 		mock,
 		"ui_prompt_start",
@@ -313,7 +584,7 @@ test("shutdown aborts a delayed session report before it can publish state", asy
 		started.ctx,
 	);
 	await flushReporting();
-	assert.equal(requests.length, 1);
+	assert.equal(requests.length, requestCount);
 });
 
 test("package resources load one extension and the bundled herdr skill", async () => {

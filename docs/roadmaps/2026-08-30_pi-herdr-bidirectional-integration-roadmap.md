@@ -4,7 +4,7 @@
 
 Make `pi-herdr` the lightweight bridge that lets Pi and Herdr share live context in both directions without replacing Herdr's TUI, duplicating its CLI, or distracting users when no coordination needs attention.
 
-**Current roadmap status:** The Phase 1 agent widget is delivered and verified, while the optional footer summary and Phases 2–4 remain planned.
+**Current roadmap status:** The Phase 1 agent widget and Phase 2 bounded pane metadata are delivered and verified, while the optional footer summary and Phases 3–4 remain planned.
 
 ## Objectives
 
@@ -19,9 +19,10 @@ Make `pi-herdr` the lightweight bridge that lets Pi and Herdr share live context
 - The extension coalesces state changes, retries bounded delivery failures, guards session generations, and aborts reporting during shutdown.
 - The bundled `herdr` skill provides explicit, on-demand CLI guidance for inspecting and controlling workspaces, tabs, panes, agents, commands, and notifications.
 - The extension now renders a terminal-safe, event-driven widget with one state, agent, pane, and workspace row per recognized sibling and maintains pane-scoped status subscriptions with bounded failure recovery.
-- The extension still has no footer status, `/herdr` command, pane metadata publication, autocomplete, or watch notification.
-- The installed Herdr 0.8.2 API exposes `pane.current`, `pane.list`, `events.subscribe`, pane lifecycle and agent-status events, `pane.report_metadata`, and protocol metadata through its public schema.
-- The bundled skill currently lists `herdr terminal` as a discovery group even though that group is absent from the installed Herdr 0.8.2 CLI.
+- The extension publishes bounded `model`, `provider`, `thinking`, `session`, and `context_usage` pane tokens with full-patch clearing, sequence ordering, a one-hour TTL, and a session-owned refresh.
+- The extension still has no footer status, `/herdr` command, autocomplete, or watch notification.
+- The installed Herdr 0.8.2 protocol 20 API exposes `pane.current`, `pane.list`, `events.subscribe`, pane lifecycle and agent-status events, `pane.report_metadata`, and protocol metadata through its public schema.
+- The bundled skill matches the installed Herdr 0.8.2 safety contract, and `herdr terminal` is a valid discovery group even though top-level `herdr --help` omits it.
 - The repository has no telemetry or grounded adoption baseline, so usage and delivery targets remain unknown.
 
 ## Guiding Principles
@@ -51,10 +52,14 @@ Make `pi-herdr` the lightweight bridge that lets Pi and Herdr share live context
 
 ### Phase 2: Enrich Herdr with bounded Pi context
 
-- [ ] Herdr pane metadata exposes a stable Pi display identity and useful session title when available without replacing user-owned pane labels or leaking message content.
-- [ ] Model, provider, thinking level, and bounded context-usage metadata remain current through Pi lifecycle events and use a publication cadence that avoids volatile socket traffic.
-- [ ] Metadata ownership, sequence ordering, replacement, and shutdown behavior prevent an older Pi session from overwriting newer pane state.
-- [ ] The integration documents exactly which environment, session, model, and prompt-label fields cross the Herdr socket boundary.
+- [x] Herdr identifies the detected Pi agent through lifecycle reporting and can render the explicit Pi session name through `$session` without replacing user-owned pane labels, titles, or agent display metadata.
+  Evidence: metadata request tests reject presentation fields, skill and runtime smokes preserve user-owned identity, and privacy tests limit the token patch to five keys.
+- [x] Model, provider, thinking level, explicit session name, and rounded context usage remain current through authoritative Pi lifecycle events with changed-snapshot suppression and a refresh no more often than every 30 minutes.
+  Evidence: focused lifecycle tests cover every event, unchanged snapshots, rapid coalescing, unknown usage clearing, refresh timing, and one-hour TTL requests.
+- [x] Metadata ownership, sequence ordering, replacement, and shutdown behavior prevent an older Pi session from overwriting newer pane state.
+  Evidence: delayed send, replacement, repeated cleanup, orderly clear, failed clear, and stale-generation tests pass.
+- [x] The integration documents exactly which lifecycle, session, model, prompt-label, and metadata fields cross the Herdr socket boundary.
+  Evidence: the package README separately inventories lifecycle reports, the five metadata tokens, widget reads, excluded prompt and conversation content, and blocked-label behavior.
 
 **Outcome:** Herdr can explain which Pi session and model occupy a pane while preserving privacy and source ownership.
 
@@ -84,8 +89,8 @@ Make `pi-herdr` the lightweight bridge that lets Pi and Herdr share live context
 | Steady-state CLI subprocesses for widget updates | 0 | 0 | Source review and live smoke |
 | Rendered widget lines exceeding available width | 0 in deterministic coverage | 0 | Narrow-width and untrusted-input tests |
 | Session-owned resources remaining after shutdown | 0 in deterministic coverage | 0 subscriptions, retry tasks, widgets, or statuses | Lifecycle tests |
-| Stale session metadata accepted after replacement | Existing outbound generation guards only | 0 | Sequence and replacement tests |
-| Invalid documented CLI discovery groups | At least 1 against installed Herdr 0.8.2 | 0 for the supported CLI fixture | Skill/CLI contract check |
+| Stale session metadata accepted after replacement | 0 in deterministic delayed-send coverage | 0 | Sequence, replacement, and shutdown-clear tests |
+| Invalid documented CLI discovery groups | 0 against installed Herdr 0.8.2, including the valid omitted `terminal` group | 0 for the supported CLI fixture | Deterministic skill contracts and live `herdr --skill` diff |
 | Adoption and coordination task completion | Unknown | TBD if privacy-compatible evidence becomes available | No current measurement source |
 
 ## Risks and Dependencies
@@ -109,6 +114,8 @@ Make `pi-herdr` the lightweight bridge that lets Pi and Herdr share live context
 - **2026-08-30 — Reconcile replayed topology:** Herdr replays retained topology events, so the widget coalesces them into fresh workspace reads and rebuilds status subscriptions only when the recognized pane set changes.
 - **2026-08-30 — Keep one agent per row:** each row uses theme roles to present state, agent name, pane label and short ID, then workspace label and short ID without misclassifying terminal titles as agent identity.
 - **2026-08-30 — Defer broad model tools:** the bundled skill and installed CLI remain authoritative until a narrow typed tool proves additional safety or reliability.
+- **2026-08-31 — Publish only bounded Pi tokens:** Phase 2 uses five full-patch tokens with explicit null clearing, one-hour TTL, 30-minute refresh, monotonic sequence ordering, and no Herdr presentation-field ownership.
+- **2026-08-31 — Treat `herdr terminal` as valid discovery:** Herdr 0.8.2 exposes the group when invoked directly even though top-level help omits it.
 
 ## Non-Goals
 
