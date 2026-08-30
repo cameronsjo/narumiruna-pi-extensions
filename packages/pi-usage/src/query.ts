@@ -15,6 +15,11 @@ import {
 } from "./providers/fireworks.js";
 import { normalizeGitHubCopilotUsagePayload } from "./providers/github-copilot.js";
 import { normalizeKimiCodingUsagePayload } from "./providers/kimi-coding.js";
+import {
+	type MiniMaxProviderId,
+	miniMaxUsageKind,
+	normalizeMiniMaxUsagePayload,
+} from "./providers/minimax.js";
 import { normalizeMoonshotBalancePayload } from "./providers/moonshot.js";
 import { normalizeOpenCodeZenPayload } from "./providers/opencode-zen.js";
 import { normalizeOpenRouterKeyPayload } from "./providers/openrouter.js";
@@ -29,6 +34,7 @@ import type {
 	FireworksBillingSummaryPayload,
 	GitHubCopilotUsagePayload,
 	KimiCodingUsagePayload,
+	MiniMaxUsagePayload,
 	MoonshotBalancePayload,
 	OpenCodeZenPayload,
 	OpenRouterKeyPayload,
@@ -55,6 +61,10 @@ const OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key";
 const VERCEL_AI_GATEWAY_CREDITS_URL = "https://ai-gateway.vercel.sh/v1/credits";
 const OPENCODE_GO_USAGE_URL = "https://opencode.ai/zen/go/v1/usage";
 const KIMI_CODING_USAGE_URL = "https://api.kimi.com/coding/v1/usages";
+const MINIMAX_API_ROOTS = Object.freeze({
+	minimax: "https://api.minimax.io",
+	"minimax-cn": "https://api.minimaxi.com",
+});
 const MOONSHOT_BALANCE_URLS = Object.freeze({
 	moonshotai: "https://api.moonshot.ai/v1/users/me/balance",
 	"moonshotai-cn": "https://api.moonshot.cn/v1/users/me/balance",
@@ -250,6 +260,22 @@ export const SUPPORTED_ADAPTERS: readonly UsageProviderAdapter[] = [
 		},
 	},
 	{
+		id: "minimax",
+		displayName: "MiniMax",
+		semantics: { kind: "consumer-subscription", label: "MiniMax usage" },
+		async query(auth, signal, timeoutMs, guard) {
+			return queryMiniMaxUsage("minimax", auth, signal, timeoutMs, guard);
+		},
+	},
+	{
+		id: "minimax-cn",
+		displayName: "MiniMax CN",
+		semantics: { kind: "consumer-subscription", label: "MiniMax usage" },
+		async query(auth, signal, timeoutMs, guard) {
+			return queryMiniMaxUsage("minimax-cn", auth, signal, timeoutMs, guard);
+		},
+	},
+	{
 		id: "moonshotai",
 		displayName: "Moonshot AI",
 		semantics: { kind: "api-key", label: "Moonshot API account balance" },
@@ -401,7 +427,8 @@ export async function resolveUsageAuth(
 		if (!result.ok) throw new Error(redactUsageError(result.error));
 		return authorizationFrom(result) ? result : undefined;
 	};
-	if (adapter.id !== "deepseek") modelAuth = await resolveCurrentModelAuth();
+	const resolveSelectedAuthLast = ["deepseek", "minimax", "minimax-cn"].includes(adapter.id);
+	if (!resolveSelectedAuthLast) modelAuth = await resolveCurrentModelAuth();
 	if (typeof registry.getProviderAuth !== "function") {
 		throw new Error("pi-usage requires Pi 0.81.0 or newer to validate resolved provider auth.");
 	}
@@ -416,9 +443,9 @@ export async function resolveUsageAuth(
 			`${adapter.displayName} usage cannot send a proxy-resolved credential to the official usage endpoint.`,
 		);
 	}
-	// DeepSeek reads selected-model auth last so a rotation during provider-origin validation
-	// cannot leave the earlier credential queued for the balance request.
-	if (adapter.id === "deepseek") modelAuth = await resolveCurrentModelAuth();
+	// Providers with credential-change retries read selected-model auth last so a rotation during
+	// provider-origin validation cannot leave the earlier credential queued for the usage request.
+	if (resolveSelectedAuthLast) modelAuth = await resolveCurrentModelAuth();
 	const auth = modelAuth ?? providerResult?.auth;
 	if (!auth) return undefined;
 	if (adapter.id === "github-copilot") {
@@ -897,6 +924,8 @@ function hasOfficialUrlOrigin(value: string, providerId: string): boolean {
 		if (providerId === "vercel-ai-gateway") return url.origin === "https://ai-gateway.vercel.sh";
 		if (providerId === "opencode-go") return url.origin === "https://opencode.ai";
 		if (providerId === "kimi-coding") return url.origin === "https://api.kimi.com";
+		if (providerId === "minimax") return url.origin === "https://api.minimax.io";
+		if (providerId === "minimax-cn") return url.origin === "https://api.minimaxi.com";
 		if (providerId === "moonshotai") return url.origin === "https://api.moonshot.ai";
 		if (providerId === "moonshotai-cn") return url.origin === "https://api.moonshot.cn";
 		if (providerId === "xai") return url.origin === "https://api.x.ai";
@@ -942,6 +971,32 @@ function basetenBillingUsageUrl(windowAt: number): string {
 	);
 	url.searchParams.set("end_date", new Date(windowAt).toISOString());
 	return url.toString();
+}
+
+async function queryMiniMaxUsage(
+	providerId: MiniMaxProviderId,
+	auth: ResolvedUsageAuth,
+	signal: AbortSignal,
+	timeoutMs: number,
+	guard: UsageRequestGuard | undefined,
+): Promise<UsageReport> {
+	if (!guard) throw new Error("MiniMax usage requires request-boundary revalidation.");
+	const apiKey = bearerToken(headerValue(auth.headers, "Authorization")) ?? auth.apiKey;
+	if (!apiKey) throw new Error("MiniMax runtime API key was unavailable.");
+	const kind = miniMaxUsageKind(apiKey);
+	const path = kind === "account-balance" ? "/account/query_balance" : "/v1/token_plan/remains";
+	const startedAt = Date.now();
+	await guard();
+	const payload = (await fetchProviderJson(
+		`${MINIMAX_API_ROOTS[providerId]}${path}`,
+		auth,
+		signal,
+		remainingTimeout(timeoutMs, startedAt, "fetching MiniMax usage"),
+		"MiniMax usage endpoint",
+		{ redirect: "error" },
+	)) as MiniMaxUsagePayload;
+	await guard();
+	return normalizeMiniMaxUsagePayload(providerId, kind, payload, Date.now());
 }
 
 async function queryMoonshotBalance(

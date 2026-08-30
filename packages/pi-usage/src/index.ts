@@ -41,6 +41,11 @@ export {
 } from "./providers/fireworks.js";
 export { normalizeGitHubCopilotUsagePayload } from "./providers/github-copilot.js";
 export { normalizeKimiCodingUsagePayload } from "./providers/kimi-coding.js";
+export type { MiniMaxProviderId, MiniMaxUsageKind } from "./providers/minimax.js";
+export {
+	miniMaxUsageKind,
+	normalizeMiniMaxUsagePayload,
+} from "./providers/minimax.js";
 export type { MoonshotProviderId } from "./providers/moonshot.js";
 export { normalizeMoonshotBalancePayload } from "./providers/moonshot.js";
 export { normalizeOpenCodeZenPayload } from "./providers/opencode-zen.js";
@@ -76,6 +81,7 @@ export type {
 	FireworksAccountsPayload,
 	FireworksBillingSummaryPayload,
 	KimiCodingUsagePayload,
+	MiniMaxUsagePayload,
 	MoonshotBalancePayload,
 	ProviderUsageState,
 	ResolvedUsageAuth,

@@ -22,7 +22,11 @@ export function formatUsageReport(report: UsageReport, displayState: UsageDispla
 						? "Vercel AI Gateway Credits"
 						: report.providerId === "moonshotai" || report.providerId === "moonshotai-cn"
 							? `${report.providerName} Balance`
-							: `${report.providerName} Usage`;
+							: report.providerId === "minimax" || report.providerId === "minimax-cn"
+								? report.source === "minimax-account-balance"
+									? `${report.providerName} API Balance`
+									: `${report.providerName} Token Plan`
+								: `${report.providerName} Usage`;
 	const lines = [`${title} · ${stateLabel}`];
 	if (report.accountLabel) lines.push(`Account: ${report.accountLabel}`);
 	lines.push(`Semantics: ${report.semantics.label}`, "");
@@ -38,6 +42,8 @@ export function formatUsageReport(report: UsageReport, displayState: UsageDispla
 	else if (report.providerId === "kimi-coding") formatKimiCodingReport(lines, report);
 	else if (report.providerId === "moonshotai" || report.providerId === "moonshotai-cn") {
 		formatMoonshotReport(lines, report);
+	} else if (report.providerId === "minimax" || report.providerId === "minimax-cn") {
+		formatMiniMaxReport(lines, report);
 	} else if (report.providerId === "xai") formatXaiReport(lines, report);
 	else if (report.providerId === "zai" || report.providerId === "zai-coding-cn") {
 		formatZaiReport(lines, report);
@@ -73,6 +79,9 @@ export function formatUsageStatusline(
 	if (report.providerId === "kimi-coding") return formatKimiCodingStatusline(report);
 	if (report.providerId === "moonshotai" || report.providerId === "moonshotai-cn") {
 		return formatMoonshotStatusline(report);
+	}
+	if (report.providerId === "minimax" || report.providerId === "minimax-cn") {
+		return formatMiniMaxStatusline(report, model);
 	}
 	if (report.providerId === "zai" || report.providerId === "zai-coding-cn") {
 		return formatZaiStatusline(report);
@@ -334,6 +343,101 @@ function formatMoonshotStatusline(report: UsageReport): string {
 	const available = report.metrics.find((metric) => metric.id === "available-balance");
 	if (!available) return "moonshot balance unavailable";
 	return `moonshot ${available.currency ?? ""} ${available.value}`.replace(/\s+/gu, " ");
+}
+
+function formatMiniMaxReport(lines: string[], report: UsageReport): void {
+	if (report.source === "minimax-account-balance") {
+		for (const metric of report.metrics) {
+			lines.push(`${`${metric.label}:`.padEnd(VALUE_COLUMN)}${metric.currency} ${metric.value}`);
+		}
+		return;
+	}
+	let previousGroup: string | undefined;
+	for (const bucket of report.buckets) {
+		if (bucket.groupId !== previousGroup) lines.push(`${bucket.groupLabel ?? "Token Plan"}:`);
+		previousGroup = bucket.groupId;
+		const reset = bucket.resetsAt ? ` (resets ${formatReset(bucket.resetsAt)})` : "";
+		const value =
+			bucket.period === "unlimited"
+				? "unlimited"
+				: bucket.limit && bucket.remaining !== undefined
+					? `${bucket.remaining} of ${bucket.limit} left · ${percentRemaining(bucket)}%${reset}`
+					: "unavailable";
+		lines.push(`${`${bucket.label}:`.padEnd(VALUE_COLUMN)}${value}`);
+	}
+}
+
+function formatMiniMaxStatusline(report: UsageReport, model?: UsageModel): string | undefined {
+	const prefix = report.providerId === "minimax-cn" ? "minimax cn" : "minimax";
+	if (report.source === "minimax-account-balance") {
+		const available = report.metrics.find((metric) => metric.id === "available-balance");
+		return available ? `${prefix} ${available.currency} ${available.value}` : undefined;
+	}
+	const selectedGroup = selectMiniMaxGroup(report, model);
+	if (!selectedGroup) return undefined;
+	const selected = report.buckets.filter((bucket) => bucket.groupId === selectedGroup);
+	const parts = [prefix];
+	for (const bucket of selected) {
+		const fallback = bucket.id.endsWith(":weekly") ? "weekly" : "5h";
+		const window = formatWindowLabel(bucket.windowMinutes, fallback, true);
+		if (bucket.period === "unlimited") {
+			parts.push(`unlimited ${window}`);
+			continue;
+		}
+		if (!bucket.limit || bucket.remaining === undefined) continue;
+		parts.push(`${percentRemaining(bucket)}% ${window}`);
+	}
+	return parts.length > 1 ? parts.join(" ") : undefined;
+}
+
+function selectMiniMaxGroup(report: UsageReport, model?: UsageModel): string | undefined {
+	const groups = [
+		...new Set(
+			report.buckets
+				.map((bucket) => bucket.groupId)
+				.filter((group): group is string => group !== undefined),
+		),
+	];
+	if (groups.length <= 1) return groups[0];
+	if (model?.provider !== report.providerId) return undefined;
+	const modelKeys = [model.id, model.name]
+		.map(normalizeMiniMaxModelKey)
+		.filter((key): key is string => key !== undefined);
+	const candidates = groups.map((group) => {
+		const bucket = report.buckets.find((candidate) => candidate.groupId === group);
+		const patterns = [bucket?.groupLabel, ...(bucket?.modelKeys ?? []), group]
+			.map(normalizeMiniMaxModelKey)
+			.filter((key): key is string => key !== undefined);
+		return { group, patterns };
+	});
+	const exact = candidates.find(({ patterns }) =>
+		patterns.some((pattern) => !pattern.includes("*") && modelKeys.includes(pattern)),
+	);
+	if (exact) return exact.group;
+	return candidates.find(({ patterns }) =>
+		patterns.some(
+			(pattern) =>
+				pattern.includes("*") && modelKeys.some((key) => wildcardKeyMatches(pattern, key)),
+		),
+	)?.group;
+}
+
+function normalizeMiniMaxModelKey(value: string | undefined): string | undefined {
+	const key = value?.toLowerCase().replace(/[^a-z0-9*]+/gu, "");
+	return key && /[a-z0-9]/u.test(key) ? key : undefined;
+}
+
+function wildcardKeyMatches(pattern: string, value: string): boolean {
+	if (!pattern.includes("*")) return pattern === value;
+	const segments = pattern.split("*").filter(Boolean);
+	let offset = 0;
+	for (const [index, segment] of segments.entries()) {
+		const found = value.indexOf(segment, offset);
+		if (found < 0 || (index === 0 && !pattern.startsWith("*") && found !== 0)) return false;
+		offset = found + segment.length;
+	}
+	const last = segments.at(-1);
+	return pattern.endsWith("*") || (last !== undefined && value.endsWith(last));
 }
 
 function formatZaiStatusline(report: UsageReport): string | undefined {

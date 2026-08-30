@@ -285,6 +285,8 @@ export default function usageExtension(
 			"baseten",
 			"deepseek",
 			"fireworks",
+			"minimax",
+			"minimax-cn",
 			"moonshotai",
 			"moonshotai-cn",
 			"vercel-ai-gateway",
@@ -353,7 +355,7 @@ export default function usageExtension(
 		const queryId = querySequence;
 		setBoundedMap(latestQueries, failureKey, queryId, MAX_ACCOUNT_STATES);
 
-		let deepSeekAuthChanged = false;
+		let retryableAuthChanged = false;
 		try {
 			const remainingMs = Math.max(1, deadlineAt - Date.now());
 			const guard = requiresRequestBoundaryGuard
@@ -367,9 +369,11 @@ export default function usageExtension(
 						);
 						if (signal.aborted || requestContextChanged()) throw abortError();
 						if (revalidated?.fingerprint !== auth.fingerprint) {
-							if (adapter.id === "deepseek") {
-								deepSeekAuthChanged = true;
-								throw new Error("DeepSeek runtime credential changed during the balance query.");
+							if (["deepseek", "minimax", "minimax-cn"].includes(adapter.id)) {
+								retryableAuthChanged = true;
+								throw new Error(
+									`${adapter.displayName} runtime credential changed during the usage query.`,
+								);
 							}
 							throw abortError();
 						}
@@ -401,7 +405,7 @@ export default function usageExtension(
 		} catch (error) {
 			if (isStaleExtensionContextError(error) || isAbortError(error)) throw error;
 			if (
-				deepSeekAuthChanged &&
+				retryableAuthChanged &&
 				authRetry === 0 &&
 				!signal.aborted &&
 				!requestContextChanged() &&
