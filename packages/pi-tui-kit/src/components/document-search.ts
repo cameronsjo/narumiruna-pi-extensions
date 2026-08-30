@@ -54,6 +54,7 @@ export class DocumentSearchController implements Focusable {
 	private cells: Array<CorpusCell | undefined> = [];
 	private matches: DocumentMatch[] = [];
 	private compactMatchOffsets: Uint32Array | undefined;
+	private alternateGlobalIndexes: number[] = [];
 	private currentIndex = 0;
 	private pasting = false;
 	private pasteBuffer = "";
@@ -68,7 +69,7 @@ export class DocumentSearchController implements Focusable {
 	}
 
 	get count() {
-		return this.compactMatchOffsets ? this.compactMatchOffsets.length / 2 : this.matches.length;
+		return (this.compactMatchOffsets?.length ?? 0) / 2 + this.matches.length;
 	}
 
 	get current() {
@@ -95,6 +96,7 @@ export class DocumentSearchController implements Focusable {
 		this.input.setValue("");
 		this.matches = [];
 		this.compactMatchOffsets = undefined;
+		this.alternateGlobalIndexes = [];
 		this.currentIndex = 0;
 		this.pasting = false;
 		this.pasteBuffer = "";
@@ -161,8 +163,6 @@ export class DocumentSearchController implements Focusable {
 		this.pasting = pasted.pasting;
 		this.pasteBuffer = pasted.buffer;
 		handleSearchInput(this.input, pasted.data);
-		const sanitized = sanitizeTerminalDocument(this.input.getValue()).replace(/\s+/gu, " ");
-		if (sanitized !== this.input.getValue()) this.input.setValue(sanitized);
 		if (this.input.getValue() === previous) return false;
 		this.rebuildMatches();
 		return true;
@@ -211,6 +211,7 @@ export class DocumentSearchController implements Focusable {
 		this.cells = [];
 		this.matches = [];
 		this.compactMatchOffsets = undefined;
+		this.alternateGlobalIndexes = [];
 		this.currentIndex = 0;
 	}
 
@@ -227,27 +228,31 @@ export class DocumentSearchController implements Focusable {
 	private rebuildMatches() {
 		const query = normalizeQuery(this.input.getValue());
 		this.compactMatchOffsets = undefined;
-		if (!query) this.matches = [];
-		else if (this.searchSources.length === 0) {
-			this.matches = [];
+		this.matches = [];
+		this.alternateGlobalIndexes = [];
+		if (query) {
 			this.compactMatchOffsets = findMatchOffsets(this.corpus, query);
-		} else {
-			this.matches = sortMatches(
-				uniqueMatches([
-					...findMatches(this.corpus, this.cells, query),
-					...this.searchSources.flatMap((source) => {
+			const alternates = sortMatches(
+				uniqueMatches(
+					this.searchSources.flatMap((source) => {
 						const corpus = buildSearchSourceCorpus(source);
 						return findMatches(corpus.text, corpus.cells, query);
 					}),
-				]),
+				),
+			);
+			this.matches = alternates.filter((match) => !this.hasPrimaryMatch(match));
+			this.alternateGlobalIndexes = this.matches.map(
+				(match, index) => this.primaryInsertionIndex(match) + index,
 			);
 		}
 		this.currentIndex = Math.min(this.currentIndex, Math.max(0, this.count - 1));
 	}
 
-	private currentMatch() {
-		if (!this.compactMatchOffsets) return this.matches[this.currentIndex];
-		const offsetIndex = this.currentIndex * 2;
+	private primaryMatch(index: number) {
+		if (!this.compactMatchOffsets || index < 0 || index >= this.compactMatchOffsets.length / 2) {
+			return undefined;
+		}
+		const offsetIndex = index * 2;
 		return materializeMatch(
 			this.cells,
 			this.compactMatchOffsets[offsetIndex] ?? 0,
@@ -255,23 +260,46 @@ export class DocumentSearchController implements Focusable {
 		);
 	}
 
+	private primaryInsertionIndex(match: DocumentMatch) {
+		let low = 0;
+		let high = (this.compactMatchOffsets?.length ?? 0) / 2;
+		while (low < high) {
+			const middle = Math.floor((low + high) / 2);
+			const candidate = this.primaryMatch(middle);
+			if (candidate && compareMatchStarts(candidate, match) < 0) low = middle + 1;
+			else high = middle;
+		}
+		return low;
+	}
+
+	private hasPrimaryMatch(match: DocumentMatch) {
+		const insertion = this.primaryInsertionIndex(match);
+		return [this.primaryMatch(insertion - 1), this.primaryMatch(insertion)].some(
+			(candidate) => candidate !== undefined && matchIdentity(candidate) === matchIdentity(match),
+		);
+	}
+
+	private currentMatch() {
+		return this.matchAt(this.currentIndex);
+	}
+
+	private matchAt(index: number) {
+		const alternateIndex = lowerBound(this.alternateGlobalIndexes, index);
+		if (this.alternateGlobalIndexes[alternateIndex] === index) {
+			return this.matches[alternateIndex];
+		}
+		return this.primaryMatch(index - alternateIndex);
+	}
+
 	private highlightMatches(): Array<[number, DocumentMatch]> {
-		if (!this.compactMatchOffsets) return [...this.matches.entries()];
 		if (this.count > MAX_HIGHLIGHTED_MATCHES) {
 			const current = this.currentMatch();
 			return current ? [[this.currentIndex, current]] : [];
 		}
 		const matches: Array<[number, DocumentMatch]> = [];
 		for (let index = 0; index < this.count; index += 1) {
-			const offsetIndex = index * 2;
-			matches.push([
-				index,
-				materializeMatch(
-					this.cells,
-					this.compactMatchOffsets[offsetIndex] ?? 0,
-					this.compactMatchOffsets[offsetIndex + 1] ?? 0,
-				),
-			]);
+			const match = this.matchAt(index);
+			if (match) matches.push([index, match]);
 		}
 		return matches;
 	}
@@ -470,24 +498,41 @@ function sameSearchSources(
 function uniqueMatches(matches: readonly DocumentMatch[]) {
 	const seen = new Set<string>();
 	return matches.filter((match) => {
-		const first = match.ranges[0];
-		const last = match.ranges.at(-1);
-		const identity = `${first?.row}:${first?.start}-${last?.row}:${last?.end}`;
+		const identity = matchIdentity(match);
 		if (seen.has(identity)) return false;
 		seen.add(identity);
 		return true;
 	});
 }
 
+function matchIdentity(match: DocumentMatch) {
+	const first = match.ranges[0];
+	const last = match.ranges.at(-1);
+	return `${first?.row}:${first?.start}-${last?.row}:${last?.end}`;
+}
+
+function compareMatchStarts(left: DocumentMatch, right: DocumentMatch) {
+	const leftStart = left.ranges[0];
+	const rightStart = right.ranges[0];
+	return (
+		(leftStart?.row ?? 0) - (rightStart?.row ?? 0) ||
+		(leftStart?.start ?? 0) - (rightStart?.start ?? 0)
+	);
+}
+
 function sortMatches(matches: DocumentMatch[]) {
-	return matches.sort((left, right) => {
-		const leftStart = left.ranges[0];
-		const rightStart = right.ranges[0];
-		return (
-			(leftStart?.row ?? 0) - (rightStart?.row ?? 0) ||
-			(leftStart?.start ?? 0) - (rightStart?.start ?? 0)
-		);
-	});
+	return matches.sort(compareMatchStarts);
+}
+
+function lowerBound(values: readonly number[], target: number) {
+	let low = 0;
+	let high = values.length;
+	while (low < high) {
+		const middle = Math.floor((low + high) / 2);
+		if ((values[middle] ?? 0) < target) low = middle + 1;
+		else high = middle;
+	}
+	return low;
 }
 
 function escapeRegExp(value: string) {

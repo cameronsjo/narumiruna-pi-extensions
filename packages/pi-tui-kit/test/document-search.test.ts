@@ -220,9 +220,32 @@ test("handles empty, absent, repeated, resized, invalidated, and sanitized queri
 	assert.equal(controller.count, 0);
 });
 
+test("normalizes whitespace for matching without moving the input cursor", () => {
+	const controller = new DocumentSearchController();
+	controller.activate(["a xb"]);
+	controller.handleInput("ab");
+	controller.handleInput("\u001b[D");
+	controller.handleInput("  ");
+	controller.handleInput("x");
+	assert.equal(controller.input.getValue(), "a  xb");
+	assert.equal(controller.count, 1);
+});
+
 test("indexes repetitive documents compactly while retaining count and navigation", () => {
 	const line = "a".repeat(100_000);
-	const controller = search([line], "a");
+	const controller = new DocumentSearchController();
+	controller.activate(
+		[line],
+		[],
+		[],
+		[
+			[
+				{ row: 0, column: 0, text: "z" },
+				{ row: 0, column: 1, text: "z" },
+			],
+		],
+	);
+	controller.handleInput("a");
 	assert.equal(controller.count, 100_000);
 	assert.equal(controller.current, 1);
 	controller.previous();
