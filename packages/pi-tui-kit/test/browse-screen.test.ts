@@ -466,6 +466,29 @@ test("browse detail search stays independent from list filtering", () => {
 	assert.deepEqual(harness.events, [{ kind: "close" }]);
 });
 
+test("browse keeps the current detail match visible after rewrapping", () => {
+	const screen: MenuScreen<ScreenId, ActionId> = {
+		kind: "browse",
+		title: "Documents",
+		enableDetailSearch: true,
+		items: [
+			{
+				id: "exact",
+				label: "Exact",
+				detailDocument: { content: `${"prefix ".repeat(12)}needle` },
+			},
+		],
+	};
+	const harness = componentHarness(screen, { rows: 8 });
+	harness.component.render(80);
+	harness.component.handleInput("y");
+	harness.component.render(80);
+	harness.component.handleInput("s");
+	harness.component.handleInput("needle");
+	assert.match(plainRender(harness.component, 80).join("\n"), /needle/u);
+	assert.match(plainRender(harness.component, 12).join("\n"), /needle/u);
+});
+
 test("browse searches exact detail documents and resets on exit", () => {
 	const screen: MenuScreen<ScreenId, ActionId> = {
 		kind: "browse",

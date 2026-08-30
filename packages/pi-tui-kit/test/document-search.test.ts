@@ -8,6 +8,7 @@ import {
 	formatDocumentPresentation,
 } from "../src/components/document-formatting.js";
 import { DocumentSearchController } from "../src/components/document-search.js";
+import { prepareMermaidRenderer } from "../src/components/mermaid.js";
 
 initTheme("dark", false);
 
@@ -85,6 +86,44 @@ test("preserves Markdown tokens across soft wraps without joining source lines",
 	);
 	assert.equal(controller.count, 0);
 
+	const table = formatDocumentPresentation(
+		"| a | b |\n|---|---|\n| abcdefgh | qrstuvwxyz |",
+		{ kind: "markdown" },
+		10,
+		theme,
+	);
+	controller.updateLines(
+		table.searchLines,
+		table.softWrapAfter,
+		table.ignoreLeadingWhitespace,
+		table.searchSources,
+	);
+	assert.equal(controller.count, 1);
+
+	const spacedTable = formatDocumentPresentation(
+		"| value |\n|---|\n| alpha beta |",
+		{ kind: "markdown" },
+		8,
+		theme,
+	);
+	const spacedSearch = search(spacedTable.searchLines, "alpha beta");
+	spacedSearch.updateLines(
+		spacedTable.searchLines,
+		spacedTable.softWrapAfter,
+		spacedTable.ignoreLeadingWhitespace,
+		spacedTable.searchSources,
+	);
+	assert.equal(spacedSearch.count, 1);
+	spacedSearch.close();
+	spacedSearch.activate(
+		spacedTable.searchLines,
+		spacedTable.softWrapAfter,
+		spacedTable.ignoreLeadingWhitespace,
+		spacedTable.searchSources,
+	);
+	spacedSearch.handleInput("hab");
+	assert.equal(spacedSearch.count, 0);
+
 	const explicitLines = formatDocumentPresentation("abcd\nefgh", { kind: "markdown" }, 4, theme);
 	assert.deepEqual(explicitLines.softWrapAfter, [false, false]);
 	controller.updateLines(
@@ -104,6 +143,23 @@ test("preserves Markdown tokens across soft wraps without joining source lines",
 		repeated.searchLines,
 		repeated.softWrapAfter,
 		repeated.ignoreLeadingWhitespace,
+	);
+	assert.equal(controller.count, 1);
+});
+
+test("uses one width-sensitive Markdown transform for display and search metadata", async () => {
+	await prepareMermaidRenderer();
+	const presentation = formatDocumentPresentation(
+		"```mermaid\nflowchart LR\n abcdefghijklmnop --> qrstuvwxyz\n```",
+		{ kind: "markdown" },
+		10,
+		theme,
+	);
+	const controller = search(presentation.searchLines, "jkl");
+	controller.updateLines(
+		presentation.searchLines,
+		presentation.softWrapAfter,
+		presentation.ignoreLeadingWhitespace,
 	);
 	assert.equal(controller.count, 1);
 });
@@ -150,10 +206,10 @@ test("handles empty, absent, repeated, resized, invalidated, and sanitized queri
 	assert.equal(controller.input.getValue(), "safe");
 	assert.equal(controller.count, 1);
 	controller.close();
-	controller.activate(["safe"]);
-	controller.handleInput("\u001b[200~sa\u001b]8;;unterminated");
-	controller.handleInput("fe\u001b[201~");
-	assert.equal(controller.input.getValue(), "safe");
+	controller.activate(["safelink"]);
+	controller.handleInput("\u001b[200~safe\u001b]8;;https://exa");
+	controller.handleInput("mple.test\u0007link\u001b[201~");
+	assert.equal(controller.input.getValue(), "safelink");
 	assert.equal(controller.count, 1);
 	controller.close();
 	controller.activate(["a.b a-b"]);
@@ -162,6 +218,18 @@ test("handles empty, absent, repeated, resized, invalidated, and sanitized queri
 	controller.close();
 	controller.activate(["same"]);
 	assert.equal(controller.count, 0);
+});
+
+test("indexes repetitive documents compactly while retaining count and navigation", () => {
+	const line = "a".repeat(100_000);
+	const controller = search([line], "a");
+	assert.equal(controller.count, 100_000);
+	assert.equal(controller.current, 1);
+	controller.previous();
+	assert.equal(controller.current, 100_000);
+	controller.next();
+	assert.equal(controller.current, 1);
+	assert.equal(controller.highlight([line], theme).length, 1);
 });
 
 test("routes only pasted bytes ahead of surrounding shortcuts", () => {

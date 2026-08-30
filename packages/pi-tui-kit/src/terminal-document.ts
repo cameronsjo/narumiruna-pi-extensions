@@ -6,6 +6,7 @@ const CSI = 0x9b;
 const ST = 0x9c;
 const OSC = 0x9d;
 const DCS = 0x90;
+const SOS = 0x98;
 const PM = 0x9e;
 const APC = 0x9f;
 const TAB_SIZE = 4;
@@ -30,7 +31,13 @@ export function sanitizeTerminalDocument(value: string): string {
 			index = skipCsi(normalized, index + length);
 			continue;
 		}
-		if (codePoint === OSC || codePoint === DCS || codePoint === PM || codePoint === APC) {
+		if (
+			codePoint === OSC ||
+			codePoint === DCS ||
+			codePoint === SOS ||
+			codePoint === PM ||
+			codePoint === APC
+		) {
 			index = skipStringSequence(normalized, index + length, codePoint === OSC);
 			continue;
 		}
@@ -104,7 +111,7 @@ function skipEscSequence(value: string, start: number): number {
 	const introducer = value.charCodeAt(start + 1);
 	if (introducer === 0x5b) return skipCsi(value, start + 2);
 	if (introducer === 0x5d) return skipStringSequence(value, start + 2, true);
-	if (introducer === 0x50 || introducer === 0x5e || introducer === 0x5f) {
+	if (introducer === 0x50 || introducer === 0x58 || introducer === 0x5e || introducer === 0x5f) {
 		return skipStringSequence(value, start + 2, false);
 	}
 	return skipGenericEscSequence(value, start);

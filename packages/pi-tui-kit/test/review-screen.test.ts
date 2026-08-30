@@ -862,6 +862,23 @@ test("review search is opt-in, focus-aware, navigable, and separately dismissibl
 	assert.deepEqual(harness.events.at(-1), { kind: "close" });
 });
 
+test("review keeps the current search match visible after rewrapping", () => {
+	const harness = reviewComponentHarness(
+		{
+			...reviewScreen,
+			content: `${"prefix ".repeat(12)}needle`,
+			enableSearch: true,
+		},
+		false,
+		8,
+	);
+	harness.component.render(80);
+	harness.component.handleInput("s");
+	harness.component.handleInput("needle");
+	assert.match(plainRender(harness.component, 80), /needle/u);
+	assert.match(plainRender(harness.component, 12), /needle/u);
+});
+
 test("review omits compact search hints with empty effective bindings", () => {
 	const hiddenSearchKeybindings: ReviewKeybindings = {
 		matches: (data, binding) => data === "s" && binding === "tui.altScreen.search",

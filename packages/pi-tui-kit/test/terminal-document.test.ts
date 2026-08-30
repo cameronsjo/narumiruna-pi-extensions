@@ -13,6 +13,8 @@ test("removes complete and unterminated terminal sequences", () => {
 	assert.equal(sanitizeTerminalDocument("a\u001b[31mred\u001b[0mz"), "aredz");
 	assert.equal(sanitizeTerminalDocument("a\u001b]8;;https://example.test\u0007link"), "alink");
 	assert.equal(sanitizeTerminalDocument("safe\u001b]8;;unterminated"), "safe");
+	assert.equal(sanitizeTerminalDocument("a\u001bXsecret\u001b\\z"), "az");
+	assert.equal(sanitizeTerminalDocument("a\u0098secret\u009cz"), "az");
 	assert.equal(sanitizeTerminalDocument("safe\u009b31"), "safe");
 });
 

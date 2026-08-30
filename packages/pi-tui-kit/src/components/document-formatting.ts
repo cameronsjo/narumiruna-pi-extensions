@@ -4,6 +4,7 @@ import * as PiTui from "@earendil-works/pi-tui";
 import { hardWrapTerminalDocument } from "../terminal-document.js";
 import type { ReviewFormat } from "../types.js";
 import { sanitizeDocumentText } from "./document-sanitization.js";
+import type { DocumentSearchSegment, DocumentSearchSource } from "./document-search.js";
 import { mermaidMarkdownTransform, supportsRichMarkdown } from "./mermaid.js";
 import { getLanguageFromPath, highlightCode } from "./syntax-highlighting.js";
 
@@ -13,7 +14,7 @@ export const RPC_DOCUMENT_PAGE_SIZE = 8;
 type DocumentTheme = Pick<Theme, "fg" | "bold"> &
 	Partial<Pick<Theme, "italic" | "underline" | "strikethrough">>;
 
-export function createDocumentLineCache(theme: DocumentTheme) {
+export function createDocumentLineCache(theme: DocumentTheme, includeSearchMetadata = false) {
 	let cached:
 		| {
 				content: string;
@@ -41,7 +42,7 @@ export function createDocumentLineCache(theme: DocumentTheme) {
 		) {
 			return cached.presentation;
 		}
-		const next = formatDocumentPresentation(content, format, width, theme);
+		const next = formatDocumentPresentation(content, format, width, theme, includeSearchMetadata);
 		cached = {
 			content,
 			formatKind: identity.kind,
@@ -74,6 +75,8 @@ export interface DocumentPresentation {
 	softWrapAfter: boolean[];
 	/** Ignore renderer-added indentation at the start of a continued row. */
 	ignoreLeadingWhitespace: boolean[];
+	/** Alternate rendered reading orders, such as independently wrapped Markdown table cells. */
+	searchSources: DocumentSearchSource[];
 }
 
 export function formatDocumentLines(
@@ -82,7 +85,7 @@ export function formatDocumentLines(
 	width: number,
 	theme: DocumentTheme,
 ): string[] {
-	return formatDocumentPresentation(content, format, width, theme).lines;
+	return formatDocumentPresentation(content, format, width, theme, false).lines;
 }
 
 export function formatDocumentPresentation(
@@ -90,23 +93,36 @@ export function formatDocumentPresentation(
 	format: ReviewFormat | undefined,
 	width: number,
 	theme: DocumentTheme,
+	includeSearchMetadata = true,
 ): DocumentPresentation {
 	const resolvedFormat = format ?? { kind: "text" as const };
 	if (resolvedFormat.kind === "markdown") {
-		const lines = renderMarkdownDocument(content, resolvedFormat, width, theme);
-		const searchLines = lines.map(markdownSearchLine);
+		const prepared = prepareMarkdownDocument(content, resolvedFormat, width, theme);
+		const lines = renderMarkdownDocument(prepared, resolvedFormat, width, theme);
+		const searchLines = markdownSearchLines(lines);
+		if (!includeSearchMetadata) {
+			return {
+				lines,
+				searchLines,
+				softWrapAfter: lines.map(() => false),
+				ignoreLeadingWhitespace: lines.map(() => false),
+				searchSources: [],
+			};
+		}
 		const referenceLines = renderMarkdownDocument(
-			content,
+			prepared,
 			resolvedFormat,
-			markdownReferenceWidth(content, width),
+			markdownReferenceWidth(prepared, width),
 			theme,
-		).map(markdownSearchLine);
-		const softWrapAfter = markdownSoftWrapAfter(searchLines, referenceLines);
+		);
+		const referenceSearchLines = markdownSearchLines(referenceLines);
+		const softWrapAfter = markdownSoftWrapAfter(searchLines, referenceSearchLines);
 		return {
 			lines,
 			searchLines,
 			softWrapAfter,
 			ignoreLeadingWhitespace: searchLines.map((_, index) => softWrapAfter[index - 1] ?? false),
+			searchSources: markdownTableSearchSources(lines, referenceLines),
 		};
 	}
 	const segments = documentSegments(content, width);
@@ -135,16 +151,112 @@ export function formatDocumentPresentation(
 		searchLines: lines,
 		softWrapAfter: segments.map(({ softWrapAfter }) => softWrapAfter),
 		ignoreLeadingWhitespace: lines.map(() => false),
+		searchSources: [],
 	};
 }
 
-function markdownSearchLine(line: string) {
-	const plain = PiTui.stripTerminalSequences(line).trimEnd();
-	return plain.replace(/^(?:│ )+/u, (prefix) => " ".repeat(PiTui.visibleWidth(prefix)));
+function markdownSearchLines(lines: readonly string[]) {
+	const plainLines = lines.map((line) => PiTui.stripTerminalSequences(line).trimEnd());
+	return plainLines.map((line, index) => {
+		if (isMarkdownTableRow(plainLines, index)) {
+			return line.replace(/^│ /u, "  ").replace(/ │$/u, "");
+		}
+		return line.replace(/^(?:│ )+/u, (prefix) => " ".repeat(PiTui.visibleWidth(prefix)));
+	});
+}
+
+function isMarkdownTableRow(lines: readonly string[], index: number) {
+	if (!/^│ .* │$/u.test(lines[index] ?? "")) return false;
+	let before = index - 1;
+	while (before >= 0 && /^│ .* │$/u.test(lines[before] ?? "")) before -= 1;
+	let after = index + 1;
+	while (after < lines.length && /^│ .* │$/u.test(lines[after] ?? "")) after += 1;
+	return /^[┌├].*[┐┤]$/u.test(lines[before] ?? "") && /^[├└].*[┤┘]$/u.test(lines[after] ?? "");
+}
+
+function markdownTableSearchSources(
+	lines: readonly string[],
+	referenceLines: readonly string[],
+): DocumentSearchSource[] {
+	const sources = markdownTableCellSources(lines);
+	const referenceSources = markdownTableCellSources(referenceLines);
+	return sources.flatMap((source, index) => {
+		if (source.length < 2) return [];
+		return [markTableCellSeparators(source, referenceSources[index] ?? [])];
+	});
+}
+
+function markdownTableCellSources(lines: readonly string[]) {
+	const plainLines = lines.map((line) => PiTui.stripTerminalSequences(line).trimEnd());
+	const sources: DocumentSearchSource[] = [];
+	for (let index = 0; index < plainLines.length; ) {
+		if (!isMarkdownTableRow(plainLines, index)) {
+			index += 1;
+			continue;
+		}
+		const rows: Array<ReturnType<typeof markdownTableCells>> = [];
+		while (index < plainLines.length && isMarkdownTableRow(plainLines, index)) {
+			rows.push(markdownTableCells(plainLines[index] ?? "", index));
+			index += 1;
+		}
+		const columnCount = Math.max(0, ...rows.map((row) => row.length));
+		for (let column = 0; column < columnCount; column += 1) {
+			sources.push(
+				rows.flatMap((row) => {
+					const segment = row[column];
+					return segment ? [segment] : [];
+				}),
+			);
+		}
+	}
+	return sources;
+}
+
+function markTableCellSeparators(
+	source: DocumentSearchSource,
+	referenceSource: DocumentSearchSource,
+): DocumentSearchSource {
+	const reference = referenceSource.map((segment) => segment.text).join("\n");
+	let referenceOffset = 0;
+	return source.map((segment, index) => {
+		if (index === 0) return segment;
+		const previous = source[index - 1];
+		const left = Array.from(previous?.text ?? "")
+			.slice(-16)
+			.join("");
+		const right = Array.from(segment.text).slice(0, 16).join("");
+		const leftIndex = reference.indexOf(left, referenceOffset);
+		if (leftIndex >= 0) referenceOffset = leftIndex + left.length;
+		return {
+			...segment,
+			separatorBefore: leftIndex < 0 || !reference.startsWith(right, referenceOffset),
+		};
+	});
+}
+
+function markdownTableCells(line: string, row: number) {
+	const cells: Array<DocumentSearchSegment | undefined> = [];
+	let start = line.indexOf("│") + 1;
+	while (start > 0) {
+		const end = line.indexOf("│", start);
+		if (end < 0) break;
+		const raw = line.slice(start, end);
+		const leading = /^\s*/u.exec(raw)?.[0] ?? "";
+		const text = raw.trim();
+		if (text) {
+			cells.push({
+				row,
+				column: PiTui.visibleWidth(line.slice(0, start) + leading),
+				text,
+			});
+		} else cells.push(undefined);
+		start = end + 1;
+	}
+	return cells;
 }
 
 function markdownReferenceWidth(content: string, width: number) {
-	const widestSourceLine = sanitizeDocumentText(content)
+	const widestSourceLine = content
 		.split("\n")
 		.reduce((widest, line) => Math.max(widest, PiTui.visibleWidth(line)), 0);
 	return Math.max(1, width, widestSourceLine + 32);
@@ -170,6 +282,17 @@ export function plainDocumentLines(content: string, width: number): string[] {
 	return documentSegments(content, width).map(({ text }) => text);
 }
 
+function prepareMarkdownDocument(
+	content: string,
+	format: Extract<ReviewFormat, { kind: "markdown" }>,
+	width: number,
+	theme: DocumentTheme,
+) {
+	const safe = sanitizeDocumentText(content);
+	const transform = format.renderMermaid === false ? undefined : mermaidMarkdownTransform(theme);
+	return transform?.(safe, Math.max(1, width)) ?? safe;
+}
+
 function renderMarkdownDocument(
 	content: string,
 	format: Extract<ReviewFormat, { kind: "markdown" }>,
@@ -177,15 +300,12 @@ function renderMarkdownDocument(
 	theme: DocumentTheme,
 ): string[] {
 	const component = new PiTui.Markdown(
-		sanitizeDocumentText(content),
+		content,
 		0,
 		0,
 		markdownTheme(theme),
 		{ color: (text) => theme.fg("text", text) },
-		{
-			renderLatex: format.renderLatex ?? true,
-			transform: format.renderMermaid === false ? undefined : mermaidMarkdownTransform(theme),
-		},
+		{ renderLatex: format.renderLatex ?? true },
 	);
 	return component.render(Math.max(1, width));
 }

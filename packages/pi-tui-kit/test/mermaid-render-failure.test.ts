@@ -5,8 +5,11 @@ import { createMockContext } from "../../../test/support.js";
 import { defineMenu, runMenu } from "../src/index.js";
 import { createTuiHarness } from "../src/testing/index.js";
 
+const mermaid = vi.hoisted(() => ({ renderCalls: 0 }));
+
 vi.mock("grok-mermaid", () => ({
 	render: () => {
+		mermaid.renderCalls += 1;
 		throw new Error("simulated Mermaid render failure");
 	},
 }));
@@ -32,6 +35,7 @@ test("a Mermaid render failure preserves the fenced source", async () => {
 	const rendered = stripVTControlCharacters(tui.render().join("\n"));
 	assert.match(rendered, /```mermaid/u);
 	assert.match(rendered, /flowchart LR/u);
+	assert.equal(mermaid.renderCalls, 1);
 	tui.press("tui.select.cancel");
 	assert.deepEqual(await running, { kind: "closed", reason: "back" });
 });

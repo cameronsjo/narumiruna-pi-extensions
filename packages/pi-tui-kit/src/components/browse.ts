@@ -69,10 +69,14 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 	let lastDetailLines: readonly string[] = [];
 	let lastDetailSoftWrapAfter: readonly boolean[] = [];
 	let lastDetailIgnoreLeadingWhitespace: readonly boolean[] = [];
+	let lastDetailSearchSources: DocumentPresentation["searchSources"] = [];
 	let view: BrowseView = "list";
 	let focused = false;
 	let disposed = false;
-	const detailLineCache = createDocumentLineCache(options.theme);
+	const detailLineCache = createDocumentLineCache(
+		options.theme,
+		Boolean(options.screen.enableDetailSearch),
+	);
 	const selected = () => filteredItems[selectedIndex];
 	const syncFocus = () => {
 		searchInput.focused = focused && view === "list" && searchInputVisible;
@@ -148,15 +152,24 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 				lastDetailLines = presentation.searchLines;
 				lastDetailSoftWrapAfter = presentation.softWrapAfter;
 				lastDetailIgnoreLeadingWhitespace = presentation.ignoreLeadingWhitespace;
+				lastDetailSearchSources = presentation.searchSources;
 				detailSearch?.updateLines(
 					lastDetailLines,
 					lastDetailSoftWrapAfter,
 					lastDetailIgnoreLeadingWhitespace,
+					lastDetailSearchSources,
 				);
 				const displayedContent = detailSearch?.highlight(content, options.theme) ?? content;
 				const layout = detailLayout(contentRows, content.length, detailSearch?.active ?? false);
 				detailViewportRows = layout.contentRows;
 				detailMaximumScroll = Math.max(0, content.length - layout.contentRows);
+				if (detailSearch?.active && detailSearch.currentRow !== undefined) {
+					detailScrollOffset = keepRowVisible(
+						detailScrollOffset,
+						detailSearch.currentRow,
+						Math.max(1, detailViewportRows),
+					);
+				}
 				detailScrollOffset = clamp(detailScrollOffset, 0, detailMaximumScroll);
 				const lines = [
 					...(layout.titleRows
@@ -295,6 +308,7 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 					lastDetailLines = [];
 					lastDetailSoftWrapAfter = [];
 					lastDetailIgnoreLeadingWhitespace = [];
+					lastDetailSearchSources = [];
 					detailSearch?.close();
 					syncFocus();
 				} else options.onEvent({ kind: options.screen.hint ?? "back" });
@@ -322,6 +336,7 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 						lastDetailLines,
 						lastDetailSoftWrapAfter,
 						lastDetailIgnoreLeadingWhitespace,
+						lastDetailSearchSources,
 					);
 				}
 			} else if (options.keybindings.matches(data, "tui.select.up")) move(-1);
@@ -338,6 +353,7 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 					lastDetailLines = [];
 					lastDetailSoftWrapAfter = [];
 					lastDetailIgnoreLeadingWhitespace = [];
+					lastDetailSearchSources = [];
 					detailSearch?.close();
 					syncFocus();
 				}
@@ -409,6 +425,7 @@ function legacyDetailPresentation(
 		searchLines: lines,
 		softWrapAfter,
 		ignoreLeadingWhitespace: lines.map(() => false),
+		searchSources: [],
 	};
 }
 
@@ -617,6 +634,12 @@ function detailHint(keybindings: MenuKeybindings, searchEnabled: boolean, search
 
 function safeBrowseText(value: unknown) {
 	return safeMenuText(stripVTControlCharacters(String(value)));
+}
+
+function keepRowVisible(offset: number, row: number, viewportRows: number) {
+	if (row < offset) return row;
+	if (row >= offset + viewportRows) return row - viewportRows + 1;
+	return offset;
 }
 
 function clamp(value: number, minimum: number, maximum: number) {

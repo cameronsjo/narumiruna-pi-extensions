@@ -14,6 +14,7 @@ import type {
 } from "./contracts.js";
 import {
 	createDocumentLineCache,
+	type DocumentPresentation,
 	documentDialogPages,
 	RPC_DOCUMENT_LINE_WIDTH,
 	RPC_DOCUMENT_PAGE_SIZE,
@@ -48,7 +49,11 @@ export function createReviewComponent<ScreenId extends string, ActionId extends 
 	let lastLines: readonly string[] = [];
 	let lastSoftWrapAfter: readonly boolean[] = [];
 	let lastIgnoreLeadingWhitespace: readonly boolean[] = [];
-	const documentLineCache = createDocumentLineCache(options.theme);
+	let lastSearchSources: DocumentPresentation["searchSources"] = [];
+	const documentLineCache = createDocumentLineCache(
+		options.theme,
+		Boolean(options.screen.enableSearch),
+	);
 	const search = options.screen.enableSearch ? new DocumentSearchController() : undefined;
 
 	const moveTo = (offset: number) => {
@@ -77,7 +82,20 @@ export function createReviewComponent<ScreenId extends string, ActionId extends 
 			lastLines = allLines.length > 0 ? presentation.searchLines : [];
 			lastSoftWrapAfter = allLines.length > 0 ? presentation.softWrapAfter : [];
 			lastIgnoreLeadingWhitespace = allLines.length > 0 ? presentation.ignoreLeadingWhitespace : [];
-			search?.updateLines(lastLines, lastSoftWrapAfter, lastIgnoreLeadingWhitespace);
+			lastSearchSources = allLines.length > 0 ? presentation.searchSources : [];
+			search?.updateLines(
+				lastLines,
+				lastSoftWrapAfter,
+				lastIgnoreLeadingWhitespace,
+				lastSearchSources,
+			);
+			if (search?.active && search.currentRow !== undefined) {
+				scrollOffset = keepRowVisible(
+					scrollOffset,
+					search.currentRow,
+					Math.max(1, lastViewportSize),
+				);
+			}
 			const frame = renderAdaptiveReviewFrame({
 				screen: options.screen,
 				allLines: search?.highlight(allLines, options.theme) ?? allLines,
@@ -160,7 +178,12 @@ export function createReviewComponent<ScreenId extends string, ActionId extends 
 			else if (options.screen.confirm && options.keybindings.matches(data, "tui.select.confirm")) {
 				options.onEvent({ kind: "activate", itemId: options.screen.confirm.id });
 			} else if (search && options.keybindings.matches(data, "tui.altScreen.search")) {
-				search.activate(lastLines, lastSoftWrapAfter, lastIgnoreLeadingWhitespace);
+				search.activate(
+					lastLines,
+					lastSoftWrapAfter,
+					lastIgnoreLeadingWhitespace,
+					lastSearchSources,
+				);
 				options.tui.requestRender();
 			}
 		},
@@ -439,6 +462,12 @@ function compactReviewHint(
 		],
 		width,
 	);
+}
+
+function keepRowVisible(offset: number, row: number, viewportRows: number) {
+	if (row < offset) return row;
+	if (row >= offset + viewportRows) return row - viewportRows + 1;
+	return offset;
 }
 
 function reviewBindingText(
