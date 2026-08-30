@@ -16,7 +16,9 @@ export function formatUsageReport(report: UsageReport, displayState: UsageDispla
 			? "DeepSeek API Balance"
 			: report.providerId === "fireworks"
 				? "Fireworks API Spend"
-				: `${report.providerName} Usage`;
+				: report.providerId === "vercel-ai-gateway"
+					? "Vercel AI Gateway Credits"
+					: `${report.providerName} Usage`;
 	const lines = [`${title} · ${stateLabel}`];
 	if (report.accountLabel) lines.push(`Account: ${report.accountLabel}`);
 	lines.push(`Semantics: ${report.semantics.label}`, "");
@@ -24,6 +26,7 @@ export function formatUsageReport(report: UsageReport, displayState: UsageDispla
 	if (report.providerId === "openai-codex") formatCodexReport(lines, report);
 	else if (report.providerId === "deepseek") formatDeepSeekReport(lines, report);
 	else if (report.providerId === "fireworks") formatFireworksReport(lines, report);
+	else if (report.providerId === "vercel-ai-gateway") formatVercelAIGatewayReport(lines, report);
 	else if (report.providerId === "github-copilot") formatGitHubCopilotReport(lines, report);
 	else if (report.providerId === "openrouter") formatOpenRouterReport(lines, report);
 	else if (report.providerId === "opencode-go") formatOpenCodeZenReport(lines, report);
@@ -50,6 +53,7 @@ export function formatUsageStatusline(
 	}
 	if (report.providerId === "deepseek") return formatDeepSeekStatusline(report);
 	if (report.providerId === "fireworks") return formatFireworksStatusline(report);
+	if (report.providerId === "vercel-ai-gateway") return formatVercelAIGatewayStatusline(report);
 	if (report.providerId === "github-copilot") return formatGitHubCopilotStatusline(report);
 	if (report.providerId === "openrouter") {
 		const limit = report.buckets.find((bucket) => bucket.id === "key-limit");
@@ -155,6 +159,17 @@ function fireworksCurrencies(report: UsageReport): string[] {
 		currencies.push(metric.currency);
 	}
 	return currencies;
+}
+
+function formatVercelAIGatewayReport(lines: string[], report: UsageReport): void {
+	for (const metric of report.metrics) {
+		lines.push(`${`${metric.label}:`.padEnd(VALUE_COLUMN)}USD ${metric.value}`);
+	}
+}
+
+function formatVercelAIGatewayStatusline(report: UsageReport): string {
+	const balance = report.metrics.find((metric) => metric.id === "credit-balance");
+	return balance ? `vercel USD ${balance.value} left` : "vercel credits unavailable";
 }
 
 function formatGitHubCopilotReport(lines: string[], report: UsageReport): void {
