@@ -5,6 +5,7 @@ import {
 	formatAssistantMetadataLines,
 	formatToolStampLabel,
 	isAssistantMetadataData,
+	isStampThinkingLevel,
 } from "../src/metadata.js";
 
 const COMPLETE_MESSAGE = {
@@ -154,6 +155,56 @@ test("assistant metadata formatting distinguishes compact, expanded, and explici
 	assert.deepEqual(formatAssistantMetadataLines(wholeCost, "compact", false), [
 		"requested-model → actual-model · 1,234 tok · est $1.2",
 	]);
+});
+
+test("assistant metadata formats effective Thinking level and only abnormal compact outcomes", () => {
+	for (const thinkingLevel of [
+		"off",
+		"minimal",
+		"low",
+		"medium",
+		"high",
+		"xhigh",
+		"max",
+	] as const) {
+		assert.equal(isStampThinkingLevel(thinkingLevel), true);
+		const metadata = captureAssistantMetadata({
+			...COMPLETE_MESSAGE,
+			stopReason: "stop",
+			diagnostics: [],
+		});
+		assert.ok(metadata);
+		assert.match(
+			formatAssistantMetadataLines(metadata, "compact", false, thinkingLevel)[0] ?? "",
+			new RegExp(`thinking ${thinkingLevel}`, "u"),
+		);
+	}
+	assert.equal(isStampThinkingLevel("ultra"), false);
+
+	for (const stopReason of ["length", "error", "aborted"] as const) {
+		const metadata = captureAssistantMetadata({ ...COMPLETE_MESSAGE, stopReason });
+		assert.ok(metadata);
+		assert.match(
+			formatAssistantMetadataLines(metadata, "compact", false, "high")[0] ?? "",
+			new RegExp(`thinking high · stop ${stopReason}`, "u"),
+		);
+	}
+	for (const stopReason of ["stop", "toolUse"] as const) {
+		const metadata = captureAssistantMetadata({ ...COMPLETE_MESSAGE, stopReason });
+		assert.ok(metadata);
+		assert.equal(
+			formatAssistantMetadataLines(metadata, "compact", false, "high")[0]?.includes("stop "),
+			false,
+		);
+	}
+
+	const expanded = captureAssistantMetadata({ ...COMPLETE_MESSAGE, stopReason: "error" });
+	assert.ok(expanded);
+	assert.match(
+		formatAssistantMetadataLines(expanded, "expanded", false, "high")[0] ?? "",
+		/thinking high · stop error/u,
+	);
+	assert.deepEqual(formatAssistantMetadataLines(expanded, "compact", false, "ultra" as never), []);
 });
 
 test("assistant metadata preserves missing provider values instead of estimating them", () => {

@@ -4,6 +4,7 @@ import {
 	canonicalizeLocale,
 	canonicalizeTimeZone,
 	DEFAULT_STAMP_SETTINGS,
+	formatExactTimelineLine,
 	formatMessageStampLabel,
 	formatResponseElapsed,
 	formatStampLabel,
@@ -178,6 +179,17 @@ test("response timing labels unavailable first content without fabricating legac
 		),
 		"00:01:02 · first n/a · total 1.5s",
 	);
+});
+
+test("exact timeline formatting preserves UTC milliseconds and rejects invalid values", () => {
+	const timestamp = Date.UTC(2026, 6, 30, 0, 1, 2, 345);
+	assert.equal(
+		formatExactTimelineLine("created", timestamp),
+		`timeline · created 2026-07-30T00:01:02.345Z · unix-ms ${timestamp}`,
+	);
+	assert.equal(formatExactTimelineLine("completed", Number.NaN), undefined);
+	assert.equal(formatExactTimelineLine("created", Number.POSITIVE_INFINITY), undefined);
+	assert.equal(formatExactTimelineLine("future" as never, timestamp), undefined);
 });
 
 test("response elapsed formatting is exact at boundaries and rejects invalid values", () => {

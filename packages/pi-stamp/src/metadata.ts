@@ -1,8 +1,18 @@
 export const ASSISTANT_METADATA_MODES = ["off", "compact", "expanded"] as const;
 export const ASSISTANT_STOP_REASONS = ["stop", "toolUse", "length", "error", "aborted"] as const;
+export const STAMP_THINKING_LEVELS = [
+	"off",
+	"minimal",
+	"low",
+	"medium",
+	"high",
+	"xhigh",
+	"max",
+] as const;
 
 export type StampAssistantMetadataMode = (typeof ASSISTANT_METADATA_MODES)[number];
 export type AssistantStopReason = (typeof ASSISTANT_STOP_REASONS)[number];
+export type StampThinkingLevel = (typeof STAMP_THINKING_LEVELS)[number];
 export type ToolStampOutcome = "success" | "error";
 
 export interface AssistantStampUsageData {
@@ -121,10 +131,19 @@ export function formatAssistantMetadataLines(
 	metadata: Readonly<AssistantMetadataData>,
 	mode: StampAssistantMetadataMode,
 	debug: boolean,
+	thinkingLevel?: StampThinkingLevel,
 ): string[] {
-	if (mode === "off" || !isAssistantMetadataData(metadata)) return [];
+	if (
+		mode === "off" ||
+		!isAssistantMetadataData(metadata) ||
+		(thinkingLevel !== undefined && !isStampThinkingLevel(thinkingLevel))
+	) {
+		return [];
+	}
 	const lines =
-		mode === "compact" ? [formatCompactMetadata(metadata)] : formatExpandedMetadata(metadata);
+		mode === "compact"
+			? [formatCompactMetadata(metadata, thinkingLevel)]
+			: formatExpandedMetadata(metadata, thinkingLevel);
 	if (!debug) return lines;
 	if (metadata.responseId) lines.push(`debug · response id ${metadata.responseId}`);
 	if (metadata.diagnosticCount !== undefined) {
@@ -166,6 +185,10 @@ export function formatElapsedSeconds(elapsedMilliseconds: number): string | unde
 	if (elapsedMilliseconds > 0 && elapsedMilliseconds < 100) return "<0.1s";
 	const tenths = Math.round(elapsedMilliseconds / 100);
 	return `${(tenths / 10).toFixed(1)}s`;
+}
+
+export function isStampThinkingLevel(value: unknown): value is StampThinkingLevel {
+	return STAMP_THINKING_LEVELS.includes(value as StampThinkingLevel);
 }
 
 export function sanitizeTerminalText(value: string): string {
@@ -229,15 +252,26 @@ function captureDiagnostics(
 	};
 }
 
-function formatCompactMetadata(metadata: Readonly<AssistantMetadataData>): string {
+function formatCompactMetadata(
+	metadata: Readonly<AssistantMetadataData>,
+	thinkingLevel: StampThinkingLevel | undefined,
+): string {
 	const model =
 		metadata.responseModel && metadata.responseModel !== metadata.model
 			? `${metadata.model} → ${metadata.responseModel}`
 			: metadata.model;
 	const tokens = metadata.usage?.totalTokens;
 	const cost = metadata.usage?.estimatedCost;
+	const abnormalStopReason =
+		metadata.stopReason === "length" ||
+		metadata.stopReason === "error" ||
+		metadata.stopReason === "aborted"
+			? metadata.stopReason
+			: undefined;
 	return [
 		model,
+		thinkingLevel === undefined ? undefined : `thinking ${thinkingLevel}`,
+		abnormalStopReason === undefined ? undefined : `stop ${abnormalStopReason}`,
 		tokens === undefined ? undefined : `${formatInteger(tokens)} tok`,
 		cost === undefined ? undefined : `est ${formatCost(cost)}`,
 	]
@@ -245,12 +279,16 @@ function formatCompactMetadata(metadata: Readonly<AssistantMetadataData>): strin
 		.join(" · ");
 }
 
-function formatExpandedMetadata(metadata: Readonly<AssistantMetadataData>): string[] {
+function formatExpandedMetadata(
+	metadata: Readonly<AssistantMetadataData>,
+	thinkingLevel: StampThinkingLevel | undefined,
+): string[] {
 	const provenance = [
 		`api ${metadata.api}`,
 		`provider ${metadata.provider}`,
 		`requested ${metadata.model}`,
 		metadata.responseModel ? `response ${metadata.responseModel}` : undefined,
+		thinkingLevel === undefined ? undefined : `thinking ${thinkingLevel}`,
 		`stop ${metadata.stopReason}`,
 	]
 		.filter((part): part is string => part !== undefined)
