@@ -18,11 +18,14 @@ import cbmem, {
 	readLineRange,
 	TOOL_NAMES,
 } from "../src/cbmem.js";
+import { type DaemonEnsurer, ensureCodebaseMemoryDaemon } from "../src/daemon.js";
 import type { ProjectResolution, ProjectResolutionService } from "../src/worktree-project.js";
 
 const packageDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 let fixtureDirectory: string;
 let fixtureBinary: string;
+
+type LifecycleHandler = (event: never, ctx: ExtensionContext) => Promise<void> | void;
 
 beforeAll(async () => {
 	fixtureDirectory = await mkdtemp(path.join(tmpdir(), "pi-cbmem-test-"));
@@ -31,6 +34,33 @@ beforeAll(async () => {
 		fixtureBinary,
 		`#!/usr/bin/env node
 const fs = require("node:fs");
+if (process.argv[2] === "daemon") {
+  const command = process.argv[3];
+  const statePath = process.env.CBMEM_TEST_DAEMON_STATE;
+  const logPath = process.env.CBMEM_TEST_DAEMON_LOG;
+  if (logPath) fs.appendFileSync(logPath, command + "\\n");
+  if (command === "status") {
+    const waitReadyPath = process.env.CBMEM_TEST_DAEMON_WAIT_READY;
+    if (waitReadyPath) {
+      fs.writeFileSync(waitReadyPath + ".tmp", String(process.pid));
+      fs.renameSync(waitReadyPath + ".tmp", waitReadyPath);
+      setInterval(() => {}, 1000);
+    } else if (statePath && fs.existsSync(statePath)) {
+      process.stdout.write("daemon: active (permanent)\\n");
+    } else {
+      process.stdout.write("daemon: not running\\n");
+      process.exitCode = 1;
+    }
+  } else if (command === "start") {
+    if (process.env.CBMEM_TEST_DAEMON_START_FAIL === "1") {
+      process.stderr.write("daemon startup failed\\n");
+      process.exitCode = 9;
+    } else {
+      if (statePath) fs.writeFileSync(statePath, String(process.pid));
+      process.stdout.write("daemon: started (permanent)\\n");
+    }
+  }
+} else {
 let input = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => { input += chunk; });
@@ -86,6 +116,7 @@ process.stdin.on("end", () => {
       process.stdout.write(JSON.stringify({ ok: true, args, tool: process.argv[3] }));
   }
 });
+}
 `,
 		{ mode: 0o700 },
 	);
@@ -96,15 +127,21 @@ afterAll(async () => {
 	await rm(fixtureDirectory, { recursive: true, force: true });
 });
 
-test("cbmem registers complete Pi tool definitions", () => {
+test("cbmem registers complete Pi tool definitions and daemon lifecycle", () => {
 	const registered: ToolDefinition[] = [];
+	const events: string[] = [];
 	const api = {
+		on(event: string) {
+			events.push(event);
+		},
 		registerTool(tool: ToolDefinition) {
 			registered.push(tool);
 		},
 	} as unknown as ExtensionAPI;
 
 	cbmem(api);
+
+	assert.deepEqual(events, ["session_start", "session_shutdown"]);
 
 	assert.deepEqual(
 		registered.map((tool) => tool.name),
@@ -131,6 +168,119 @@ test("cbmem registers complete Pi tool definitions", () => {
 		if (aliasTools.has(tool.name)) assert.match(projectDescription ?? "", /@current/u);
 		else assert.doesNotMatch(projectDescription ?? "", /@current/u);
 	}
+});
+
+test("daemon controller starts only when status reports no active daemon", async () => {
+	const statePath = path.join(fixtureDirectory, `daemon-state-${Date.now()}`);
+	const logPath = path.join(fixtureDirectory, `daemon-log-${Date.now()}`);
+	await withDaemonFixture(statePath, logPath, async () => {
+		const controller = new AbortController();
+		assert.deepEqual(
+			await ensureCodebaseMemoryDaemon(fixtureBinary, fixtureDirectory, controller.signal),
+			{ started: true },
+		);
+		assert.deepEqual(
+			await ensureCodebaseMemoryDaemon(fixtureBinary, fixtureDirectory, controller.signal),
+			{ started: false },
+		);
+	});
+
+	assert.deepEqual((await readFile(logPath, "utf8")).trim().split("\n"), [
+		"status",
+		"start",
+		"status",
+	]);
+});
+
+test("daemon controller cancellation terminates its status process", async () => {
+	const statePath = path.join(fixtureDirectory, `daemon-cancel-state-${Date.now()}`);
+	const logPath = path.join(fixtureDirectory, `daemon-cancel-log-${Date.now()}`);
+	const readyPath = path.join(fixtureDirectory, `daemon-cancel-ready-${Date.now()}`);
+	await withDaemonFixture(statePath, logPath, async () => {
+		process.env.CBMEM_TEST_DAEMON_WAIT_READY = readyPath;
+		const watcher = watch(fixtureDirectory);
+		const ready = new Promise<void>((resolve) => {
+			watcher.on("change", (_event, filename) => {
+				if (filename === path.basename(readyPath)) resolve();
+			});
+		});
+		const controller = new AbortController();
+		const pending = ensureCodebaseMemoryDaemon(fixtureBinary, fixtureDirectory, controller.signal);
+
+		await ready;
+		watcher.close();
+		const pid = Number(await readFile(readyPath, "utf8"));
+		controller.abort();
+		await assert.rejects(pending, (error: Error) => error.name === "AbortError");
+		await waitForProcessExit(pid);
+	});
+});
+
+test("daemon controller reports bounded start failures", async () => {
+	const statePath = path.join(fixtureDirectory, `daemon-failure-state-${Date.now()}`);
+	const logPath = path.join(fixtureDirectory, `daemon-failure-log-${Date.now()}`);
+	await withDaemonFixture(statePath, logPath, async () => {
+		process.env.CBMEM_TEST_DAEMON_START_FAIL = "1";
+		await assert.rejects(
+			ensureCodebaseMemoryDaemon(fixtureBinary, fixtureDirectory, new AbortController().signal),
+			/daemon start exited with code 9: daemon startup failed/u,
+		);
+	});
+});
+
+test("daemon lifecycle notifies only when it starts the permanent daemon", async () => {
+	const started = createLifecycleHarness(async () => ({ started: true }));
+	const startedContext = lifecycleContext("tui");
+	await started.emit("session_start", startedContext.ctx);
+	assert.deepEqual(startedContext.notifications, [["Started the Codebase Memory daemon.", "info"]]);
+
+	const existing = createLifecycleHarness(async () => ({ started: false }));
+	const existingContext = lifecycleContext("rpc");
+	await existing.emit("session_start", existingContext.ctx);
+	assert.deepEqual(existingContext.notifications, []);
+});
+
+test("daemon lifecycle cancels stale startup work without stopping the daemon", async () => {
+	let startupSignal: AbortSignal | undefined;
+	let signalReady: (() => void) | undefined;
+	const ready = new Promise<void>((resolve) => {
+		signalReady = resolve;
+	});
+	const ensureDaemon: DaemonEnsurer = async (_binary, _cwd, signal) => {
+		startupSignal = signal;
+		signalReady?.();
+		return await new Promise((_resolve, reject) => {
+			signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+		});
+	};
+	const harness = createLifecycleHarness(ensureDaemon);
+	const context = lifecycleContext("tui");
+	const startup = harness.emit("session_start", context.ctx);
+	await ready;
+
+	await harness.emit("session_shutdown", context.ctx);
+	await startup;
+
+	assert.equal(startupSignal?.aborted, true);
+	assert.deepEqual(context.notifications, []);
+});
+
+test("daemon lifecycle exposes startup failures safely in UI and non-UI modes", async () => {
+	const harness = createLifecycleHarness(async () => {
+		throw new Error("failed\u001b[31m badly");
+	});
+	const tui = lifecycleContext("tui");
+	await harness.emit("session_start", tui.ctx);
+	assert.deepEqual(tui.notifications, [
+		["Could not start the Codebase Memory daemon: failed badly", "warning"],
+	]);
+
+	const print = lifecycleContext("print");
+	await assert.rejects(
+		harness.emit("session_start", print.ctx),
+		/Could not start the Codebase Memory daemon: failed badly/u,
+	);
+	assert.deepEqual(print.notifications, []);
 });
 
 test("@current routes read-only graph tools and annotates the resolved project", async () => {
@@ -575,12 +725,71 @@ test("bundled skill enforces graph-first evidence and valid project-scoped calls
 	);
 });
 
+function createLifecycleHarness(ensureDaemon: DaemonEnsurer) {
+	const handlers = new Map<string, LifecycleHandler[]>();
+	const api = {
+		on(event: string, handler: LifecycleHandler) {
+			handlers.set(event, [...(handlers.get(event) ?? []), handler]);
+		},
+		registerTool() {},
+	} as unknown as ExtensionAPI;
+	cbmem(api, fixtureBinary, undefined, ensureDaemon);
+	return {
+		async emit(event: string, ctx: ExtensionContext) {
+			for (const handler of handlers.get(event) ?? []) await handler({} as never, ctx);
+		},
+	};
+}
+
+function lifecycleContext(mode: ExtensionContext["mode"]) {
+	const notifications: Array<[string, string | undefined]> = [];
+	const ctx = {
+		cwd: fixtureDirectory,
+		mode,
+		hasUI: mode === "tui" || mode === "rpc",
+		ui: {
+			notify(message: string, level?: string) {
+				notifications.push([message, level]);
+			},
+		},
+	} as unknown as ExtensionContext;
+	return { ctx, notifications };
+}
+
+async function withDaemonFixture(
+	statePath: string,
+	logPath: string,
+	callback: () => Promise<void>,
+): Promise<void> {
+	const previousState = process.env.CBMEM_TEST_DAEMON_STATE;
+	const previousLog = process.env.CBMEM_TEST_DAEMON_LOG;
+	const previousFailure = process.env.CBMEM_TEST_DAEMON_START_FAIL;
+	const previousWaitReady = process.env.CBMEM_TEST_DAEMON_WAIT_READY;
+	process.env.CBMEM_TEST_DAEMON_STATE = statePath;
+	process.env.CBMEM_TEST_DAEMON_LOG = logPath;
+	delete process.env.CBMEM_TEST_DAEMON_START_FAIL;
+	delete process.env.CBMEM_TEST_DAEMON_WAIT_READY;
+	try {
+		await callback();
+	} finally {
+		if (previousState === undefined) delete process.env.CBMEM_TEST_DAEMON_STATE;
+		else process.env.CBMEM_TEST_DAEMON_STATE = previousState;
+		if (previousLog === undefined) delete process.env.CBMEM_TEST_DAEMON_LOG;
+		else process.env.CBMEM_TEST_DAEMON_LOG = previousLog;
+		if (previousFailure === undefined) delete process.env.CBMEM_TEST_DAEMON_START_FAIL;
+		else process.env.CBMEM_TEST_DAEMON_START_FAIL = previousFailure;
+		if (previousWaitReady === undefined) delete process.env.CBMEM_TEST_DAEMON_WAIT_READY;
+		else process.env.CBMEM_TEST_DAEMON_WAIT_READY = previousWaitReady;
+	}
+}
+
 function registerTools(
 	binary: string,
 	projectResolutionService?: ProjectResolutionService,
 ): ToolDefinition[] {
 	const tools: ToolDefinition[] = [];
 	const api = {
+		on() {},
 		registerTool(tool: ToolDefinition) {
 			tools.push(tool);
 		},

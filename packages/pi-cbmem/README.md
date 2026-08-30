@@ -7,6 +7,7 @@ Connect Pi to the local Codebase Memory CLI and give the model graph-first opera
 ## ✨ Features
 
 - Registers 15 Codebase Memory tools for graph queries, search, indexing, coverage, tracing, and architecture.
+- Detects the local Codebase Memory daemon when a Pi session starts and starts a permanent daemon when needed.
 - Runs the local `codebase-memory-mcp` CLI with cancellation, failure reporting, and bounded output.
 - Bundles the `codebase-memory` skill for graph-first, evidence-tier workflows.
 - Resolves `@current` to an exact current-root index or a matching clean canonical-checkout graph for approved read tools.
@@ -40,7 +41,9 @@ Install only trusted packages, and review the source before loading this extensi
 
 ## 🚀 Quick start
 
-Install `codebase-memory-mcp` at `~/.local/bin/codebase-memory-mcp`, load pi-cbmem, and ask Pi a structural codebase question.
+Install a current `codebase-memory-mcp` with the `daemon status` and `daemon start` commands at `~/.local/bin/codebase-memory-mcp`, then load pi-cbmem.
+At session startup, pi-cbmem keeps an existing daemon or starts a permanent daemon that survives Pi session shutdown.
+Then ask Pi a structural codebase question.
 The bundled skill directs Pi to identify the active graph project before exploration and verify material claims with snippets and index-coverage evidence.
 
 ## 🌳 Worktree base reuse
@@ -90,13 +93,17 @@ Tool calls can read and index repositories, inspect source, persist graph data, 
 Deleting a project or replacing all Architecture Decision Records requires explicit confirmation in TUI or RPC mode and is rejected in other modes.
 Repository content returned by graph tools can be sent to the selected model provider as tool output.
 Terminal controls are removed at the TUI display boundary, while the validated raw result remains available to the model.
-Each tool call starts one local CLI child process in the active session directory; extension loading starts no background work.
+Extension factory loading starts no background work.
+Session startup runs bounded `daemon status` and, when needed, `daemon start` control processes in the active session directory.
+The permanent account-scoped daemon survives Pi session replacement and shutdown until the user runs `codebase-memory-mcp daemon stop`.
+Session shutdown cancels an in-flight daemon control process but does not stop the permanent daemon.
+Each tool call starts one local CLI child process in the active session directory.
 Cancelling the tool call terminates that child process.
 
 ## 🚧 Limitations
 
-- The package requires `~/.local/bin/codebase-memory-mcp` for the current user.
-- It does not install or update the Codebase Memory binary.
+- The package requires a current `~/.local/bin/codebase-memory-mcp` with the public daemon control commands for the current user.
+- It does not install or update the Codebase Memory binary, and it does not stop the permanent daemon.
 - Static tool schemas match the bundled skill, while the installed CLI performs final argument validation.
 - Worktree base reuse requires an exact clean snapshot and does not cover branch changes, dirty files, source-code search, change detection, index mutation, project forking, or overlays.
 
@@ -110,6 +117,7 @@ packages/pi-cbmem/
 ├── src/
 │   ├── index.ts                    # Thin Pi entrypoint
 │   ├── cbmem.ts                    # Bounded Codebase Memory CLI runner
+│   ├── daemon.ts                   # Session-start daemon detection and startup
 │   ├── render-result.ts            # Terminal-safe result rendering
 │   ├── tool-definitions.ts         # Pi tool metadata and TypeBox schemas
 │   └── worktree-project.ts         # Safe current-worktree project resolution
