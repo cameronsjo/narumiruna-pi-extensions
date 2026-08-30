@@ -403,16 +403,23 @@ function selectMiniMaxGroup(report: UsageReport, model?: UsageModel): string | u
 	const modelKeys = [model.id, model.name]
 		.map(normalizeMiniMaxModelKey)
 		.filter((key): key is string => key !== undefined);
-	for (const group of groups) {
+	const candidates = groups.map((group) => {
 		const bucket = report.buckets.find((candidate) => candidate.groupId === group);
 		const patterns = [bucket?.groupLabel, ...(bucket?.modelKeys ?? []), group]
 			.map(normalizeMiniMaxModelKey)
 			.filter((key): key is string => key !== undefined);
-		if (patterns.some((pattern) => modelKeys.some((key) => wildcardKeyMatches(pattern, key)))) {
-			return group;
-		}
-	}
-	return undefined;
+		return { group, patterns };
+	});
+	const exact = candidates.find(({ patterns }) =>
+		patterns.some((pattern) => !pattern.includes("*") && modelKeys.includes(pattern)),
+	);
+	if (exact) return exact.group;
+	return candidates.find(({ patterns }) =>
+		patterns.some(
+			(pattern) =>
+				pattern.includes("*") && modelKeys.some((key) => wildcardKeyMatches(pattern, key)),
+		),
+	)?.group;
 }
 
 function normalizeMiniMaxModelKey(value: string | undefined): string | undefined {

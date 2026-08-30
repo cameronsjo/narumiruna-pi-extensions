@@ -170,6 +170,26 @@ test("MiniMax statusline preserves mixed windows and selects the active model gr
 	);
 });
 
+test("MiniMax statusline prefers an exact model group over an earlier wildcard", () => {
+	const overlappingPayload = quotaPayload();
+	overlappingPayload.model_remains = [
+		{
+			...overlappingPayload.model_remains[0],
+			current_interval_usage_count: 1_200,
+			current_weekly_usage_count: 600,
+			current_weekly_remaining_percent: 60,
+		},
+		{ ...overlappingPayload.model_remains[0], model_name: "MiniMax-M3" },
+	];
+	const overlapping = normalizeMiniMaxUsagePayload(
+		"minimax",
+		"token-plan",
+		overlappingPayload,
+		2_700,
+	);
+	assert.equal(formatUsageStatusline(overlapping, MODELS.minimax), "minimax 15% 5h 80% wk");
+});
+
 test("MiniMax pay-as-you-go keeps exact regional balance strings and debt components", () => {
 	for (const [providerId, currency] of [
 		["minimax", "USD"],
