@@ -77,6 +77,20 @@ test("preserves Markdown tokens across soft wraps without joining source lines",
 	controller.updateLines(quote.searchLines, quote.softWrapAfter, quote.ignoreLeadingWhitespace);
 	assert.equal(controller.count, 1);
 
+	const nestedQuote = formatDocumentPresentation(
+		"- > abcdefghijklmnopqrstuvwxyz",
+		{ kind: "markdown" },
+		20,
+		theme,
+	);
+	const nestedQuoteSearch = search(nestedQuote.searchLines, "pqr");
+	nestedQuoteSearch.updateLines(
+		nestedQuote.searchLines,
+		nestedQuote.softWrapAfter,
+		nestedQuote.ignoreLeadingWhitespace,
+	);
+	assert.equal(nestedQuoteSearch.count, 1);
+
 	const explicitQuote = formatDocumentPresentation(
 		"> abcd\n> efgh",
 		{ kind: "markdown" },
@@ -305,6 +319,20 @@ test("normalizes whitespace for matching without moving the input cursor", () =>
 	controller.handleInput("x");
 	assert.equal(controller.input.getValue(), "a  xb");
 	assert.equal(controller.count, 1);
+});
+
+test("defers corpus allocation until search activation and releases it on close", () => {
+	const controller = new DocumentSearchController();
+	const lines = ["a".repeat(100_000)];
+	controller.updateLines(lines);
+	assert.equal((controller as unknown as { cells: { rows: Uint32Array } }).cells.rows.length, 0);
+	controller.activate(lines);
+	assert.equal(
+		(controller as unknown as { cells: { rows: Uint32Array } }).cells.rows.length,
+		100_000,
+	);
+	controller.close();
+	assert.equal((controller as unknown as { cells: { rows: Uint32Array } }).cells.rows.length, 0);
 });
 
 test("indexes repetitive documents compactly while retaining count and navigation", () => {

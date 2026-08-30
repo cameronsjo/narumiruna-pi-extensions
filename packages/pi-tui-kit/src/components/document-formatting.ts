@@ -173,7 +173,11 @@ function markdownSearchLines(lines: readonly string[]) {
 		if (isMarkdownTableRow(plainLines, index)) {
 			return line.replace(/^│ /u, "  ").replace(/ │$/u, "");
 		}
-		return line.replace(/^(?:│ )+/u, (prefix) => " ".repeat(PiTui.visibleWidth(prefix)));
+		return line.replace(
+			/^((?:(?:\s+|(?:[-+*]|\d+[.)])\s+))*)((?:│ )+)/u,
+			(_match, prefix: string, quoteBorders: string) =>
+				prefix + " ".repeat(PiTui.visibleWidth(quoteBorders)),
+		);
 	});
 }
 

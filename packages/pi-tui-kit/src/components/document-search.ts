@@ -136,6 +136,7 @@ export class DocumentSearchController implements Focusable {
 	private searchSources: readonly DocumentSearchSource[] = [];
 	private corpus = "";
 	private cells = emptyCorpusCells();
+	private corpusReady = false;
 	private matches: DocumentMatch[] = [];
 	private compactMatchOffsets: Uint32Array | undefined;
 	private alternateGlobalIndexes: number[] = [];
@@ -172,15 +173,14 @@ export class DocumentSearchController implements Focusable {
 	) {
 		this.active = true;
 		this.updateLines(lines, softWrapAfter, ignoreLeadingWhitespace, searchSources);
+		this.ensureCorpus();
 		this.syncFocus();
 	}
 
 	close() {
 		this.active = false;
 		this.input.setValue("");
-		this.matches = [];
-		this.compactMatchOffsets = undefined;
-		this.alternateGlobalIndexes = [];
+		this.releaseCorpus();
 		this.currentIndex = 0;
 		this.pasting = false;
 		this.pasteBuffer = "";
@@ -205,10 +205,8 @@ export class DocumentSearchController implements Focusable {
 		this.softWrapAfter = [...softWrapAfter];
 		this.ignoreLeadingWhitespace = [...ignoreLeadingWhitespace];
 		this.searchSources = searchSources.map((source) => source.map((segment) => ({ ...segment })));
-		const corpus = buildCorpus(lines, softWrapAfter, ignoreLeadingWhitespace);
-		this.corpus = corpus.text;
-		this.cells = corpus.cells;
-		this.rebuildMatches();
+		this.releaseCorpus();
+		if (this.active) this.ensureCorpus();
 		return true;
 	}
 
@@ -298,11 +296,7 @@ export class DocumentSearchController implements Focusable {
 		this.softWrapAfter = [];
 		this.ignoreLeadingWhitespace = [];
 		this.searchSources = [];
-		this.corpus = "";
-		this.cells = emptyCorpusCells();
-		this.matches = [];
-		this.compactMatchOffsets = undefined;
-		this.alternateGlobalIndexes = [];
+		this.releaseCorpus();
 		this.currentIndex = 0;
 	}
 
@@ -316,7 +310,29 @@ export class DocumentSearchController implements Focusable {
 		this.input.focused = this.parentFocused && this.active;
 	}
 
+	private ensureCorpus() {
+		if (this.corpusReady) return;
+		const corpus = buildCorpus(this.lines, this.softWrapAfter, this.ignoreLeadingWhitespace);
+		this.corpus = corpus.text;
+		this.cells = corpus.cells;
+		this.corpusReady = true;
+		this.rebuildMatches();
+	}
+
+	private releaseCorpus() {
+		this.corpus = "";
+		this.cells = emptyCorpusCells();
+		this.corpusReady = false;
+		this.matches = [];
+		this.compactMatchOffsets = undefined;
+		this.alternateGlobalIndexes = [];
+	}
+
 	private rebuildMatches() {
+		if (!this.corpusReady) {
+			this.ensureCorpus();
+			return;
+		}
 		const query = normalizeQuery(this.input.getValue());
 		this.compactMatchOffsets = undefined;
 		this.matches = [];
