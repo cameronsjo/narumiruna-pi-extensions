@@ -59,6 +59,7 @@ const MOONSHOT_BALANCE_URLS = Object.freeze({
 	moonshotai: "https://api.moonshot.ai/v1/users/me/balance",
 	"moonshotai-cn": "https://api.moonshot.cn/v1/users/me/balance",
 });
+const SHARED_MOONSHOT_ENV_VAR = "MOONSHOT_API_KEY";
 const XAI_USER_URL = "https://cli-chat-proxy.grok.com/v1/user?include=subscription";
 const XAI_BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
 const XAI_CLIENT_HEADERS = Object.freeze({
@@ -404,7 +405,9 @@ export async function resolveUsageAuth(
 	if (typeof registry.getProviderAuth !== "function") {
 		throw new Error("pi-usage requires Pi 0.81.0 or newer to validate resolved provider auth.");
 	}
+	if (!moonshotProviderAuthIsAllowed(ctx, adapter.id)) return undefined;
 	const providerResult = await registry.getProviderAuth(adapter.id);
+	if (!moonshotProviderAuthIsAllowed(ctx, adapter.id)) return undefined;
 	if (
 		providerResult?.auth.baseUrl &&
 		!hasOfficialUrlOrigin(providerResult.auth.baseUrl, adapter.id)
@@ -493,10 +496,51 @@ export async function queryProviderUsage(
 
 export function providerIsConfigured(ctx: ExtensionContext, providerId: string): boolean {
 	try {
-		return ctx.modelRegistry.getProviderAuthStatus(providerId).configured;
+		const status = ctx.modelRegistry.getProviderAuthStatus(providerId);
+		return (
+			status.configured &&
+			moonshotProviderAuthSourceIsAllowed(ctx, providerId, status.source, status.label)
+		);
 	} catch {
-		return candidateModels(ctx, providerId).length > 0;
+		return (
+			!isMoonshotSiblingProvider(ctx, providerId) && candidateModels(ctx, providerId).length > 0
+		);
 	}
+}
+
+function moonshotProviderAuthIsAllowed(ctx: ExtensionContext, providerId: string): boolean {
+	if (!isMoonshotSiblingProvider(ctx, providerId)) return true;
+	try {
+		const status = ctx.modelRegistry.getProviderAuthStatus(providerId);
+		return moonshotProviderAuthSourceIsAllowed(ctx, providerId, status.source, status.label);
+	} catch {
+		return false;
+	}
+}
+
+function moonshotProviderAuthSourceIsAllowed(
+	ctx: ExtensionContext,
+	providerId: string,
+	source: string | undefined,
+	label: string | undefined,
+): boolean {
+	if (!isMoonshotSiblingProvider(ctx, providerId)) return true;
+	if (source === undefined) return false;
+	if (source !== "environment") return true;
+	return (
+		label !== undefined &&
+		!label
+			.split(",")
+			.map((name) => name.trim())
+			.includes(SHARED_MOONSHOT_ENV_VAR)
+	);
+}
+
+function isMoonshotSiblingProvider(ctx: ExtensionContext, providerId: string): boolean {
+	return (
+		(providerId === "moonshotai" || providerId === "moonshotai-cn") &&
+		ctx.model?.provider !== providerId
+	);
 }
 
 function candidateModels(ctx: ExtensionContext, providerId: string): PiModel[] {

@@ -5,6 +5,7 @@ import {
 	formatUsageReport,
 	formatUsageStatusline,
 	normalizeMoonshotBalancePayload,
+	providerIsConfigured,
 	queryProviderUsage,
 	type ResolvedUsageAuth,
 	resolveUsageAuth,
@@ -28,6 +29,13 @@ const MODELS = {
 } as const;
 
 type ProviderId = keyof typeof MODELS;
+
+const UNRELATED_MODEL = {
+	id: "unrelated",
+	name: "Unrelated",
+	provider: "unrelated",
+	baseUrl: "https://unrelated.example.test/v1",
+};
 
 function moonshotAdapter(providerId: ProviderId): UsageProviderAdapter {
 	const candidate = SUPPORTED_ADAPTERS.find((adapter) => adapter.id === providerId);
@@ -119,6 +127,87 @@ test("Moonshot balance rejects failed, incomplete, or hostile responses", () => 
 			/not report success|not an object|not a valid amount/iu,
 		);
 	}
+});
+
+test("Moonshot shared environment auth is limited to the selected region", async () => {
+	const globalModel = MODELS.moonshotai;
+	const resolvedProviders: string[] = [];
+	const { ctx } = createMockContext({
+		model: globalModel,
+		modelRegistry: {
+			getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "shared-environment-key" }),
+			getProviderAuth: async (providerId: string) => {
+				resolvedProviders.push(providerId);
+				return { auth: { apiKey: "shared-environment-key" } };
+			},
+			getProviderAuthStatus: () => ({
+				configured: true,
+				source: "environment" as const,
+				label: "MOONSHOT_API_KEY",
+			}),
+			getAvailable: () => Object.values(MODELS),
+			getAll: () => Object.values(MODELS),
+		},
+	});
+
+	assert.equal(providerIsConfigured(ctx, "moonshotai"), true);
+	assert.equal(providerIsConfigured(ctx, "moonshotai-cn"), false);
+	assert.ok(await resolveUsageAuth(ctx, moonshotAdapter("moonshotai")));
+	assert.equal(await resolveUsageAuth(ctx, moonshotAdapter("moonshotai-cn")), undefined);
+	assert.deepEqual(resolvedProviders, ["moonshotai"]);
+});
+
+test("Moonshot sibling accepts provider-specific environment credentials", async () => {
+	for (const [providerId, label] of [
+		["moonshotai", "MOONSHOT_GLOBAL_API_KEY"],
+		["moonshotai-cn", "MOONSHOT_CN_API_KEY"],
+	] as const) {
+		const { ctx } = createMockContext({
+			model: UNRELATED_MODEL,
+			modelRegistry: {
+				getProviderAuth: async () => ({ auth: { apiKey: `${providerId}-key` } }),
+				getProviderAuthStatus: () => ({
+					configured: true,
+					source: "environment" as const,
+					label,
+				}),
+				getAvailable: () => Object.values(MODELS),
+				getAll: () => Object.values(MODELS),
+			},
+		});
+
+		assert.equal(providerIsConfigured(ctx, providerId), true);
+		assert.deepEqual((await resolveUsageAuth(ctx, moonshotAdapter(providerId)))?.headers, {
+			Authorization: `Bearer ${providerId}-key`,
+		});
+	}
+});
+
+test("Moonshot sibling revalidates credential provenance throughout resolution", async () => {
+	let source: "environment" | "stored" = "stored";
+	let label: string | undefined;
+	let changeSourceDuringResolution = false;
+	const { ctx } = createMockContext({
+		model: UNRELATED_MODEL,
+		modelRegistry: {
+			getProviderAuth: async () => {
+				if (changeSourceDuringResolution) {
+					source = "environment";
+					label = "MOONSHOT_API_KEY";
+				}
+				return { auth: { apiKey: `${source}-key` } };
+			},
+			getProviderAuthStatus: () => ({ configured: true, source, label }),
+			getAvailable: () => Object.values(MODELS),
+			getAll: () => Object.values(MODELS),
+		},
+	});
+
+	assert.equal(providerIsConfigured(ctx, "moonshotai-cn"), true);
+	assert.ok(await resolveUsageAuth(ctx, moonshotAdapter("moonshotai-cn")));
+	changeSourceDuringResolution = true;
+	assert.equal(await resolveUsageAuth(ctx, moonshotAdapter("moonshotai-cn")), undefined);
+	assert.equal(providerIsConfigured(ctx, "moonshotai-cn"), false);
 });
 
 test("Moonshot runtime auth keeps Global and China credentials on their official origin", async () => {

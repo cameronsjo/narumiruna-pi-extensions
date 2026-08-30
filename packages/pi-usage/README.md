@@ -201,6 +201,8 @@ The pinned Kimi managed-usage source at `cd7c97b377a77f7ae1b9d541cafe314e986ec07
 - Statusline examples: `moonshot USD 49.58894` or `moonshot CNY 49.58894`
 
 Each endpoint uses Pi's resolved inference Bearer key for the matching region.
+Pi maps both built-in providers to `MOONSHOT_API_KEY`, so that shared environment credential is eligible only for the currently selected region.
+Querying the sibling region requires a provider-specific stored, runtime, or `models.json` credential.
 The extension rejects custom, proxy, and cross-region origins before network access and refuses redirects.
 Available and voucher balances must be nonnegative, while cash balance may be negative when the account owes money.
 The endpoint does not provide historical spend, token totals, quota windows, or reset times.
