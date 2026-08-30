@@ -9,7 +9,10 @@ which races cannot be eliminated by an extension.
 The maintained implementation and tests are authoritative:
 
 - `packages/pi-goal/src/goal.ts`
+- `packages/pi-goal/src/lifecycle.ts`
 - `packages/pi-goal/src/runtime.ts`
+- `packages/pi-goal/src/tools.ts`
+- `packages/pi-goal/src/tool-policy.ts`
 - `packages/pi-goal/src/accounting.ts`
 - `packages/pi-goal/src/safety.ts`
 - `packages/pi-goal/src/prompts.ts`
@@ -68,6 +71,13 @@ An active or waiting Goal retains cooperative ownership across normal work, cont
 Admission rejects another cooperating workflow before Goal state, tools, persistence, prompts, status, or timers change.
 The mutex does not reserve a Pi turn and cannot coordinate trusted extensions that do not participate in the protocol.
 
+## Stable helper-tool envelope
+
+`goal_complete`, `goal_blocked`, and `goal_wait` are registered once and keep stable provider-visible schemas from startup.
+Their visibility alone does not activate Goal mode because each tool requires the latest effective active Goal contract and matching goal id.
+The extension does not add mode-only `promptSnippet` or `promptGuidelines` metadata and does not mutate the active tool set during Goal lifecycle transitions.
+A restrictive external allowlist can still hide Goal tools; Goal start and restore require `goal_complete` and `goal_blocked` without widening that allowlist, while `goal_wait` remains optional for ordinary Goal work.
+
 ## Retry, compaction, and stopped states
 
 Retryable provider failures and context-overflow compaction remain Pi-owned recovery:
@@ -99,7 +109,9 @@ Goal prompts and compacted context use the same objective trust boundary, stale 
 The first accepted handoff for a Goal identity and its versioned hidden `goal-contract` are persisted together at the agent-start boundary after retained conversation history.
 Every active or inactive contract explicitly supersedes earlier contracts, and historical contracts remain in their appended positions so provider input grows monotonically.
 Failed Goal handoff delivery persists no contract.
-Stopped transitions persist one inactive revision, while the `context` hook supplies a missing current revision after leading summaries as a correctness fallback.
+Stopped transitions persist one inactive revision, but terminal Goal tools defer that revision until `turn_end` so Pi first persists the real `goal_complete` or `goal_blocked` tool result.
+This ordering prevents a synthetic missing-result fallback from appearing before the inactive contract in later provider input.
+The `context` hook supplies a missing current revision after leading summaries as a correctness fallback.
 Compaction and session restore persist a missing current revision without waking an external wait.
 Mutable accounting remains outside the retained provider prompt prefix.
 Prompt wording is a guardrail; current files, commands, tests, runtime behavior, and external state remain the completion evidence.
@@ -144,7 +156,8 @@ settled, retry, compaction, accounting, and stale-delivery guarantees.
 
 - Settled exactly-once dispatch, pending-message priority, replacement, pause, clear, and lost-start races: `packages/pi-goal/test/goal-continuation.test.ts`.
 - Workflow Mutex acquisition, rejection before mutation, restore fallbacks, release, and reacquisition: `packages/pi-goal/test/workflow-mutex.test.ts` and the Goal package lifecycle tests.
-- Stable leading prompt prefix, canonical context reinjection, and compaction-sensitive Goal contract: `packages/pi-goal/test/goal-cache-contract.test.ts`.
+- Stable helper-tool schemas and restrictive allowlist behavior: `packages/pi-goal/test/goal-tool-policy.test.ts` and `packages/pi-goal/test/tool-policy.test.ts`.
+- Stable leading prompt prefix, canonical context reinjection, compaction-sensitive Goal contracts, and terminal tool-result ordering: `packages/pi-goal/test/goal-cache-contract.test.ts`.
 - Retry, overflow, compaction, provider-exhaustion waiting, wake-up, restored waiting, and stopped-state classification: `packages/pi-goal/test/goal-error-lifecycle.test.ts`.
 - External-wait deadlines, cleanup, quiet elapsed time, and wake boundaries: `packages/pi-goal/test/goal-wait.test.ts`.
 - Managed-run active waiting and later terminal completion: `packages/pi-goal/test/goal-run-protocol.test.ts`.
