@@ -10,12 +10,18 @@ export interface HerdrPane {
 	focused: boolean;
 	revision: number;
 	agent?: string;
+	agentName?: string;
 	agentStatus: HerdrAgentStatus;
 	displayAgent?: string;
 	label?: string;
 	stateLabels: Record<string, string>;
 	terminalTitle?: string;
 	title?: string;
+}
+
+export interface HerdrWorkspace {
+	workspaceId: string;
+	label?: string;
 }
 
 export type HerdrPaneEvent =
@@ -117,6 +123,7 @@ export function parseHerdrPane(value: unknown): HerdrPane | undefined {
 		focused: value.focused,
 		revision,
 		agent: optionalString(value.agent),
+		agentName: optionalString(value.name),
 		agentStatus: status,
 		displayAgent: optionalString(value.display_agent),
 		label: optionalString(value.label),
@@ -145,6 +152,25 @@ export function parsePaneListResult(value: unknown): HerdrPane[] {
 		throw new Error("Herdr returned an invalid pane in the pane list");
 	}
 	return panes as HerdrPane[];
+}
+
+export function parseAgentListResult(value: unknown): HerdrPane[] {
+	if (!isRecord(value) || value.type !== "agent_list" || !Array.isArray(value.agents)) {
+		throw new Error("Herdr returned an invalid agent-list response");
+	}
+	return value.agents.flatMap((entry) => {
+		const pane = parseHerdrPane(entry);
+		return pane ? [pane] : [];
+	});
+}
+
+export function parseWorkspaceGetResult(value: unknown): HerdrWorkspace {
+	if (!isRecord(value) || value.type !== "workspace_info" || !isRecord(value.workspace)) {
+		throw new Error("Herdr returned an invalid workspace response");
+	}
+	const workspaceId = requiredString(value.workspace.workspace_id);
+	if (!workspaceId) throw new Error("Herdr returned an invalid workspace identity");
+	return { workspaceId, label: optionalString(value.workspace.label) };
 }
 
 export function parseHerdrPaneEvent(value: unknown): HerdrPaneEvent | undefined {

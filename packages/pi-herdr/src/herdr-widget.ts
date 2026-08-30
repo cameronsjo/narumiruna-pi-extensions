@@ -1,7 +1,12 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { EditorStatusWidget } from "@narumitw/pi-tui-kit/editor-status-widget";
 import { sanitizeTerminalText } from "@narumitw/pi-tui-kit/terminal-text";
-import type { HerdrAgentStatus, HerdrPane, HerdrPaneEvent } from "./herdr-protocol.js";
+import type {
+	HerdrAgentStatus,
+	HerdrPane,
+	HerdrPaneEvent,
+	HerdrWorkspace,
+} from "./herdr-protocol.js";
 
 export const HERDR_WIDGET_KEY = "herdr:agents";
 export const MAX_HERDR_WIDGET_AGENTS = 5;
@@ -10,17 +15,19 @@ interface ObservedPane {
 	paneId: string;
 	workspaceId: string;
 	agent?: string;
+	agentName?: string;
 	agentStatus: HerdrAgentStatus;
 	displayAgent?: string;
 	label?: string;
 	stateLabels: Record<string, string>;
-	terminalTitle?: string;
 	title?: string;
 }
 
 export interface HerdrWidgetRow {
-	name: string;
+	agent: string;
+	pane: string;
 	paneId: string;
+	space: string;
 	state: HerdrAgentStatus;
 	stateLabel: string;
 }
@@ -44,11 +51,11 @@ function observedPane(pane: HerdrPane): ObservedPane {
 		paneId: pane.paneId,
 		workspaceId: pane.workspaceId,
 		agent: pane.agent,
+		agentName: pane.agentName,
 		agentStatus: pane.agentStatus,
 		displayAgent: pane.displayAgent,
 		label: pane.label,
 		stateLabels: { ...pane.stateLabels },
-		terminalTitle: pane.terminalTitle,
 		title: pane.title,
 	};
 }
@@ -59,22 +66,39 @@ function safeDisplay(value: string | undefined): string | undefined {
 	return safe.length > 0 ? safe : undefined;
 }
 
-function displayName(pane: ObservedPane): string {
+function shortIdentity(value: string, fallback: string): string {
+	const safe = safeDisplay(value);
+	if (!safe) return fallback;
+	return safe.split(":").at(-1) || fallback;
+}
+
+function agentDisplay(pane: ObservedPane): string {
 	return (
-		safeDisplay(pane.label) ??
-		safeDisplay(pane.title) ??
+		safeDisplay(pane.agentName) ??
 		safeDisplay(pane.displayAgent) ??
-		safeDisplay(pane.terminalTitle) ??
 		safeDisplay(pane.agent) ??
-		safeDisplay(pane.paneId) ??
 		"agent"
 	);
 }
 
-function rowForPane(pane: ObservedPane): HerdrWidgetRow {
+function paneDisplay(pane: ObservedPane): string {
+	const id = shortIdentity(pane.paneId, "pane");
+	const label = safeDisplay(pane.label) ?? safeDisplay(pane.title);
+	return label ? `${label}/${id}` : id;
+}
+
+function spaceDisplay(workspace: HerdrWorkspace): string {
+	const id = shortIdentity(workspace.workspaceId, "space");
+	const label = safeDisplay(workspace.label);
+	return label ? `${label}/${id}` : id;
+}
+
+function rowForPane(pane: ObservedPane, workspace: HerdrWorkspace): HerdrWidgetRow {
 	return {
-		name: displayName(pane),
+		agent: agentDisplay(pane),
+		pane: paneDisplay(pane),
 		paneId: safeDisplay(pane.paneId) ?? "pane",
+		space: spaceDisplay(workspace),
 		state: pane.agentStatus,
 		stateLabel:
 			safeDisplay(pane.stateLabels[pane.agentStatus]) ?? safeDisplay(pane.agentStatus) ?? "unknown",
@@ -94,17 +118,24 @@ function immutableSnapshot(rows: HerdrWidgetRow[]): HerdrWidgetSnapshot | undefi
 export class HerdrWidgetModel {
 	private currentPaneId: string | undefined;
 	private currentWorkspaceId: string | undefined;
+	private workspace: HerdrWorkspace | undefined;
 	private panes = new Map<string, ObservedPane>();
 
-	reset(currentPane: HerdrPane, panes: readonly HerdrPane[]): void {
+	reset(
+		currentPane: HerdrPane,
+		panes: readonly HerdrPane[],
+		workspace: HerdrWorkspace = { workspaceId: currentPane.workspaceId },
+	): void {
 		this.currentPaneId = currentPane.paneId;
 		this.currentWorkspaceId = currentPane.workspaceId;
+		this.workspace = { ...workspace };
 		this.panes = new Map(panes.map((pane) => [pane.paneId, observedPane(pane)]));
 	}
 
 	clear(): void {
 		this.currentPaneId = undefined;
 		this.currentWorkspaceId = undefined;
+		this.workspace = undefined;
 		this.panes.clear();
 	}
 
@@ -131,6 +162,7 @@ export class HerdrWidgetModel {
 			if (this.currentPaneId === event.previousPaneId) {
 				this.currentPaneId = event.pane.paneId;
 				this.currentWorkspaceId = event.pane.workspaceId;
+				this.workspace = { workspaceId: event.pane.workspaceId };
 			}
 			return;
 		}
@@ -170,7 +202,7 @@ export class HerdrWidgetModel {
 	}
 
 	snapshot(): HerdrWidgetSnapshot | undefined {
-		if (!this.currentPaneId || !this.currentWorkspaceId) return undefined;
+		if (!this.currentPaneId || !this.currentWorkspaceId || !this.workspace) return undefined;
 		const rows = [...this.panes.values()]
 			.filter(
 				(pane) =>
@@ -178,16 +210,12 @@ export class HerdrWidgetModel {
 					pane.paneId !== this.currentPaneId &&
 					pane.agent !== undefined,
 			)
-			.map(rowForPane);
-		const duplicateNames = new Map<string, number>();
-		for (const row of rows) duplicateNames.set(row.name, (duplicateNames.get(row.name) ?? 0) + 1);
-		for (const row of rows) {
-			if ((duplicateNames.get(row.name) ?? 0) > 1) row.name = `${row.name} · ${row.paneId}`;
-		}
+			.map((pane) => rowForPane(pane, this.workspace as HerdrWorkspace));
 		rows.sort(
 			(left, right) =>
 				STATE_ORDER[left.state] - STATE_ORDER[right.state] ||
-				left.name.localeCompare(right.name) ||
+				left.agent.localeCompare(right.agent) ||
+				left.pane.localeCompare(right.pane) ||
 				left.paneId.localeCompare(right.paneId),
 		);
 		return immutableSnapshot(rows);
@@ -230,9 +258,13 @@ export function createHerdrWidget(snapshot: HerdrWidgetSnapshot, theme: Theme): 
 		renderBody() {
 			const noun = snapshot.totalAgents === 1 ? "agent" : "agents";
 			const lines = [theme.fg("muted", `Herdr · ${snapshot.totalAgents} sibling ${noun}`)];
+			const separator = theme.fg("dim", " · ");
 			for (const row of snapshot.rows) {
 				const state = stateStyle(theme, row.state, `${stateSymbol(row.state)} ${row.stateLabel}`);
-				lines.push(`${state}  ${theme.fg("text", row.name)}  ${theme.fg("dim", row.paneId)}`);
+				const agent = theme.bold(theme.fg("text", row.agent));
+				const pane = theme.fg("muted", row.pane);
+				const space = theme.fg("dim", row.space);
+				lines.push(`${state}  ${agent}${separator}${pane}${separator}${space}`);
 			}
 			if (snapshot.hiddenAgents > 0) {
 				lines.push(theme.fg("dim", `+${snapshot.hiddenAgents} more`));

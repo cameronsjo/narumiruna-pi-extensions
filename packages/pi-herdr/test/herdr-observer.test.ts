@@ -16,7 +16,12 @@ function deferred<T>() {
 	return { promise, resolve, reject };
 }
 
-function wirePane(paneId: string, status = "idle", agent: string | null = "pi") {
+function wirePane(
+	paneId: string,
+	status = "idle",
+	agent: string | null = "pi",
+	overrides: Record<string, unknown> = {},
+) {
 	return {
 		pane_id: paneId,
 		workspace_id: "w1",
@@ -27,7 +32,16 @@ function wirePane(paneId: string, status = "idle", agent: string | null = "pi") 
 		agent,
 		agent_status: status,
 		label: paneId === "w1:p2" ? "worker" : undefined,
+		...overrides,
 	};
+}
+
+function agentList(panes: ReturnType<typeof wirePane>[]) {
+	return { type: "agent_list", agents: panes };
+}
+
+function workspaceInfo(workspaceId = "w1", label = "space") {
+	return { type: "workspace_info", workspace: { workspace_id: workspaceId, label } };
 }
 
 async function waitUntil(predicate: () => boolean): Promise<void> {
@@ -42,7 +56,10 @@ function renderWidget(value: unknown): string {
 	assert.equal(typeof value, "function");
 	const component = (value as (tui: unknown, theme: Theme) => { render(width: number): string[] })(
 		{},
-		{ fg: (_role: string, text: string) => text } as Theme,
+		{
+			bold: (text: string) => text,
+			fg: (_role: string, text: string) => text,
+		} as Theme,
 	);
 	return component.render(80).join("\n");
 }
@@ -107,15 +124,23 @@ test("publishes initial siblings and applies live status and exit events", async
 				assert.deepEqual(request.params, { caller_pane_id: "w1:p1" });
 				return { type: "pane_current", pane: wirePane("w1:p1", "working") };
 			}
-			return {
-				type: "pane_list",
-				panes: [wirePane("w1:p1", "working"), wirePane("w1:p2", "idle")],
-			};
+			const panes = [wirePane("w1:p1", "working"), wirePane("w1:p2", "idle")];
+			if (request.method === "agent.list") {
+				return agentList([
+					wirePane("w1:p1", "working", "pi", { name: "current" }),
+					wirePane("w1:p2", "idle", "pi", { name: "reviewer" }),
+				]);
+			}
+			if (request.method === "workspace.get") return workspaceInfo();
+			return { type: "pane_list", panes };
 		},
 	});
 	observer.start(ctx);
 	await waitUntil(() => typeof widgets.get(HERDR_WIDGET_KEY) === "function");
-	assert.match(renderWidget(widgets.get(HERDR_WIDGET_KEY)), /idle.*worker/u);
+	assert.match(
+		renderWidget(widgets.get(HERDR_WIDGET_KEY)),
+		/idle.*reviewer.*worker\/p2.*space\/w1/u,
+	);
 	const initialWidget = widgets.get(HERDR_WIDGET_KEY);
 	onEvent?.({
 		event: "pane.agent_status_changed",
@@ -164,16 +189,20 @@ test("reconciles replayed topology without entering a resubscribe loop", async (
 		},
 		async request(_endpoint, request) {
 			requests += 1;
-			return request.method === "pane.current"
-				? { type: "pane_current", pane: wirePane("w1:p1") }
-				: { type: "pane_list", panes: [wirePane("w1:p1"), wirePane("w1:p2", "idle")] };
+			const panes = [wirePane("w1:p1"), wirePane("w1:p2", "idle")];
+			if (request.method === "pane.current") {
+				return { type: "pane_current", pane: wirePane("w1:p1") };
+			}
+			if (request.method === "agent.list") return agentList(panes);
+			if (request.method === "workspace.get") return workspaceInfo();
+			return { type: "pane_list", panes };
 		},
 	});
 	observer.start(ctx);
-	await waitUntil(() => typeof widgets.get(HERDR_WIDGET_KEY) === "function" && requests >= 6);
+	await waitUntil(() => typeof widgets.get(HERDR_WIDGET_KEY) === "function" && requests >= 12);
 	await new Promise<void>((resolve) => setImmediate(resolve));
 	assert.equal(subscriptions, 1);
-	assert.match(renderWidget(widgets.get(HERDR_WIDGET_KEY)), /w1:p2/u);
+	assert.match(renderWidget(widgets.get(HERDR_WIDGET_KEY)), /worker\/p2.*space\/w1/u);
 	await observer.shutdown(ctx);
 });
 
@@ -196,10 +225,10 @@ test("queues events during initialization and rejects stale delayed publication"
 					? current.promise
 					: { type: "pane_current", pane: wirePane("w1:p1", "working") };
 			}
-			return {
-				type: "pane_list",
-				panes: [wirePane("w1:p1", "working"), wirePane("w1:p2", "idle")],
-			};
+			const panes = [wirePane("w1:p1", "working"), wirePane("w1:p2", "idle")];
+			if (request.method === "agent.list") return agentList(panes);
+			if (request.method === "workspace.get") return workspaceInfo();
+			return { type: "pane_list", panes };
 		},
 	});
 	observer.start(ctx);
@@ -262,10 +291,10 @@ test("clears stale state before one reconnect and stops after exhaustion", async
 				}
 				return { type: "pane_current", pane: wirePane("w1:p1") };
 			}
-			return {
-				type: "pane_list",
-				panes: [wirePane("w1:p1"), wirePane("w1:p2", "working")],
-			};
+			const panes = [wirePane("w1:p1"), wirePane("w1:p2", "working")];
+			if (request.method === "agent.list") return agentList(panes);
+			if (request.method === "workspace.get") return workspaceInfo();
+			return { type: "pane_list", panes };
 		},
 	});
 	observer.start(ctx);
@@ -303,24 +332,23 @@ test("reconnects and reloads the workspace after the current pane moves", async 
 			return harness.subscription;
 		},
 		async request(_endpoint, request) {
+			const panes = moved
+				? [
+						wirePane("w2:p9", "idle", "pi", { workspace_id: "w2" }),
+						wirePane("w2:p2", "done", "pi", {
+							workspace_id: "w2",
+							label: "destination",
+						}),
+					]
+				: [wirePane("w1:p1"), wirePane("w1:p2", "working")];
 			if (request.method === "pane.current") {
-				return {
-					type: "pane_current",
-					pane: moved ? { ...wirePane("w2:p9"), workspace_id: "w2" } : wirePane("w1:p1"),
-				};
+				return { type: "pane_current", pane: panes[0] };
 			}
-			return moved
-				? {
-						type: "pane_list",
-						panes: [
-							{ ...wirePane("w2:p9"), workspace_id: "w2" },
-							{ ...wirePane("w2:p2", "done"), workspace_id: "w2", label: "destination" },
-						],
-					}
-				: {
-						type: "pane_list",
-						panes: [wirePane("w1:p1"), wirePane("w1:p2", "working")],
-					};
+			if (request.method === "agent.list") return agentList(panes);
+			if (request.method === "workspace.get") {
+				return workspaceInfo(moved ? "w2" : "w1", moved ? "destination-space" : "space");
+			}
+			return { type: "pane_list", panes };
 		},
 	});
 	observer.start(ctx);
@@ -339,7 +367,10 @@ test("reconnects and reloads the workspace after the current pane moves", async 
 	});
 	await waitUntil(() => subscriptions === 2);
 	await waitUntil(() => typeof widgets.get(HERDR_WIDGET_KEY) === "function");
-	assert.match(renderWidget(widgets.get(HERDR_WIDGET_KEY)), /destination.*w2:p2/u);
+	assert.match(
+		renderWidget(widgets.get(HERDR_WIDGET_KEY)),
+		/done.*pi.*destination\/p2.*destination-space\/w2/u,
+	);
 	await observer.shutdown(ctx);
 });
 
@@ -357,9 +388,13 @@ test("an older delayed shutdown cannot clear a replacement session", async () =>
 		async request(_endpoint, request) {
 			requests += 1;
 			if (requests === 1) return oldCurrent.promise;
-			return request.method === "pane.current"
-				? { type: "pane_current", pane: wirePane("w1:p1") }
-				: { type: "pane_list", panes: [wirePane("w1:p1"), wirePane("w1:p2", "working")] };
+			const panes = [wirePane("w1:p1"), wirePane("w1:p2", "working")];
+			if (request.method === "pane.current") {
+				return { type: "pane_current", pane: wirePane("w1:p1") };
+			}
+			if (request.method === "agent.list") return agentList(panes);
+			if (request.method === "workspace.get") return workspaceInfo();
+			return { type: "pane_list", panes };
 		},
 	});
 	observer.start(oldContext.ctx);
@@ -369,7 +404,7 @@ test("an older delayed shutdown cannot clear a replacement session", async () =>
 	oldCurrent.resolve({ type: "pane_current", pane: wirePane("w1:p1") });
 	await stoppingOld;
 	await waitUntil(() => typeof replacement.widgets.get(HERDR_WIDGET_KEY) === "function");
-	assert.match(renderWidget(replacement.widgets.get(HERDR_WIDGET_KEY)), /w1:p2/u);
+	assert.match(renderWidget(replacement.widgets.get(HERDR_WIDGET_KEY)), /worker\/p2.*space\/w1/u);
 	await observer.shutdown(replacement.ctx);
 });
 

@@ -8,10 +8,13 @@ import {
 import {
 	type HerdrPane,
 	type HerdrPaneEvent,
+	type HerdrWorkspace,
 	herdrWidgetSubscriptions,
+	parseAgentListResult,
 	parseHerdrPaneEvent,
 	parsePaneCurrentResult,
 	parsePaneListResult,
+	parseWorkspaceGetResult,
 } from "./herdr-protocol.js";
 import {
 	createHerdrWidget,
@@ -141,7 +144,9 @@ export function createHerdrWidgetObserver(options: HerdrObserverOptions): HerdrW
 		ctx: ExtensionContext,
 		expectedGeneration: number,
 		signal: AbortSignal,
-	): Promise<{ currentPane: HerdrPane; panes: HerdrPane[] } | undefined> => {
+	): Promise<
+		{ currentPane: HerdrPane; panes: HerdrPane[]; workspace: HerdrWorkspace } | undefined
+	> => {
 		const currentResult = await request(
 			options.environment.socketEndpoint,
 			{
@@ -153,17 +158,48 @@ export function createHerdrWidgetObserver(options: HerdrObserverOptions): HerdrW
 		);
 		if (!owns(ctx, expectedGeneration) || signal.aborted) return undefined;
 		const currentPane = parsePaneCurrentResult(currentResult);
-		const listResult = await request(
-			options.environment.socketEndpoint,
-			{
-				id: requestId("list"),
-				method: "pane.list",
-				params: { workspace_id: currentPane.workspaceId },
-			},
-			signal,
-		);
+		const [listResult, agentResult, workspaceResult] = await Promise.all([
+			request(
+				options.environment.socketEndpoint,
+				{
+					id: requestId("list"),
+					method: "pane.list",
+					params: { workspace_id: currentPane.workspaceId },
+				},
+				signal,
+			),
+			request(
+				options.environment.socketEndpoint,
+				{ id: requestId("agents"), method: "agent.list", params: {} },
+				signal,
+			),
+			request(
+				options.environment.socketEndpoint,
+				{
+					id: requestId("workspace"),
+					method: "workspace.get",
+					params: { workspace_id: currentPane.workspaceId },
+				},
+				signal,
+			),
+		]);
 		if (!owns(ctx, expectedGeneration) || signal.aborted) return undefined;
-		return { currentPane, panes: parsePaneListResult(listResult) };
+		const namesByPane = new Map(
+			parseAgentListResult(agentResult).map((pane) => [pane.paneId, pane.agentName]),
+		);
+		const withAgentName = (pane: HerdrPane): HerdrPane => ({
+			...pane,
+			agentName: namesByPane.get(pane.paneId) ?? pane.agentName,
+		});
+		const workspace = parseWorkspaceGetResult(workspaceResult);
+		if (workspace.workspaceId !== currentPane.workspaceId) {
+			throw new Error("Herdr returned a mismatched workspace");
+		}
+		return {
+			currentPane: withAgentName(currentPane),
+			panes: parsePaneListResult(listResult).map(withAgentName),
+			workspace,
+		};
 	};
 
 	const runAttempt = async (
@@ -187,7 +223,7 @@ export function createHerdrWidgetObserver(options: HerdrObserverOptions): HerdrW
 				discovered.panes,
 			);
 			const model = new HerdrWidgetModel();
-			model.reset(discovered.currentPane, discovered.panes);
+			model.reset(discovered.currentPane, discovered.panes, discovered.workspace);
 			const pendingEvents: HerdrPaneEvent[] = [];
 			const pendingStatusEvents: HerdrPaneEvent[] = [];
 			let initialized = false;
@@ -217,7 +253,7 @@ export function createHerdrWidgetObserver(options: HerdrObserverOptions): HerdrW
 						refreshingTopology = true;
 						const refreshed = await loadPaneSet(ctx, expectedGeneration, signal);
 						if (!refreshed || !attemptActive || signal.aborted) return;
-						model.reset(refreshed.currentPane, refreshed.panes);
+						model.reset(refreshed.currentPane, refreshed.panes, refreshed.workspace);
 						for (const event of pendingStatusEvents.splice(0)) {
 							if (isRelevantEvent(model, event)) model.apply(event);
 						}
@@ -291,7 +327,7 @@ export function createHerdrWidgetObserver(options: HerdrObserverOptions): HerdrW
 
 			const reconciled = await loadPaneSet(ctx, expectedGeneration, signal);
 			if (!reconciled) return;
-			model.reset(reconciled.currentPane, reconciled.panes);
+			model.reset(reconciled.currentPane, reconciled.panes, reconciled.workspace);
 			for (const event of pendingEvents.splice(0)) {
 				if (isRelevantEvent(model, event)) model.apply(event);
 			}

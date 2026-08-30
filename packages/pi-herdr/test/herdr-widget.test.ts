@@ -5,9 +5,11 @@ import { test } from "vitest";
 import {
 	type HerdrPane,
 	herdrWidgetSubscriptions,
+	parseAgentListResult,
 	parseHerdrPaneEvent,
 	parsePaneCurrentResult,
 	parsePaneListResult,
+	parseWorkspaceGetResult,
 } from "../src/herdr-protocol.js";
 import {
 	createHerdrWidget,
@@ -64,6 +66,18 @@ test("validates current panes, pane lists, and supported subscription events", (
 	assert.throws(
 		() => parsePaneListResult({ type: "pane_list", panes: [wirePane({ agent_status: "new" })] }),
 		/invalid pane/u,
+	);
+	assert.equal(
+		parseAgentListResult({ type: "agent_list", agents: [wirePane({ name: "reviewer" })] })[0]
+			?.agentName,
+		"reviewer",
+	);
+	assert.deepEqual(
+		parseWorkspaceGetResult({
+			type: "workspace_info",
+			workspace: { workspace_id: "w1", label: "space" },
+		}),
+		{ workspaceId: "w1", label: "space" },
 	);
 
 	assert.deepEqual(
@@ -124,7 +138,7 @@ test("validates current panes, pane lists, and supported subscription events", (
 	);
 });
 
-test("filters siblings, orders every state, resolves duplicate names, and caps rows", () => {
+test("filters siblings, orders every state, distinguishes panes, and caps rows", () => {
 	const model = new HerdrWidgetModel();
 	const current = pane("w1:p1", "working", { title: "current" });
 	model.reset(current, [
@@ -148,7 +162,7 @@ test("filters siblings, orders every state, resolves duplicate names, and caps r
 		snapshot.rows.map(({ state }) => state),
 		["blocked", "done", "working", "idle", "idle"],
 	);
-	assert.ok(snapshot.rows.some(({ name }) => name === "same · w1:p2"));
+	assert.ok(snapshot.rows.some(({ pane }) => pane === "same/p2"));
 	assert.equal(Object.isFrozen(snapshot), true);
 	assert.equal(Object.isFrozen(snapshot.rows), true);
 });
@@ -192,22 +206,30 @@ test("tracks moved current panes plus agent detection, release, and exit", () =>
 
 test("sanitizes before sorting and renders terminal-width-safe themed rows", () => {
 	const model = new HerdrWidgetModel();
-	model.reset(pane("w1:p1"), [
+	model.reset(
 		pane("w1:p1"),
-		pane("w1:p2\u001b]8;;spoof", "blocked", {
-			label: "測試\nagent\u202e\u001b]8;;https://spoof\u0007",
-			stateLabels: { blocked: "wait\rnow" },
-		}),
-	]);
+		[
+			pane("w1:p1"),
+			pane("w1:p2\u001b]8;;spoof", "blocked", {
+				agentName: "reviewer\nname\u202e",
+				label: "測試\nagent\u202e\u001b]8;;https://spoof\u0007",
+				stateLabels: { blocked: "wait\rnow" },
+			}),
+		],
+		{ workspaceId: "w1", label: "space\u001b]8;;spoof" },
+	);
 	const snapshot = model.snapshot();
 	assert.ok(snapshot);
-	assert.equal(snapshot.rows[0]?.name, "測試 agent");
+	assert.equal(snapshot.rows[0]?.agent, "reviewer name");
+	assert.equal(snapshot.rows[0]?.pane, "測試 agent/p2");
+	assert.equal(snapshot.rows[0]?.space, "space/w1");
 	assert.equal(snapshot.rows[0]?.stateLabel, "wait now");
 	assert.equal(snapshot.rows[0]?.paneId.includes("\u001b"), false);
 	assert.equal(herdrWidgetFingerprint(snapshot), herdrWidgetFingerprint(model.snapshot()));
 
 	let color = 31;
 	const theme = {
+		bold: (text: string) => `\u001b[1m${text}\u001b[22m`,
 		fg: (_role: string, text: string) => `\u001b[${color}m${text}\u001b[0m`,
 	} as Theme;
 	const widget = createHerdrWidget(snapshot, theme);

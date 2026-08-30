@@ -18,7 +18,7 @@ Make `pi-herdr` the lightweight bridge that lets Pi and Herdr share live context
 - `packages/pi-herdr/src/herdr-agent-state.ts` reports the current interactive Pi session plus `working`, `blocked`, and `idle` state to the Herdr socket.
 - The extension coalesces state changes, retries bounded delivery failures, guards session generations, and aborts reporting during shutdown.
 - The bundled `herdr` skill provides explicit, on-demand CLI guidance for inspecting and controlling workspaces, tabs, panes, agents, commands, and notifications.
-- The extension now renders a terminal-safe, event-driven widget for recognized sibling agents in the current workspace and maintains pane-scoped status subscriptions with bounded failure recovery.
+- The extension now renders a terminal-safe, event-driven widget with one state, agent, pane, and workspace row per recognized sibling and maintains pane-scoped status subscriptions with bounded failure recovery.
 - The extension still has no footer status, `/herdr` command, pane metadata publication, autocomplete, or watch notification.
 - The installed Herdr 0.8.2 API exposes `pane.current`, `pane.list`, `events.subscribe`, pane lifecycle and agent-status events, `pane.report_metadata`, and protocol metadata through its public schema.
 - The bundled skill currently lists `herdr terminal` as a discovery group even though that group is absent from the installed Herdr 0.8.2 CLI.
@@ -37,7 +37,7 @@ Make `pi-herdr` the lightweight bridge that lets Pi and Herdr share live context
 
 ### Phase 1: Establish trustworthy ambient awareness
 
-- [x] A Pi widget above the editor presents a bounded, responsive view of relevant sibling agents in the current Herdr workspace, excludes the current pane, distinguishes `blocked`, `done`, `working`, `idle`, and `unknown`, and hides when there is nothing useful to show.
+- [x] A Pi widget above the editor presents one bounded state, agent, pane, and workspace row per relevant sibling, excludes the current pane, distinguishes `blocked`, `done`, `working`, `idle`, and `unknown`, and hides when there is nothing useful to show.
   Evidence: focused model and rendering tests plus a Herdr-managed TUI smoke cover every state, five-row overflow, empty state, and narrow rendering.
 - [x] Widget state initializes from authoritative `pane.current` and `pane.list` reads and remains current through topology plus pane-scoped status subscriptions without steady-state CLI polling, while disconnects and unsupported responses degrade without interrupting Pi.
   Evidence: protocol, client, observer, replay, reconnect, and live moved-pane tests pass.
@@ -97,7 +97,7 @@ Make `pi-herdr` the lightweight bridge that lets Pi and Herdr share live context
 | Persistent widgets consume scarce terminal rows | Ambient status could distract more than it helps | Default to current-workspace siblings, bound rows, collapse overflow, and hide when no useful state exists. |
 | Herdr-derived terminal text is untrusted | Titles, paths, or state labels could inject controls or break layout | Sanitize at the display boundary before presentation sorting or truncation while preserving raw protocol data internally. |
 | Herdr `done` depends on unseen background completion | Reading state from Pi could accidentally change user-visible semantics | Use read-only APIs that do not focus panes or mark tabs seen, and test that widget inspection preserves `done`. |
-| Agent names or display labels may be absent or non-unique | Widget rows and actions could target the wrong pane | Display friendly labels with stable pane IDs as fallback and resolve every action through returned Herdr identifiers. |
+| Agent names or display labels may be absent or non-unique | Widget rows and actions could become ambiguous | Keep agent identity primary, show pane and workspace labels with short stable IDs in separate visual roles, and resolve future actions through raw Herdr identifiers. |
 | A command dashboard can drift into a second Herdr TUI | Maintenance and safety scope could expand rapidly | Keep Phase 3 current-context and menu-first, and require a separate go/no-go decision for each mutating action. |
 | New settings would introduce persistence and precedence obligations | Early delivery could become dominated by configuration complexity | Use a useful zero-configuration default first and adopt extension settings only after a concrete user need is established. |
 
@@ -107,6 +107,7 @@ Make `pi-herdr` the lightweight bridge that lets Pi and Herdr share live context
 - **2026-08-30 — Prefer a widget over editor replacement:** `ctx.ui.setWidget()` preserves editor composition, keybindings, paste behavior, and compatibility with other editor extensions.
 - **2026-08-30 — Prefer subscription over polling:** authoritative workspace reads plus topology and pane-scoped status subscriptions provide a lower-overhead and more truthful source than recurring `herdr agent list` subprocesses.
 - **2026-08-30 — Reconcile replayed topology:** Herdr replays retained topology events, so the widget coalesces them into fresh workspace reads and rebuilds status subscriptions only when the recognized pane set changes.
+- **2026-08-30 — Keep one agent per row:** each row uses theme roles to present state, agent name, pane label and short ID, then workspace label and short ID without misclassifying terminal titles as agent identity.
 - **2026-08-30 — Defer broad model tools:** the bundled skill and installed CLI remain authoritative until a narrow typed tool proves additional safety or reliability.
 
 ## Non-Goals
