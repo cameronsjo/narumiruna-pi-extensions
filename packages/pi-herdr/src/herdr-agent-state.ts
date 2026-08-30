@@ -1,6 +1,7 @@
-import net from "node:net";
 import path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { createBestEffortSender, type HerdrRequest } from "./herdr-client.js";
+import { createHerdrWidgetObserver, type HerdrWidgetObserver } from "./herdr-observer.js";
 
 const SOURCE = "herdr:pi";
 
@@ -10,12 +11,6 @@ interface HerdrEnvironment {
 	enabled: boolean;
 	paneId: string;
 	socketEndpoint: string;
-}
-
-interface HerdrRequest {
-	id: string;
-	method: "pane.report_agent" | "pane.report_agent_session";
-	params: Record<string, unknown>;
 }
 
 interface QueuedState {
@@ -30,6 +25,7 @@ export interface HerdrAgentStateOptions {
 	now?: () => number;
 	random?: () => number;
 	sendRequest?: (request: HerdrRequest, signal: AbortSignal) => Promise<void>;
+	widgetObserver?: HerdrWidgetObserver;
 }
 
 let reportSeq = Date.now() * 1000;
@@ -61,54 +57,20 @@ function readEnvironment(environment: NodeJS.ProcessEnv = process.env): HerdrEnv
 	};
 }
 
-function sendRequestAttempt(
-	socketEndpoint: string,
-	request: HerdrRequest,
-	timeoutMs: number,
-	signal: AbortSignal,
-): Promise<boolean> {
-	if (signal.aborted) return Promise.resolve(false);
-
-	return new Promise((resolve) => {
-		let finished = false;
-		let timeout: ReturnType<typeof setTimeout> | undefined;
-		const socket = net.createConnection(socketEndpoint);
-
-		const finish = (delivered: boolean) => {
-			if (finished) return;
-			finished = true;
-			if (timeout) clearTimeout(timeout);
-			signal.removeEventListener("abort", abort);
-			socket.destroy();
-			resolve(delivered);
-		};
-		const abort = () => finish(false);
-
-		signal.addEventListener("abort", abort, { once: true });
-		socket.on("error", () => finish(false));
-		socket.on("connect", () => socket.write(`${JSON.stringify(request)}\n`));
-		socket.on("data", () => finish(true));
-		socket.on("end", () => finish(false));
-		timeout = setTimeout(() => finish(false), timeoutMs);
-		timeout.unref?.();
-	});
-}
-
-function createSocketSender(socketEndpoint: string) {
-	return async (request: HerdrRequest, signal: AbortSignal): Promise<void> => {
-		if (await sendRequestAttempt(socketEndpoint, request, 500, signal)) return;
-		if (signal.aborted) return;
-		await sendRequestAttempt(socketEndpoint, request, 1500, signal);
-	};
-}
-
 export function createHerdrAgentStateExtension(
 	options: HerdrAgentStateOptions = {},
 ): (pi: ExtensionAPI) => void {
 	const environment = options.environment ?? readEnvironment();
 	const now = options.now ?? Date.now;
 	const random = options.random ?? Math.random;
-	const sendRequest = options.sendRequest ?? createSocketSender(environment.socketEndpoint);
+	const sendRequest = options.sendRequest ?? createBestEffortSender(environment.socketEndpoint);
+	const widgetObserver =
+		options.widgetObserver ??
+		createHerdrWidgetObserver({
+			environment,
+			now,
+			random,
+		});
 
 	return function herdrAgentState(pi: ExtensionAPI): void {
 		if (!environment.enabled) return;
@@ -256,6 +218,7 @@ export function createHerdrAgentStateExtension(
 			sessionController.abort(new DOMException("Herdr session replaced", "AbortError"));
 			sessionController = new AbortController();
 			rootSession = ctx.mode === "tui";
+			if (rootSession) widgetObserver.start(ctx);
 			agentActive = false;
 			blockedCount = 0;
 			blockedMessage = undefined;
@@ -286,12 +249,12 @@ export function createHerdrAgentStateExtension(
 			publishState();
 		});
 
-		pi.on("session_shutdown", async () => {
+		pi.on("session_shutdown", async (_event, ctx) => {
 			++sessionGeneration;
 			rootSession = false;
 			sessionController.abort(new DOMException("Herdr session shut down", "AbortError"));
 			queuedState = undefined;
-			await drainTask;
+			await Promise.all([drainTask, widgetObserver.shutdown(ctx)]);
 			currentAgentSessionId = undefined;
 			currentAgentSessionPath = undefined;
 		});

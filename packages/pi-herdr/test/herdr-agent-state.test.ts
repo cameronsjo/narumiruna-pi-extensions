@@ -41,6 +41,10 @@ function enabledOptions(requests: HerdrRequest[]): HerdrAgentStateOptions {
 		sendRequest: async (request) => {
 			requests.push(request);
 		},
+		widgetObserver: {
+			start() {},
+			async shutdown() {},
+		},
 	};
 }
 
@@ -167,8 +171,20 @@ test("blocked events override working state until every blocker clears", async (
 
 test("non-TUI sessions never report state", async () => {
 	const requests: HerdrRequest[] = [];
+	const observerStarts: string[] = [];
+	const observerShutdowns: string[] = [];
 	const mock = createMockPi();
-	herdrModule.createHerdrAgentStateExtension(enabledOptions(requests))(mock.pi);
+	herdrModule.createHerdrAgentStateExtension({
+		...enabledOptions(requests),
+		widgetObserver: {
+			start(ctx) {
+				observerStarts.push(ctx.mode);
+			},
+			async shutdown(ctx) {
+				observerShutdowns.push(ctx.mode);
+			},
+		},
+	})(mock.pi);
 	const started = createMockContext({ mode: "rpc", hasUI: true });
 	await emit(mock, "session_start", { reason: "startup" }, started.ctx);
 	await emit(mock, "agent_start", {}, started.ctx);
@@ -179,8 +195,32 @@ test("non-TUI sessions never report state", async () => {
 		{ reason: "ui_prompt", kind: "confirm", title: "Hidden" },
 		started.ctx,
 	);
+	await emit(mock, "session_shutdown", { reason: "quit" }, started.ctx);
 	await flushReporting();
 	assert.deepEqual(requests, []);
+	assert.deepEqual(observerStarts, []);
+	assert.deepEqual(observerShutdowns, ["rpc"]);
+});
+
+test("TUI sessions start and shut down the widget observer", async () => {
+	const requests: HerdrRequest[] = [];
+	const events: string[] = [];
+	const mock = createMockPi();
+	herdrModule.createHerdrAgentStateExtension({
+		...enabledOptions(requests),
+		widgetObserver: {
+			start(ctx) {
+				events.push(`start:${ctx.mode}`);
+			},
+			async shutdown(ctx) {
+				events.push(`shutdown:${ctx.mode}`);
+			},
+		},
+	})(mock.pi);
+	const started = tuiContext();
+	await emit(mock, "session_start", { reason: "startup" }, started.ctx);
+	await emit(mock, "session_shutdown", { reason: "reload" }, started.ctx);
+	assert.deepEqual(events, ["start:tui", "shutdown:tui"]);
 });
 
 test("socket transport retries one failed delivery and preserves the request", async () => {
@@ -216,6 +256,10 @@ test("socket transport retries one failed delivery and preserves the request", a
 	const mock = createMockPi();
 	herdrModule.createHerdrAgentStateExtension({
 		environment: { enabled: true, paneId: "w1:p2", socketEndpoint: socketPath },
+		widgetObserver: {
+			start() {},
+			async shutdown() {},
+		},
 	})(mock.pi);
 	const started = tuiContext();
 	try {

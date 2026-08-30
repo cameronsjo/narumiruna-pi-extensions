@@ -7,6 +7,8 @@ Connect Pi's interactive lifecycle to Herdr and bundle the operating guidance ne
 ## ✨ Features
 
 - Reports Pi session identity and `working`, `blocked`, and `idle` lifecycle states to the current Herdr pane.
+- Shows recognized sibling agents from the current Herdr workspace in a passive widget above Pi's editor.
+- Updates the widget from Herdr pane lifecycle and agent-status events without polling the CLI.
 - Coalesces rapid state changes and retries short-lived local socket failures without interrupting Pi.
 - Derives blocked state from Pi's public `ui_prompt_start` and `ui_prompt_end` lifecycle events.
 - Bundles the `herdr` skill for explicit Herdr inspection and control requests.
@@ -39,6 +41,7 @@ Install only trusted packages, and review the source and bundled instructions be
 
 Start Pi inside a Herdr-managed pane after installing the package.
 The extension activates automatically when `HERDR_ENV=1`, `HERDR_SOCKET_PATH`, and `HERDR_PANE_ID` are present.
+When the current Herdr workspace contains another recognized agent, Pi shows its state in a widget above the editor.
 Ask Pi to use Herdr, or invoke `/skill:herdr`, when you want it to inspect or control the current Herdr session.
 
 If the standalone integration and skill are already installed, remove them after installing this package to avoid duplicate state reports and skill-name collisions:
@@ -62,10 +65,26 @@ Local socket delivery is best-effort.
 A failed request is retried once with bounded timeouts, and reporting failures never stop Pi.
 Session shutdown aborts in-flight reporting and prevents stale session work from publishing later state.
 
+## 🐑 Agent widget
+
+The widget lists only recognized agents in the current Herdr workspace and excludes the pane running the current Pi session.
+It orders agents by `blocked`, `done`, `working`, `idle`, and `unknown`, shows at most five rows, and reports any remaining count.
+A state label published through Herdr metadata can replace the raw state name.
+Herdr's public pane responses do not expose the blocked prompt message, so the widget cannot show that reason.
+The widget is read-only and does not focus panes, read terminal output, send prompts, or mark a background `done` state as seen.
+The extension discovers the current workspace, opens pane-scoped status subscriptions plus topology subscriptions, and then reloads the pane list to reconcile changes made during initialization.
+Expected pane creation, movement, or agent detection rebuilds the pane-scoped subscriptions without consuming the bounded failure retry.
+Unexpected disconnection clears the widget before one bounded reconnect attempt, and a second failure leaves it hidden until the next Pi session or `/reload`.
+Session replacement and shutdown abort the subscription, pending requests, reconnect delay, and stale widget publication.
+
 ## 🔒 Security and privacy
 
 The extension connects only to the Unix socket or Windows named pipe provided by `HERDR_SOCKET_PATH`.
 It sends the current Herdr pane ID, Pi session path or ID, lifecycle state, session start reason, and blocked label to that endpoint.
+For the widget, it reads the canonical current pane and pane list for the current workspace, then subscribes to pane creation, closure, movement, exit, agent detection, and agent-status events.
+Widget fields can include workspace, tab, pane, terminal, agent, display, title, label, state-label, and lifecycle identifiers supplied by Herdr.
+The subscription can deliver matching pane events from other workspaces in the same Herdr session, and the extension ignores them after resolving the current workspace.
+The extension filters presentation to the current workspace, strips terminal controls at the display boundary, and never reads sibling terminal output for the widget.
 The package does not authenticate the endpoint, so trust the environment that launches Pi and controls these variables.
 
 The bundled skill can direct Pi to inspect terminals, create panes, start agents, send input, and run commands through the local `herdr` CLI.
@@ -74,8 +93,10 @@ The skill requires an explicit user request involving Herdr and stops when `HERD
 
 ## 🚧 Limitations
 
-- State reporting is disabled in RPC, JSON, and print modes.
-- State reporting requires a running Herdr session and valid injected environment variables.
+- State reporting and the agent widget are disabled in RPC, JSON, and print modes.
+- The widget has no settings for placement, workspace scope, visibility, or row count.
+- The widget cannot show blocked prompt text because Herdr does not expose it through public pane responses.
+- Integration requires a running compatible Herdr session and valid injected environment variables.
 - Socket failures are intentionally silent after the bounded retry.
 - The package does not install, start, update, or configure Herdr itself.
 
@@ -87,9 +108,16 @@ packages/pi-herdr/
 │   └── SKILL.md              # Herdr control workflow and safety rules
 ├── src/
 │   ├── index.ts              # Thin Pi entrypoint
-│   └── herdr-agent-state.ts  # Herdr socket and Pi lifecycle integration
+│   ├── herdr-agent-state.ts  # Pi lifecycle and integration ownership
+│   ├── herdr-client.ts       # Bounded Herdr socket transport
+│   ├── herdr-observer.ts     # Read-only event subscription lifecycle
+│   ├── herdr-protocol.ts     # Narrow response and event validation
+│   └── herdr-widget.ts       # Agent state model and presentation
 ├── test/
-│   └── herdr-agent-state.test.ts
+│   ├── herdr-agent-state.test.ts
+│   ├── herdr-client.test.ts
+│   ├── herdr-observer.test.ts
+│   └── herdr-widget.test.ts
 ├── package.json              # Pi extension and skill declarations
 ├── tsconfig.json
 ├── README.md
