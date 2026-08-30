@@ -324,7 +324,7 @@ export class DocumentSearchController implements Focusable {
 		this.pasting = pasted.pasting;
 		this.pasteBuffer = pasted.buffer;
 		handleSearchInput(this.input, pasted.data);
-		const bounded = truncateSearchQuery(this.input.getValue());
+		const bounded = truncateSearchQuery(this.input.getValue(), previous);
 		if (bounded !== this.input.getValue()) this.input.setValue(bounded);
 		if (this.input.getValue() === previous) return false;
 		this.rebuildMatches();
@@ -669,7 +669,7 @@ function sanitizeUnbracketedSearchData(value: string) {
 	return hasTerminalControl ? value : sanitizeTerminalDocument(value);
 }
 
-function truncateSearchQuery(value: string) {
+function truncateSearchQuery(value: string, preservedPrefix?: string) {
 	if (value.length <= MAX_SEARCH_QUERY_LENGTH) return value;
 	let end = 0;
 	for (const { index, segment } of graphemeSegmenter.segment(value)) {
@@ -677,7 +677,16 @@ function truncateSearchQuery(value: string) {
 		if (next > MAX_SEARCH_QUERY_LENGTH) break;
 		end = next;
 	}
-	return value.slice(0, end);
+	const truncated = value.slice(0, end);
+	if (
+		preservedPrefix !== undefined &&
+		preservedPrefix.length <= MAX_SEARCH_QUERY_LENGTH &&
+		value.startsWith(preservedPrefix) &&
+		truncated.length < preservedPrefix.length
+	) {
+		return preservedPrefix;
+	}
+	return truncated;
 }
 
 function sanitizeSearchQuery(value: string) {

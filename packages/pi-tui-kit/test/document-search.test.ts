@@ -491,6 +491,13 @@ test("bounds the stored query across typed and pasted input", () => {
 	assert.equal(controller.input.getValue(), "x".repeat(4_096));
 	assert.equal(controller.count, 1);
 
+	controller.handleInput("\u0301");
+	assert.equal(controller.input.getValue(), "x".repeat(4_096));
+	assert.equal(controller.count, 1);
+	controller.handleInput("\u001b[200~\u0301\u001b[201~");
+	assert.equal(controller.input.getValue(), "x".repeat(4_096));
+	assert.equal(controller.count, 1);
+
 	controller.handleInput("\u001b[H");
 	controller.handleInput("z");
 	assert.equal(controller.input.getValue(), `z${"x".repeat(4_095)}`);
