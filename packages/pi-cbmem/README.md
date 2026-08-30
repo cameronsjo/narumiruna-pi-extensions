@@ -9,6 +9,7 @@ Connect Pi to the local Codebase Memory CLI and give the model graph-first opera
 - Registers 15 Codebase Memory tools for graph queries, search, indexing, coverage, tracing, and architecture.
 - Runs the local `codebase-memory-mcp` CLI with cancellation, failure reporting, and bounded output.
 - Bundles the `codebase-memory` skill for graph-first, evidence-tier workflows.
+- Resolves `@current` to an exact current-root index or a matching clean canonical-checkout graph for approved read tools.
 - Loads the extension and skill from one package.
 
 ## 📦 Install
@@ -41,6 +42,21 @@ Install only trusted packages, and review the source before loading this extensi
 
 Install `codebase-memory-mcp` at `~/.local/bin/codebase-memory-mcp`, load pi-cbmem, and ask Pi a structural codebase question.
 The bundled skill directs Pi to identify the active graph project before exploration and verify material claims with snippets and index-coverage evidence.
+
+## 🌳 Worktree base reuse
+
+Approved read tools accept `project="@current"`.
+An index whose stored root is the current worktree wins.
+When the linked worktree has no index, pi-cbmem can borrow the canonical checkout project only when both trees are clean, share one Git common directory and `HEAD`, and the graph-recorded Branch metadata matches that snapshot.
+The extension validates the borrowed state before and after every call and identifies the borrowed project in `pi_cbmem_resolution`.
+Borrowing is read-only and never copies, remaps, updates, or deletes an index.
+Borrowed `get_code_snippet` results read the selected lines from the current worktree and report its path.
+
+The `@current` alias is available for `search_graph`, `query_graph`, `trace_path`, `get_code_snippet`, `get_graph_schema`, `get_architecture`, and `index_status`.
+It is intentionally unavailable for `search_code`, `check_index_coverage`, `detect_changes`, `manage_adr`, `ingest_traces`, `delete_project`, and `index_repository` because those operations read project-root state or mutate persisted data.
+Use an explicit indexed project for those tools.
+If the worktree is dirty, at another commit, ambiguous, or backed by a stale Branch snapshot, create its own index or use normal file tools.
+Codebase Memory does not expose an immutable generation lease or complete semantic-input comparison, so this fallback is a conservative best-effort read optimization rather than worktree overlay indexing.
 
 ## 🛠️ Tools
 
@@ -82,6 +98,7 @@ Cancelling the tool call terminates that child process.
 - The package requires `~/.local/bin/codebase-memory-mcp` for the current user.
 - It does not install or update the Codebase Memory binary.
 - Static tool schemas match the bundled skill, while the installed CLI performs final argument validation.
+- Worktree base reuse requires an exact clean snapshot and does not cover branch changes, dirty files, source-code search, change detection, index mutation, project forking, or overlays.
 
 ## 🗂️ Package layout
 
@@ -94,7 +111,8 @@ packages/pi-cbmem/
 │   ├── index.ts                    # Thin Pi entrypoint
 │   ├── cbmem.ts                    # Bounded Codebase Memory CLI runner
 │   ├── render-result.ts            # Terminal-safe result rendering
-│   └── tool-definitions.ts         # Pi tool metadata and TypeBox schemas
+│   ├── tool-definitions.ts         # Pi tool metadata and TypeBox schemas
+│   └── worktree-project.ts         # Safe current-worktree project resolution
 ├── skills/codebase-memory/
 │   └── SKILL.md                    # Graph-first operating guidance
 ├── test/

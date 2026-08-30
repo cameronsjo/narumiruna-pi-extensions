@@ -12,7 +12,8 @@ import {
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { afterAll, beforeAll, test } from "vitest";
-import cbmem, { callCodebaseMemory, TOOL_NAMES } from "../src/cbmem.js";
+import cbmem, { type CbmemToolDetails, callCodebaseMemory, TOOL_NAMES } from "../src/cbmem.js";
+import type { ProjectResolution, ProjectResolutionService } from "../src/worktree-project.js";
 
 const packageDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 let fixtureDirectory: string;
@@ -62,8 +63,19 @@ process.stdin.on("end", () => {
       setInterval(() => {}, 1000);
       return;
     }
+    case "snippet":
+      process.stdout.write(JSON.stringify({
+        name: "answer",
+        qualified_name: "source-project.example.answer",
+        label: "Variable",
+        file_path: args.sourcePath,
+        start_line: 2,
+        end_line: 2,
+        source: "source copy\\n",
+      }));
+      return;
     default:
-      process.stdout.write(JSON.stringify({ ok: true }));
+      process.stdout.write(JSON.stringify({ ok: true, args, tool: process.argv[3] }));
   }
 });
 `,
@@ -90,13 +102,176 @@ test("cbmem registers complete Pi tool definitions", () => {
 		registered.map((tool) => tool.name),
 		TOOL_NAMES,
 	);
+	const aliasTools = new Set([
+		"get_architecture",
+		"get_code_snippet",
+		"get_graph_schema",
+		"index_status",
+		"query_graph",
+		"search_graph",
+		"trace_path",
+	]);
 	for (const tool of registered) {
 		assert.ok(tool.label);
 		assert.match(tool.description, /output is limited/i);
 		assert.equal((tool.parameters as { type?: unknown }).type, "object");
 		assert.equal(typeof tool.execute, "function");
 		assert.equal(typeof tool.renderResult, "function");
+		const projectDescription = (
+			tool.parameters as { properties?: { project?: { description?: string } } }
+		).properties?.project?.description;
+		if (aliasTools.has(tool.name)) assert.match(projectDescription ?? "", /@current/u);
+		else assert.doesNotMatch(projectDescription ?? "", /@current/u);
 	}
+});
+
+test("@current routes read-only graph tools and annotates the resolved project", async () => {
+	const resolution: ProjectResolution = {
+		kind: "borrowed",
+		project: "source-project",
+		currentRoot: "/worktree",
+		sourceRoot: "/source",
+		headSha: "a".repeat(40),
+	};
+	let revalidated = 0;
+	const tools = registerTools(
+		fixtureBinary,
+		resolutionService(resolution, async () => {
+			revalidated += 1;
+		}),
+	);
+	const result = await executeTool(
+		tools,
+		"search_graph",
+		{ project: "@current", name_pattern: ".*Answer.*" },
+		toolContext(async () => true),
+	);
+	const payload = JSON.parse(resultText(result)) as {
+		args?: Record<string, unknown>;
+		pi_cbmem_resolution?: Record<string, unknown>;
+	};
+
+	assert.equal(payload.args?.project, "source-project");
+	assert.equal(payload.pi_cbmem_resolution?.kind, "borrowed_canonical_base");
+	assert.equal(payload.pi_cbmem_resolution?.current_root, "/worktree");
+	assert.equal(revalidated, 1);
+	assert.deepEqual((result.details as CbmemToolDetails).projectResolution, resolution);
+});
+
+test("@current rejects filesystem-bound and mutating tools before resolution", async () => {
+	let resolved = false;
+	const tools = registerTools(
+		path.join(fixtureDirectory, "missing-binary"),
+		resolutionService(
+			{
+				kind: "current",
+				project: "current-project",
+				currentRoot: fixtureDirectory,
+				sourceRoot: fixtureDirectory,
+				headSha: "a".repeat(40),
+			},
+			async () => {},
+			() => {
+				resolved = true;
+			},
+		),
+	);
+	for (const name of [
+		"search_code",
+		"check_index_coverage",
+		"detect_changes",
+		"delete_project",
+		"manage_adr",
+		"ingest_traces",
+	] as const) {
+		await assert.rejects(
+			executeTool(
+				tools,
+				name,
+				{ project: "@current" },
+				toolContext(async () => true),
+			),
+			/available only for read-only graph tools/u,
+		);
+	}
+	assert.equal(resolved, false);
+});
+
+test("borrowed snippets are read from and point to the current worktree", async () => {
+	const sourceRoot = await mkdtemp(path.join(fixtureDirectory, "snippet-source-"));
+	const currentRoot = await mkdtemp(path.join(fixtureDirectory, "snippet-current-"));
+	const sourcePath = path.join(sourceRoot, "example.ts");
+	const currentPath = path.join(currentRoot, "example.ts");
+	await writeFile(sourcePath, "first\nsource copy\nthird\n", "utf8");
+	await writeFile(currentPath, "first\ncurrent copy\nthird\n", "utf8");
+	const resolution: ProjectResolution = {
+		kind: "borrowed",
+		project: "source-project",
+		currentRoot,
+		sourceRoot,
+		headSha: "a".repeat(40),
+	};
+	const tools = registerTools(fixtureBinary, resolutionService(resolution));
+	const result = await executeTool(
+		tools,
+		"get_code_snippet",
+		{
+			project: "@current",
+			qualified_name: "source-project.example.answer",
+			testMode: "snippet",
+			sourcePath,
+		},
+		toolContext(async () => true),
+	);
+	const payload = JSON.parse(resultText(result)) as {
+		file_path?: string;
+		source?: string;
+		pi_cbmem_resolution?: Record<string, unknown>;
+	};
+
+	assert.equal(payload.file_path, currentPath);
+	assert.equal(payload.source, "current copy\n");
+	assert.equal(payload.pi_cbmem_resolution?.kind, "borrowed_canonical_base");
+
+	await assert.rejects(
+		executeTool(
+			tools,
+			"get_code_snippet",
+			{
+				project: "@current",
+				qualified_name: "source-project.escape",
+				testMode: "snippet",
+				sourcePath: path.join(sourceRoot, "..", "escape.ts"),
+			},
+			toolContext(async () => true),
+		),
+		/escapes the canonical project root/u,
+	);
+});
+
+test("borrowed results are discarded when post-call revalidation fails", async () => {
+	const resolution: ProjectResolution = {
+		kind: "borrowed",
+		project: "source-project",
+		currentRoot: "/worktree",
+		sourceRoot: "/source",
+		headSha: "a".repeat(40),
+	};
+	const tools = registerTools(
+		fixtureBinary,
+		resolutionService(resolution, async () => {
+			throw new Error("snapshot changed during call");
+		}),
+	);
+	await assert.rejects(
+		executeTool(
+			tools,
+			"search_graph",
+			{ project: "@current" },
+			toolContext(async () => true),
+		),
+		/snapshot changed during call/u,
+	);
 });
 
 test("destructive tools require observable confirmation before spawning", async () => {
@@ -326,6 +501,8 @@ test("bundled skill enforces graph-first evidence and valid project-scoped calls
 		/Verify \(Tier 2, default\)/,
 		/Auditor \(Tier 3\)/,
 		/check_index_coverage` once with every evidence path/,
+		/project="@current"/,
+		/borrowed_canonical_base/,
 		/Do not assume subagents inherit MCP access/i,
 	]) {
 		assert.match(skill, evidence);
@@ -348,8 +525,8 @@ test("bundled skill enforces graph-first evidence and valid project-scoped calls
 		const calls = documentedCalls(tool);
 		assert.ok(calls.length > 0, `expected at least one documented ${tool} call`);
 		assert.ok(
-			calls.every((call) => call[1]?.includes('project="<name>"')),
-			`expected every documented ${tool} call to include project`,
+			calls.every((call) => /project="(?:<name>|@current)"/u.test(call[1] ?? "")),
+			`expected every documented ${tool} call to include an exact project or @current`,
 		);
 	}
 	assert.ok(
@@ -362,15 +539,32 @@ test("bundled skill enforces graph-first evidence and valid project-scoped calls
 	);
 });
 
-function registerTools(binary: string): ToolDefinition[] {
+function registerTools(
+	binary: string,
+	projectResolutionService?: ProjectResolutionService,
+): ToolDefinition[] {
 	const tools: ToolDefinition[] = [];
 	const api = {
 		registerTool(tool: ToolDefinition) {
 			tools.push(tool);
 		},
 	} as unknown as ExtensionAPI;
-	cbmem(api, binary);
+	cbmem(api, binary, projectResolutionService);
 	return tools;
+}
+
+function resolutionService(
+	resolution: ProjectResolution,
+	revalidate: ProjectResolutionService["revalidate"] = async () => {},
+	onResolve: () => void = () => {},
+): ProjectResolutionService {
+	return {
+		async resolve() {
+			onResolve();
+			return resolution;
+		},
+		revalidate,
+	};
 }
 
 function toolContext(
@@ -397,9 +591,10 @@ async function executeTool(
 	return await tool.execute("test-call", params, signal, undefined, ctx);
 }
 
-function resultText(result: Awaited<ReturnType<typeof callCodebaseMemory>>): string {
-	const content = result.content[0];
+function resultText(result: { content: readonly unknown[] }): string {
+	const content = result.content[0] as { type?: unknown; text?: unknown } | undefined;
 	assert.equal(content?.type, "text");
+	if (typeof content.text !== "string") throw new Error("expected text tool result");
 	return content.text;
 }
 

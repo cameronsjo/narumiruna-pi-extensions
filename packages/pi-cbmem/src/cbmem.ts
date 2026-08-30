@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { lstat, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -10,6 +11,14 @@ import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "@earendil-work
 import { sanitizeTerminalText } from "@narumitw/pi-tui-kit/terminal-text";
 import { renderCodebaseMemoryResult } from "./render-result.js";
 import { type BridgeToolDefinition, TOOL_DEFINITIONS, type ToolName } from "./tool-definitions.js";
+import {
+	BORROWABLE_TOOL_NAMES,
+	CURRENT_PROJECT_ALIAS,
+	currentRelativePath,
+	defaultProjectResolutionService,
+	type ProjectResolution,
+	type ProjectResolutionService,
+} from "./worktree-project.js";
 
 export { TOOL_NAMES } from "./tool-definitions.js";
 
@@ -21,6 +30,7 @@ export interface CbmemToolDetails {
 	truncated: boolean;
 	totalBytes: number;
 	totalLines: number;
+	projectResolution?: ProjectResolution;
 }
 
 class BoundedPrefixCollector {
@@ -178,25 +188,184 @@ export async function callCodebaseMemory(
 	});
 }
 
-export default function cbmem(pi: ExtensionAPI, binary = BIN): void {
-	for (const definition of TOOL_DEFINITIONS) registerBridgeTool(pi, definition, binary);
+export default function cbmem(
+	pi: ExtensionAPI,
+	binary = BIN,
+	projectResolutionService = defaultProjectResolutionService,
+): void {
+	for (const definition of TOOL_DEFINITIONS) {
+		registerBridgeTool(pi, definition, binary, projectResolutionService);
+	}
 }
 
 function registerBridgeTool(
 	pi: ExtensionAPI,
 	definition: BridgeToolDefinition,
 	binary: string,
+	projectResolutionService: ProjectResolutionService,
 ): void {
 	pi.registerTool({
 		...definition,
 		renderResult: renderCodebaseMemoryResult,
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			const tool = definition.name as ToolName;
-			const args = params as Record<string, unknown>;
+			let args = params as Record<string, unknown>;
+			let resolution: ProjectResolution | undefined;
+			const query = async (
+				queryTool: ToolName,
+				queryArgs: Record<string, unknown>,
+				querySignal: AbortSignal | undefined,
+			): Promise<unknown> => {
+				const result = await callCodebaseMemory(queryTool, queryArgs, querySignal, ctx.cwd, binary);
+				querySignal?.throwIfAborted();
+				return parseJsonResult(result, queryTool);
+			};
+
+			if (args.project === CURRENT_PROJECT_ALIAS) {
+				if (!BORROWABLE_TOOL_NAMES.has(tool)) {
+					throw new Error(
+						`${CURRENT_PROJECT_ALIAS} is available only for read-only graph tools; specify an indexed project for ${tool}`,
+					);
+				}
+				resolution = await projectResolutionService.resolve(ctx.cwd, signal, query);
+				signal?.throwIfAborted();
+				args = { ...args, project: resolution.project };
+			}
+
 			await confirmDestructiveCall(tool, args, signal, ctx);
-			return await callCodebaseMemory(tool, args, signal, ctx.cwd, binary);
+			signal?.throwIfAborted();
+			let result = await callCodebaseMemory(tool, args, signal, ctx.cwd, binary);
+			signal?.throwIfAborted();
+			if (!resolution) return result;
+			if (resolution.kind === "borrowed" && tool === "get_code_snippet") {
+				result = await rewriteBorrowedSnippet(result, resolution, signal);
+				signal?.throwIfAborted();
+			}
+			await projectResolutionService.revalidate(resolution, signal, query);
+			signal?.throwIfAborted();
+			return attachProjectResolution(result, resolution);
 		},
 	});
+}
+
+function parseJsonResult(result: AgentToolResult<CbmemToolDetails>, tool: ToolName): unknown {
+	const content = result.content[0];
+	if (content?.type !== "text") {
+		throw new Error(`codebase-memory-mcp ${tool} returned no text result`);
+	}
+	try {
+		return JSON.parse(content.text);
+	} catch (error) {
+		throw new Error(`codebase-memory-mcp ${tool} returned invalid JSON`, { cause: error });
+	}
+}
+
+async function rewriteBorrowedSnippet(
+	result: AgentToolResult<CbmemToolDetails>,
+	resolution: ProjectResolution,
+	signal: AbortSignal | undefined,
+): Promise<AgentToolResult<CbmemToolDetails>> {
+	const snippet = parseJsonResult(result, "get_code_snippet");
+	if (!snippet || typeof snippet !== "object" || Array.isArray(snippet)) {
+		throw new Error("Codebase Memory returned an invalid borrowed code snippet");
+	}
+	const record = snippet as Record<string, unknown>;
+	if (
+		typeof record.file_path !== "string" ||
+		typeof record.start_line !== "number" ||
+		typeof record.end_line !== "number"
+	) {
+		throw new Error("Codebase Memory returned incomplete borrowed code snippet metadata");
+	}
+	const currentPath = currentRelativePath(resolution, record.file_path);
+	const file = await lstat(currentPath);
+	signal?.throwIfAborted();
+	if (!file.isFile() || file.isSymbolicLink()) {
+		throw new Error("Borrowed code snippet does not resolve to a regular worktree file");
+	}
+	const source = await readFile(currentPath, "utf8");
+	signal?.throwIfAborted();
+	const lines = source.split(/(?<=\n)/u);
+	const start = record.start_line;
+	const end = record.end_line;
+	if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 1 || end < start) {
+		throw new Error("Codebase Memory returned an invalid borrowed code snippet range");
+	}
+	const selected = lines.slice(start - 1, end);
+	if (selected.length !== end - start + 1) {
+		throw new Error("The borrowed code snippet range is outside the current worktree file");
+	}
+	record.file_path = currentPath;
+	record.source = selected.join("");
+	return replaceTextResult(result, JSON.stringify(record));
+}
+
+function attachProjectResolution(
+	result: AgentToolResult<CbmemToolDetails>,
+	resolution: ProjectResolution,
+): AgentToolResult<CbmemToolDetails> {
+	const content = result.content[0];
+	if (content?.type !== "text") return result;
+	const metadata = {
+		kind: resolution.kind === "borrowed" ? "borrowed_canonical_base" : "current_index",
+		project: resolution.project,
+		current_root: resolution.currentRoot,
+		source_root: resolution.sourceRoot,
+		head_sha: resolution.headSha,
+		read_only: resolution.kind === "borrowed",
+	};
+	let text: string;
+	try {
+		const parsed = JSON.parse(content.text);
+		text = JSON.stringify(
+			parsed && typeof parsed === "object" && !Array.isArray(parsed)
+				? { ...parsed, pi_cbmem_resolution: metadata }
+				: { result: parsed, pi_cbmem_resolution: metadata },
+		);
+	} catch {
+		text = `[pi-cbmem project resolution: ${JSON.stringify(metadata)}]\n${content.text}`;
+	}
+	const replaced = replaceTextResult(result, text);
+	return {
+		...replaced,
+		details: { ...replaced.details, projectResolution: resolution },
+	};
+}
+
+function replaceTextResult(
+	result: AgentToolResult<CbmemToolDetails>,
+	text: string,
+): AgentToolResult<CbmemToolDetails> {
+	const bounded = boundStandaloneOutput(text);
+	return {
+		...result,
+		content: [{ type: "text", text: bounded.text }],
+		details: {
+			...result.details,
+			truncated: result.details.truncated || bounded.truncated,
+			totalBytes: Buffer.byteLength(text, "utf8"),
+			totalLines: countLines(text),
+		},
+	};
+}
+
+function boundStandaloneOutput(text: string): { text: string; truncated: boolean } {
+	const totalBytes = Buffer.byteLength(text, "utf8");
+	const totalLines = countLines(text);
+	if (totalBytes <= DEFAULT_MAX_BYTES && totalLines <= DEFAULT_MAX_LINES) {
+		return { text, truncated: false };
+	}
+	const notice = `[Output truncated after pi-cbmem project resolution: ${totalLines} lines (${formatSize(totalBytes)}).]`;
+	const separator = "\n";
+	const body = takeUtf8Prefix(
+		text,
+		Math.max(0, DEFAULT_MAX_BYTES - Buffer.byteLength(notice + separator, "utf8")),
+		Math.max(0, DEFAULT_MAX_LINES - 1),
+	);
+	return {
+		text: body ? `${body}${body.endsWith("\n") ? "" : separator}${notice}` : notice,
+		truncated: true,
+	};
 }
 
 async function confirmDestructiveCall(

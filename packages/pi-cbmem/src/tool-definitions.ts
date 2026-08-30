@@ -9,7 +9,11 @@ export type BridgeToolDefinition = Pick<
 	"name" | "label" | "description" | "parameters"
 >;
 
-const Project = Type.String({ description: "Indexed project name from list_projects." });
+const ExactProject = Type.String({ description: "Indexed project name from list_projects." });
+const ReadProject = Type.String({
+	description:
+		'Indexed project name from list_projects, or "@current" for safe current-worktree resolution.',
+});
 const outputLimit = `Output is limited to ${DEFAULT_MAX_LINES} lines or ${formatSize(DEFAULT_MAX_BYTES)}; byte-oversized responses fail validation instead of returning partial JSON.`;
 
 export const TOOL_DEFINITIONS = [
@@ -32,7 +36,7 @@ export const TOOL_DEFINITIONS = [
 		label: "Search Graph",
 		description: `Search indexed symbols by text, name, file, relationship, or degree. ${outputLimit}`,
 		parameters: Type.Object({
-			project: Project,
+			project: ReadProject,
 			query: Type.Optional(Type.String({ description: "Natural-language or keyword search." })),
 			label: Type.Optional(Type.String()),
 			name_pattern: Type.Optional(Type.String()),
@@ -57,7 +61,7 @@ export const TOOL_DEFINITIONS = [
 		description: `Execute a Cypher query against the code or missed-coverage graph. ${outputLimit}`,
 		parameters: Type.Object({
 			query: Type.String({ description: "Cypher query." }),
-			project: Project,
+			project: ReadProject,
 			graph: Type.Optional(StringEnum(["code", "missed"] as const)),
 			max_rows: Type.Optional(Type.Integer()),
 		}),
@@ -68,7 +72,7 @@ export const TOOL_DEFINITIONS = [
 		description: `Trace callers, callees, data flow, or cross-service paths. ${outputLimit}`,
 		parameters: Type.Object({
 			function_name: Type.String(),
-			project: Project,
+			project: ReadProject,
 			direction: Type.Optional(StringEnum(["inbound", "outbound", "both"] as const)),
 			depth: Type.Optional(Type.Integer()),
 			limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 5000 })),
@@ -88,7 +92,7 @@ export const TOOL_DEFINITIONS = [
 		description: `Read source for an indexed symbol by qualified name. ${outputLimit}`,
 		parameters: Type.Object({
 			qualified_name: Type.String(),
-			project: Project,
+			project: ReadProject,
 			include_neighbors: Type.Optional(Type.Boolean()),
 		}),
 	},
@@ -96,14 +100,14 @@ export const TOOL_DEFINITIONS = [
 		name: "get_graph_schema",
 		label: "Get Graph Schema",
 		description: `Get graph node labels and edge types. ${outputLimit}`,
-		parameters: Type.Object({ project: Project }),
+		parameters: Type.Object({ project: ReadProject }),
 	},
 	{
 		name: "get_architecture",
 		label: "Get Architecture",
 		description: `Summarize architecture, dependencies, boundaries, clusters, or hotspots. ${outputLimit}`,
 		parameters: Type.Object({
-			project: Project,
+			project: ReadProject,
 			path: Type.Optional(Type.String()),
 			aspects: Type.Optional(
 				Type.Array(
@@ -133,7 +137,7 @@ export const TOOL_DEFINITIONS = [
 		description: `Search source text and enrich matches with graph context. ${outputLimit}`,
 		parameters: Type.Object({
 			pattern: Type.String(),
-			project: Project,
+			project: ExactProject,
 			file_pattern: Type.Optional(Type.String()),
 			path_filter: Type.Optional(Type.String()),
 			mode: Type.Optional(StringEnum(["compact", "full", "files"] as const)),
@@ -158,14 +162,14 @@ export const TOOL_DEFINITIONS = [
 		name: "delete_project",
 		label: "Delete Project",
 		description: `Delete a project from the Codebase Memory index. ${outputLimit}`,
-		parameters: Type.Object({ project: Project }),
+		parameters: Type.Object({ project: ExactProject }),
 	},
 	{
 		name: "index_status",
 		label: "Index Status",
 		description: `Get project index health, Git context, and coverage gaps. ${outputLimit}`,
 		parameters: Type.Object({
-			project: Project,
+			project: ReadProject,
 			verbose: Type.Optional(Type.Boolean()),
 		}),
 	},
@@ -174,7 +178,7 @@ export const TOOL_DEFINITIONS = [
 		label: "Check Index Coverage",
 		description: `Check best-effort index coverage for exact paths or bounded scopes. ${outputLimit}`,
 		parameters: Type.Object({
-			project: Project,
+			project: ExactProject,
 			paths: Type.Optional(Type.Array(Type.String(), { maxItems: 128 })),
 			scopes: Type.Optional(Type.Array(Type.String(), { maxItems: 32 })),
 			scope_limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 1000 })),
@@ -186,7 +190,7 @@ export const TOOL_DEFINITIONS = [
 		label: "Detect Changes",
 		description: `Map a Git diff to changed files and impacted graph symbols. ${outputLimit}`,
 		parameters: Type.Object({
-			project: Project,
+			project: ExactProject,
 			scope: Type.Optional(StringEnum(["files", "impact"] as const)),
 			direction: Type.Optional(StringEnum(["inbound", "outbound", "both"] as const)),
 			depth: Type.Optional(Type.Integer()),
@@ -202,7 +206,7 @@ export const TOOL_DEFINITIONS = [
 		description: `Read or replace Architecture Decision Records. ${outputLimit}`,
 		parameters: Type.Object(
 			{
-				project: Project,
+				project: ExactProject,
 				mode: Type.Optional(StringEnum(["get", "update", "sections"] as const)),
 				content: Type.Optional(Type.String()),
 			},
@@ -224,7 +228,7 @@ export const TOOL_DEFINITIONS = [
 					{ additionalProperties: false },
 				),
 			),
-			project: Project,
+			project: ExactProject,
 		}),
 	},
 ] as const satisfies readonly BridgeToolDefinition[];
