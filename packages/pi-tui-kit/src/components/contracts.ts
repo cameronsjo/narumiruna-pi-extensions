@@ -10,6 +10,10 @@ const MENU_BINDINGS = [
 	"tui.select.confirm",
 	"tui.select.cancel",
 	"tui.input.submit",
+	"tui.altScreen.search",
+	"tui.altScreen.searchNext",
+	"tui.altScreen.searchPrevious",
+	"tui.altScreen.searchClose",
 ] as const;
 export type MenuBinding = (typeof MENU_BINDINGS)[number];
 
@@ -60,7 +64,7 @@ export interface MenuScreenComponentOptions<ScreenId extends string, ActionId ex
 	selectedItemId?: string;
 	tui: RenderHost;
 	theme: Pick<Theme, "fg" | "bold"> &
-		Partial<Pick<Theme, "italic" | "underline" | "strikethrough">>;
+		Partial<Pick<Theme, "bg" | "inverse" | "italic" | "underline" | "strikethrough">>;
 	keybindings: MenuKeybindings;
 	onEvent(event: MenuScreenEvent): void;
 	onSelectionChange?(itemId: string): void;

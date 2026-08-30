@@ -13,7 +13,7 @@ Consumers reuse its navigation, rendering, cancellation, and mode adaptation ins
 - Defines typed action, detail, browse, choice, settings, input, review, and multi-select screens.
 - Adapts shared menu and interaction flows across Pi TUI and RPC modes.
 - Handles interaction navigation, cancellation, disposal, horizontal framing, and width-safe rendering.
-- Provides task, confirmation, questionnaire, live-choice, custom-interaction, terminal-text, interaction-hint, editor-status-widget, horizontal-rule, and testing helpers.
+- Provides task, confirmation, questionnaire, live-choice, custom-interaction, terminal-document, terminal-text, interaction-hint, editor-status-widget, horizontal-rule, and testing helpers.
 - Publishes built ESM and TypeScript declarations for independently installable extensions.
 
 ## 📦 Install
@@ -28,7 +28,7 @@ The published package contains built ESM and declarations in `dist/`; consumers 
 
 The package root remains the supported entrypoint for menus and interaction runners.
 When startup does not need the full Kit runtime, import a lightweight display-helper subpath.
-The available subpaths are `editor-status-widget`, `terminal-text`, and `interaction-hints` under `@narumitw/pi-tui-kit`.
+The available subpaths are `editor-status-widget`, `terminal-document`, `terminal-text`, and `interaction-hints` under `@narumitw/pi-tui-kit`.
 
 ## 🚀 Quick start
 
@@ -69,6 +69,10 @@ Pi TUI Kit and its consumers version independently through Changesets.
 Publish a new Kit API before raising a consumer's compatibility floor.
 Declare Kit in that consumer so local hoisting cannot hide an incompatible or missing published dependency.
 
+Searchable review and browse-detail screens use an explicit pre-adoption API-admission exception.
+Review behavior converges in `pi-starship` configuration documents and `pi-recall` saved-message previews, while browse-detail behavior converges in `pi-tool` exact tool documents and `pi-analytics` detail catalogs.
+Those consumers cannot adopt the fields until this Kit minor is published, so this release keeps their compatibility floors unchanged and defers consumer migration.
+
 ## ⚡ Runtime performance
 
 The production JavaScript imports Pi TUI at runtime and keeps Pi Coding Agent imports type-only.
@@ -78,7 +82,7 @@ Code review loads the complete declared syntax highlighter synchronously on firs
 Root imports, ordinary menus, task frames, and Markdown-only reviews do not load the highlighter.
 Mermaid rendering loads its declared renderer only before the first screen with an enabled Mermaid fence.
 
-The `editor-status-widget`, `terminal-text`, and `interaction-hints` subpaths expose focused ESM and declaration graphs.
+The `editor-status-widget`, `terminal-document`, `terminal-text`, and `interaction-hints` subpaths expose focused ESM and declaration graphs.
 The package root retains every existing export for compatibility.
 
 Repository maintainers can benchmark cold root and lightweight-subpath imports plus first action, code-review, Mermaid, and task frames in fresh serial processes:
@@ -413,6 +417,21 @@ import { truncateToWidth } from "@earendil-works/pi-tui";
 const label = truncateToWidth(sanitizeTerminalText(rawModelId), width, "");
 ```
 
+Use `sanitizeTerminalDocument()` for untrusted multiline display text that must retain line feeds and tabs.
+It normalizes CRLF and CR to LF, removes terminal and bidirectional controls, and replaces other C0 and C1 controls with spaces.
+Use `hardWrapTerminalDocument()` to apply that sanitizer, expand tabs at four-column stops, preserve printable whitespace, and hard-wrap graphemes by terminal cells.
+A non-positive or non-finite width produces one empty display line.
+Both helpers are available from the package root and the focused `/terminal-document` subpath.
+
+```ts
+import {
+  hardWrapTerminalDocument,
+  sanitizeTerminalDocument,
+} from "@narumitw/pi-tui-kit/terminal-document";
+
+const lines = hardWrapTerminalDocument(sanitizeTerminalDocument(rawDocument), width);
+```
+
 ```ts
 import { runCustomInteraction } from "@narumitw/pi-tui-kit";
 
@@ -513,6 +532,14 @@ TUI fuzzy-searches each sanitized label, textual `statusText`, description, and 
 Enter opens an adaptive scrolling detail view; Escape returns to the list without losing the query or selected raw id, then returns to the parent, while Ctrl+C closes the menu.
 Omitted or `"adaptive"` viewport size uses the live terminal row budget; a positive number caps item rows without disabling terminal bounds.
 RPC intentionally keeps one deterministic unfiltered list, then presents bounded detail pages; `searchText` is never rendered.
+Set `enableDetailSearch: true` to add literal, case-insensitive search over the displayed legacy or exact detail text in TUI mode.
+The detail search uses standalone Space for component-local activation.
+Configured standard actions retain priority; when one claims Space, the search activation hint is omitted.
+Next, previous, and search-close use Pi's effective bindings, list filtering stays independent, and search clears when it closes or the detail view exits.
+Activation intentionally avoids Pi's globally reserved alternate-screen search key because fullscreen Pi consumes that key before custom components receive input.
+Document search caps each query at 4,096 code units and highlights only the current result above 1,000 matches while preserving exact count and navigation.
+`Ctrl+C` always closes the whole menu, while the configured search-close binding closes only search first.
+RPC ignores `enableDetailSearch` and retains its existing pages.
 
 Use `details` for legacy prose lines.
 The Kit normalizes their whitespace and prepends available status and description text.
@@ -542,6 +569,7 @@ const modulesScreen = {
     ],
   })),
   viewportSize: "adaptive" as const,
+  enableDetailSearch: true,
 };
 
 const schemasScreen = {
@@ -588,6 +616,14 @@ Review screens preserve indentation and hard-wrap by terminal cells rather than 
 Their viewport supports Up, Down, Page Up, Page Down, Home, and End.
 RPC sends bounded pages instead of one unbounded dialog title.
 Treat `content` as untrusted display input; the Kit strips terminal and bidirectional display controls before formatting it.
+Set `enableSearch: true` to search displayed TUI text with case-insensitive literal matching across normalized rendered whitespace.
+The search bar uses standalone Space for component-local activation.
+Configured standard actions retain priority; when one claims Space, the search activation hint is omitted.
+Next, previous, and search-close use Pi's effective bindings while preserving document scrolling.
+Activation intentionally avoids Pi's globally reserved alternate-screen search key because fullscreen Pi consumes that key before custom components receive input.
+Document search caps each query at 4,096 code units and highlights only the current result above 1,000 matches while preserving exact count and navigation.
+Closing search clears its query and highlights, a later Back or Close keeps the screen's existing meaning, and `Ctrl+C` always closes the menu.
+RPC ignores `enableSearch` and retains deterministic bounded pages.
 
 ```ts
 const reviewScreen = {
@@ -596,6 +632,7 @@ const reviewScreen = {
   content: unifiedDiff,
   format: { kind: "diff" as const, filePath: settingsPath },
   viewportSize: "adaptive",
+  enableSearch: true,
   confirm: { id: "apply", label: "Apply", action: "apply" as const },
 };
 ```
@@ -836,6 +873,8 @@ Consumer fixtures continue to own domain state, persistence, generation checks, 
 - `runLiveChoice()` — adapts live-preview choice to TUI and RPC while preserving typed selection, gating, shortcuts, and lifecycle outcomes.
 - `runQuestionnaire()` — adapts choices, free-form answers, optional TUI notes, direct single-question submission, multi-question review, and sequential RPC.
 - `formatInteractionHints()` — formats sanitized, normalized, de-duplicated bindings and literal keys; `@narumitw/pi-tui-kit/interaction-hints` also exports it and its types.
+- `sanitizeTerminalDocument()` — normalizes and sanitizes untrusted multiline display text while retaining LF and tabs; `@narumitw/pi-tui-kit/terminal-document` also exports it.
+- `hardWrapTerminalDocument()` — sanitizes, expands tabs, and hard-wraps exact multiline display text by terminal cells; `@narumitw/pi-tui-kit/terminal-document` also exports it.
 - `sanitizeTerminalText()` — removes terminal and bidirectional controls from untrusted single-line display text without changing raw payloads; `@narumitw/pi-tui-kit/terminal-text` also exports it.
 - `EditorStatusWidget` — frames passive editor status rows with a muted top rule and terminal-width guard; `@narumitw/pi-tui-kit/editor-status-widget` exports it and its options.
 - `HorizontalRule` — renders a full-width or inset horizontal divider with an optional sanitized and aligned label plus render-time style callbacks.
@@ -844,7 +883,8 @@ Consumer fixtures continue to own domain state, persistence, generation checks, 
 - `createMenuNavigator()` — lower-level stack and selection state helper.
 - exported screen, item, action, transition, runtime option, `BrowseDetailDocument`, `MenuCloseReason`, and result types.
 - `@narumitw/pi-tui-kit/testing` — test-only subpath for `createTuiHarness()`, `createRpcHarness()`, strict scripts, and their types; the production root does not re-export it.
-- `PI_EXTENSION_MENU_API_VERSION` — current API version (`14`).
+- `PI_EXTENSION_MENU_API_VERSION` — current API version (`15`).
+Version 15 adds opt-in review and browse-detail search plus public multiline terminal-document helpers while version-14 menu definitions remain valid.
 Version 14 adds the standalone `runQuestionnaire()` interaction while version-13 menu definitions remain valid.
 Version 13 adds opt-in Markdown, LaTeX, and Mermaid document formatting while version-12 menu definitions remain valid.
 Version 12 added optional searchable `choice` fields.
@@ -866,6 +906,7 @@ Version 6 added the read-only `browse` screen and `runCustomInteraction()`.
 - `src/editor-status-widget.ts` — passive editor-widget presentation framing without publication or lifecycle ownership
 - `src/questionnaire.ts` — standalone questionnaire TUI/RPC adaptation and public result contract
 - `src/interaction-hints.ts` — injected-key and literal-shortcut hint formatting, published through the lightweight `/interaction-hints` subpath
+- `src/terminal-document.ts` — multiline sanitization and exact cell-aware wrapping published through the `/terminal-document` subpath
 - `src/terminal-text.ts` — terminal display sanitization published through the lightweight `/terminal-text` subpath
 - `src/horizontal-rule.ts` — width-safe full-width, inset, and labeled horizontal dividers
 - `src/custom-interaction.ts` — lifecycle ownership for specialized public custom components

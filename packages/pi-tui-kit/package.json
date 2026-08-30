@@ -33,6 +33,10 @@
 			"types": "./dist/interaction-hints.d.ts",
 			"import": "./dist/interaction-hints.js"
 		},
+		"./terminal-document": {
+			"types": "./dist/terminal-document.d.ts",
+			"import": "./dist/terminal-document.js"
+		},
 		"./terminal-text": {
 			"types": "./dist/terminal-text.d.ts",
 			"import": "./dist/terminal-text.js"

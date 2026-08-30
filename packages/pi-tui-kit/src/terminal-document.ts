@@ -1,3 +1,5 @@
+import { visibleWidth } from "@earendil-works/pi-tui";
+
 const ESC = 0x1b;
 const BEL = 0x07;
 const CSI = 0x9b;
@@ -7,24 +9,26 @@ const DCS = 0x90;
 const SOS = 0x98;
 const PM = 0x9e;
 const APC = 0x9f;
+const TAB_SIZE = 4;
+const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 /**
- * Remove terminal control sequences and display-direction controls from untrusted single-line text.
+ * Sanitize untrusted multiline terminal text while retaining line feeds and tabs.
  *
- * This function is only for presentation. Keep raw identities and payloads separate.
+ * Keep raw identities and payloads separate from this presentation-only value.
  */
-export function sanitizeTerminalText(value: string): string {
+export function sanitizeTerminalDocument(value: string): string {
+	const normalized = value.replace(/\r\n?/gu, "\n");
 	let output = "";
-	for (let index = 0; index < value.length; ) {
-		const codePoint = value.codePointAt(index) ?? 0;
+	for (let index = 0; index < normalized.length; ) {
+		const codePoint = normalized.codePointAt(index) ?? 0;
 		const length = codePoint > 0xffff ? 2 : 1;
-
 		if (codePoint === ESC) {
-			index = skipEscSequence(value, index);
+			index = skipEscSequence(normalized, index);
 			continue;
 		}
 		if (codePoint === CSI) {
-			index = skipCsi(value, index + length);
+			index = skipCsi(normalized, index + length);
 			continue;
 		}
 		if (
@@ -34,23 +38,73 @@ export function sanitizeTerminalText(value: string): string {
 			codePoint === PM ||
 			codePoint === APC
 		) {
-			index = skipStringSequence(value, index + length, codePoint === OSC);
+			index = skipStringSequence(normalized, index + length, codePoint === OSC);
 			continue;
 		}
-		if (isLineSeparator(codePoint)) {
+		if (isBidiControl(codePoint)) {
+			index += length;
+			continue;
+		}
+		if (codePoint === 0x0a || codePoint === 0x09) {
+			output += String.fromCodePoint(codePoint);
+		} else if (isControl(codePoint)) {
 			output += " ";
-			index += length;
-			continue;
+		} else {
+			output += String.fromCodePoint(codePoint);
 		}
-		if (isControl(codePoint) || isBidiControl(codePoint)) {
-			index += length;
-			continue;
-		}
-
-		output += String.fromCodePoint(codePoint);
 		index += length;
 	}
 	return output;
+}
+
+/** Sanitize, expand tabs, and hard-wrap a terminal document by display-cell width. */
+export function hardWrapTerminalDocument(value: string, width: number): string[] {
+	if (!Number.isFinite(width) || width <= 0) return [""];
+	const safeWidth = Math.max(1, Math.floor(width));
+	return sanitizeTerminalDocument(value)
+		.split("\n")
+		.flatMap((line) => hardWrapLine(expandTabs(line), safeWidth));
+}
+
+function expandTabs(line: string): string {
+	let column = 0;
+	let result = "";
+	for (const { segment } of graphemeSegmenter.segment(line)) {
+		if (segment === "\t") {
+			const count = TAB_SIZE - (column % TAB_SIZE);
+			result += " ".repeat(count);
+			column += count;
+			continue;
+		}
+		result += segment;
+		column += visibleWidth(segment);
+	}
+	return result;
+}
+
+function hardWrapLine(line: string, width: number): string[] {
+	if (line.length === 0) return [""];
+	const lines: string[] = [];
+	let current = "";
+	let currentWidth = 0;
+	const flush = () => {
+		lines.push(current);
+		current = "";
+		currentWidth = 0;
+	};
+	for (const { segment } of graphemeSegmenter.segment(line)) {
+		const segmentWidth = visibleWidth(segment);
+		if (segmentWidth > width) {
+			if (current.length > 0) flush();
+			lines.push("?".repeat(width));
+			continue;
+		}
+		if (currentWidth + segmentWidth > width && current.length > 0) flush();
+		current += segment;
+		currentWidth += segmentWidth;
+	}
+	if (current.length > 0 || lines.length === 0) lines.push(current);
+	return lines;
 }
 
 type SequenceKind = "escape" | "csi" | "string";
@@ -152,17 +206,6 @@ function introducedSequenceState(value: string, start: number) {
 		return { kind: "string" as const, index: start + 1, bellTerminates: introducer === OSC };
 	}
 	return undefined;
-}
-
-function isLineSeparator(codePoint: number): boolean {
-	return (
-		codePoint === 0x09 ||
-		codePoint === 0x0a ||
-		codePoint === 0x0d ||
-		codePoint === 0x85 ||
-		codePoint === 0x2028 ||
-		codePoint === 0x2029
-	);
 }
 
 function isControl(codePoint: number): boolean {

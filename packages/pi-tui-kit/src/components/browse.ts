@@ -14,10 +14,17 @@ import type { MenuBrowseItem } from "../types.js";
 import type { BrowseOptions, MenuKeybindings, MenuScreenComponent } from "./contracts.js";
 import {
 	createDocumentLineCache,
+	type DocumentPresentation,
 	documentDialogPages,
 	RPC_DOCUMENT_LINE_WIDTH,
 	RPC_DOCUMENT_PAGE_SIZE,
 } from "./document-formatting.js";
+import {
+	DOCUMENT_SEARCH_ACTIVATE_KEY,
+	DocumentSearchController,
+	documentSearchActionMatches,
+	documentSearchActivationAvailable,
+} from "./document-search.js";
 import {
 	componentRows,
 	handleSearchInput,
@@ -43,6 +50,12 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 	options: BrowseOptions<ScreenId, ActionId>,
 ): MenuScreenComponent {
 	const searchInput = new Input();
+	const detailSearch = options.screen.enableDetailSearch
+		? new DocumentSearchController()
+		: undefined;
+	const detailSearchActivationAvailable = Boolean(
+		detailSearch && documentSearchActivationAvailable(options.keybindings, false),
+	);
 	const allItems: SearchableItem[] = options.screen.items.map((item) => ({
 		item,
 		label: safeBrowseText(item.label),
@@ -61,13 +74,28 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 	let detailScrollOffset = 0;
 	let detailViewportRows = 1;
 	let detailMaximumScroll = 0;
+	let lastDetailLines: readonly string[] = [];
+	let lastDetailSoftWrapAfter: readonly boolean[] = [];
+	let lastDetailIgnoreLeadingWhitespace: readonly boolean[] = [];
+	let lastDetailSearchSources: DocumentPresentation["searchSources"] = [];
 	let view: BrowseView = "list";
 	let focused = false;
 	let disposed = false;
-	const detailLineCache = createDocumentLineCache(options.theme);
+	const detailLineCache = createDocumentLineCache(
+		options.theme,
+		Boolean(options.screen.enableDetailSearch),
+	);
 	const selected = () => filteredItems[selectedIndex];
 	const syncFocus = () => {
 		searchInput.focused = focused && view === "list" && searchInputVisible;
+		if (detailSearch) detailSearch.focused = focused && view === "detail";
+	};
+	const moveToDetailMatch = (row: number | undefined) => {
+		if (row === undefined) return;
+		if (row < detailScrollOffset) detailScrollOffset = row;
+		else if (row >= detailScrollOffset + detailViewportRows) {
+			detailScrollOffset = row - detailViewportRows + 1;
+		}
 	};
 	const setSelectedIndex = (index: number, wrap: boolean, rememberUserSelection: boolean) => {
 		if (filteredItems.length === 0) {
@@ -121,22 +149,47 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 			const contentRows = framedContentRows(availableRows);
 			if (view === "detail") {
 				const selectedItem = selected()?.item;
-				const content = selectedItem?.detailDocument
-					? detailLineCache.lines(
+				const presentation = selectedItem?.detailDocument
+					? detailLineCache.presentation(
 							selectedItem.detailDocument.content,
 							selectedItem.detailDocument.format,
 							safeWidth,
 						)
-					: legacyDetailLines(selectedItem, safeWidth);
-				const layout = detailLayout(contentRows, content.length);
+					: legacyDetailPresentation(selectedItem, safeWidth);
+				const content = presentation.lines;
+				lastDetailLines = presentation.searchLines;
+				lastDetailSoftWrapAfter = presentation.softWrapAfter;
+				lastDetailIgnoreLeadingWhitespace = presentation.ignoreLeadingWhitespace;
+				lastDetailSearchSources = presentation.searchSources;
+				const searchRebuilt = detailSearch?.updateLines(
+					lastDetailLines,
+					lastDetailSoftWrapAfter,
+					lastDetailIgnoreLeadingWhitespace,
+					lastDetailSearchSources,
+				);
+				const displayedContent = detailSearch?.highlight(content, options.theme) ?? content;
+				const layout = detailLayout(contentRows, content.length, detailSearch?.active ?? false);
+				const viewportChanged = layout.contentRows !== detailViewportRows;
 				detailViewportRows = layout.contentRows;
 				detailMaximumScroll = Math.max(0, content.length - layout.contentRows);
+				if (
+					(searchRebuilt || viewportChanged) &&
+					detailSearch?.active &&
+					detailSearch.currentRow !== undefined
+				) {
+					detailScrollOffset = keepRowVisible(
+						detailScrollOffset,
+						detailSearch.currentRow,
+						Math.max(1, detailViewportRows),
+					);
+				}
 				detailScrollOffset = clamp(detailScrollOffset, 0, detailMaximumScroll);
 				const lines = [
 					...(layout.titleRows
 						? [options.theme.fg("accent", options.theme.bold(selected()?.label || "Details"))]
 						: []),
-					...content.slice(detailScrollOffset, detailScrollOffset + layout.contentRows),
+					...(layout.searchRows && detailSearch ? [detailSearch.render(safeWidth)] : []),
+					...displayedContent.slice(detailScrollOffset, detailScrollOffset + layout.contentRows),
 					...(layout.positionRows
 						? [
 								options.theme.fg(
@@ -145,7 +198,18 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 								),
 							]
 						: []),
-					...(layout.hintRows ? [options.theme.fg("dim", detailHint(options.keybindings))] : []),
+					...(layout.hintRows
+						? [
+								options.theme.fg(
+									"dim",
+									detailHint(
+										options.keybindings,
+										detailSearchActivationAvailable,
+										detailSearch?.active ?? false,
+									),
+								),
+							]
+						: []),
 				];
 				return boundedFrame(lines, safeWidth, availableRows, options.theme);
 			}
@@ -202,15 +266,66 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 		invalidate() {
 			detailLineCache.invalidate();
 			searchInput.invalidate();
+			detailSearch?.invalidate();
 		},
 		handleInput(data) {
 			if (disposed) return;
+			if (view === "detail" && detailSearch?.active) {
+				const routed = detailSearch.routeInput(
+					data,
+					(outsidePaste) => {
+						if (matchesKey(outsidePaste, Key.ctrl("c"))) {
+							options.onEvent({ kind: "close" });
+							return false;
+						}
+						if (options.keybindings.matches(outsidePaste, "tui.altScreen.searchClose")) {
+							detailSearch.close();
+							return false;
+						}
+						if (options.keybindings.matches(outsidePaste, "tui.altScreen.searchNext")) {
+							moveToDetailMatch(detailSearch.next());
+						} else if (options.keybindings.matches(outsidePaste, "tui.altScreen.searchPrevious")) {
+							moveToDetailMatch(detailSearch.previous());
+						} else if (options.keybindings.matches(outsidePaste, "tui.select.up")) {
+							detailScrollOffset = clamp(detailScrollOffset - 1, 0, detailMaximumScroll);
+						} else if (options.keybindings.matches(outsidePaste, "tui.select.down")) {
+							detailScrollOffset = clamp(detailScrollOffset + 1, 0, detailMaximumScroll);
+						} else if (options.keybindings.matches(outsidePaste, "tui.select.pageUp")) {
+							detailScrollOffset = clamp(
+								detailScrollOffset - detailViewportRows,
+								0,
+								detailMaximumScroll,
+							);
+						} else if (options.keybindings.matches(outsidePaste, "tui.select.pageDown")) {
+							detailScrollOffset = clamp(
+								detailScrollOffset + detailViewportRows,
+								0,
+								detailMaximumScroll,
+							);
+						} else if (detailSearch.handleInput(outsidePaste)) {
+							moveToDetailMatch(detailSearch.currentRow);
+						}
+						return true;
+					},
+					(outsidePaste) =>
+						matchesKey(outsidePaste, Key.ctrl("c")) ||
+						documentSearchActionMatches(options.keybindings, outsidePaste),
+				);
+				if (routed.changed && !routed.stopped) moveToDetailMatch(detailSearch.currentRow);
+				options.tui.requestRender();
+				return;
+			}
 			if (matchesKey(data, Key.ctrl("c"))) {
 				options.onEvent({ kind: "close" });
 			} else if (options.keybindings.matches(data, "tui.select.cancel")) {
 				if (view === "detail") {
 					view = "list";
 					detailScrollOffset = 0;
+					lastDetailLines = [];
+					lastDetailSoftWrapAfter = [];
+					lastDetailIgnoreLeadingWhitespace = [];
+					lastDetailSearchSources = [];
+					detailSearch?.close();
 					syncFocus();
 				} else options.onEvent({ kind: options.screen.hint ?? "back" });
 			} else if (view === "detail") {
@@ -232,6 +347,19 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 					);
 				} else if (matchesKey(data, Key.home)) detailScrollOffset = 0;
 				else if (matchesKey(data, Key.end)) detailScrollOffset = detailMaximumScroll;
+				else if (
+					detailSearch &&
+					detailSearchActivationAvailable &&
+					matchesKey(data, DOCUMENT_SEARCH_ACTIVATE_KEY)
+				) {
+					detailSearch.activate(
+						lastDetailLines,
+						lastDetailSoftWrapAfter,
+						lastDetailIgnoreLeadingWhitespace,
+						lastDetailSearchSources,
+						detailScrollOffset,
+					);
+				}
 			} else if (options.keybindings.matches(data, "tui.select.up")) move(-1);
 			else if (options.keybindings.matches(data, "tui.select.down")) move(1);
 			else if (options.keybindings.matches(data, "tui.select.pageUp")) page(-1);
@@ -243,6 +371,11 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 				if (selected()) {
 					view = "detail";
 					detailScrollOffset = 0;
+					lastDetailLines = [];
+					lastDetailSoftWrapAfter = [];
+					lastDetailIgnoreLeadingWhitespace = [];
+					lastDetailSearchSources = [];
+					detailSearch?.close();
 					syncFocus();
 				}
 			} else if (searchInputVisible) {
@@ -256,6 +389,7 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 			if (disposed) return;
 			disposed = true;
 			searchInput.focused = false;
+			detailSearch?.dispose();
 			options.onDispose?.();
 		},
 	};
@@ -285,9 +419,35 @@ function listRows<ScreenId extends string, ActionId extends string>(
 	});
 }
 
-function legacyDetailLines(item: MenuBrowseItem | undefined, width: number): string[] {
-	if (!item) return ["No matching item."];
-	return browseDetailSource(item).flatMap((line) => (line ? wrapTextWithAnsi(line, width) : [""]));
+function legacyDetailPresentation(
+	item: MenuBrowseItem | undefined,
+	width: number,
+): DocumentPresentation {
+	const sourceLines = item ? browseDetailSource(item) : ["No matching item."];
+	const lines: string[] = [];
+	const softWrapAfter: boolean[] = [];
+	for (const source of sourceLines) {
+		const wrapped = source ? wrapTextWithAnsi(source, width) : [""];
+		let sourceOffset = 0;
+		for (const [index, line] of wrapped.entries()) {
+			lines.push(line);
+			const plain = stripVTControlCharacters(line).trimEnd();
+			const found = source.indexOf(plain, sourceOffset);
+			if (found >= 0) sourceOffset = found + plain.length;
+			softWrapAfter.push(
+				index < wrapped.length - 1 &&
+					sourceOffset < source.length &&
+					!/\s/u.test(source[sourceOffset] ?? ""),
+			);
+		}
+	}
+	return {
+		lines,
+		searchLines: lines,
+		softWrapAfter,
+		ignoreLeadingWhitespace: lines.map(() => false),
+		searchSources: [],
+	};
 }
 
 export function browseDialogLabel(item: MenuBrowseItem) {
@@ -387,21 +547,33 @@ function listLayout(
 
 interface BrowseDetailLayout {
 	titleRows: number;
+	searchRows: number;
 	contentRows: number;
 	positionRows: number;
 	hintRows: number;
 }
 
-function detailLayout(availableRows: number, contentLength: number): BrowseDetailLayout {
+function detailLayout(
+	availableRows: number,
+	contentLength: number,
+	searchActive: boolean,
+): BrowseDetailLayout {
 	if (availableRows === 1) {
-		return { titleRows: 0, contentRows: 1, positionRows: 0, hintRows: 0 };
+		return {
+			titleRows: 0,
+			searchRows: searchActive ? 1 : 0,
+			contentRows: searchActive ? 0 : 1,
+			positionRows: 0,
+			hintRows: 0,
+		};
 	}
-	const titleRows = availableRows >= 4 ? 1 : 0;
-	const hintRows = availableRows >= 3 ? 1 : 0;
-	let contentRows = Math.max(1, availableRows - titleRows - hintRows);
+	const searchRows = searchActive ? 1 : 0;
+	const titleRows = availableRows >= 4 + searchRows ? 1 : 0;
+	const hintRows = availableRows >= 3 + searchRows ? 1 : 0;
+	let contentRows = Math.max(1, availableRows - titleRows - hintRows - searchRows);
 	const positionRows = contentLength > contentRows && contentRows >= 2 ? 1 : 0;
 	contentRows -= positionRows;
-	return { titleRows, contentRows, positionRows, hintRows };
+	return { titleRows, searchRows, contentRows, positionRows, hintRows };
 }
 
 function listWindowStart(selectedIndex: number, itemCount: number, viewportSize: number) {
@@ -454,25 +626,39 @@ function browseHint(keybindings: MenuKeybindings, destination: "back" | "close")
 	return ["type to search", controls].filter(Boolean).join(" · ");
 }
 
-function detailHint(keybindings: MenuKeybindings) {
+function detailHint(keybindings: MenuKeybindings, searchEnabled: boolean, searchActive: boolean) {
 	return formatInteractionHints(
 		keybindings,
-		[
-			{ bindings: ["tui.select.up", "tui.select.down"], label: "scroll" },
-			{ bindings: ["tui.select.pageUp", "tui.select.pageDown"], label: "page" },
-			{
-				bindings: ["tui.select.cancel"],
-				excludeKeys: ["ctrl+c"],
-				label: "back",
-			},
-			{ keys: ["ctrl+c"], label: "close" },
-		],
+		searchActive
+			? [
+					{ bindings: ["tui.altScreen.searchNext"], label: "next" },
+					{ bindings: ["tui.altScreen.searchPrevious"], label: "previous" },
+					{ bindings: ["tui.altScreen.searchClose"], label: "close search" },
+					{ keys: ["ctrl+c"], label: "close" },
+				]
+			: [
+					{ bindings: ["tui.select.up", "tui.select.down"], label: "scroll" },
+					{ bindings: ["tui.select.pageUp", "tui.select.pageDown"], label: "page" },
+					...(searchEnabled ? [{ keys: [DOCUMENT_SEARCH_ACTIVATE_KEY], label: "search" }] : []),
+					{
+						bindings: ["tui.select.cancel"],
+						excludeKeys: ["ctrl+c"],
+						label: "back",
+					},
+					{ keys: ["ctrl+c"], label: "close" },
+				],
 		{ separator: "·" },
 	);
 }
 
 function safeBrowseText(value: unknown) {
 	return safeMenuText(stripVTControlCharacters(String(value)));
+}
+
+function keepRowVisible(offset: number, row: number, viewportRows: number) {
+	if (row < offset) return row;
+	if (row >= offset + viewportRows) return row - viewportRows + 1;
+	return offset;
 }
 
 function clamp(value: number, minimum: number, maximum: number) {

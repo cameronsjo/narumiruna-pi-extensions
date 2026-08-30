@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { stripVTControlCharacters } from "node:util";
 import { initTheme } from "@earendil-works/pi-coding-agent";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { type Focusable, visibleWidth } from "@earendil-works/pi-tui";
 import { test } from "vitest";
 import { createCustomSelectorHarness, createMockContext } from "../../../test/support.js";
 import { createMenuScreenComponent } from "../src/components/index.js";
@@ -37,6 +37,10 @@ const reviewTestKeybindings: ReviewKeybindings = {
 			"tui.select.pageDown": "d",
 			"tui.select.confirm": "l",
 			"tui.select.cancel": "q",
+			"tui.altScreen.search": "s",
+			"tui.altScreen.searchNext": "n",
+			"tui.altScreen.searchPrevious": "p",
+			"tui.altScreen.searchClose": "x",
 		};
 		return data === values[binding];
 	},
@@ -48,6 +52,10 @@ const reviewTestKeybindings: ReviewKeybindings = {
 			"tui.select.pageDown": ["d"],
 			"tui.select.confirm": ["l"],
 			"tui.select.cancel": ["q", "ctrl+c"],
+			"tui.altScreen.search": ["s"],
+			"tui.altScreen.searchNext": ["n"],
+			"tui.altScreen.searchPrevious": ["p"],
+			"tui.altScreen.searchClose": ["x"],
 		};
 		return values[binding] ?? [];
 	},
@@ -702,6 +710,7 @@ test("RPC adaptive review matches default bounded pagination without custom TUI"
 					...reviewScreen,
 					content: Array.from({ length: 20 }, (_, index) => `row ${index + 1}`).join("\n"),
 					viewportSize,
+					enableSearch: true,
 					confirm: undefined,
 				}),
 			},
@@ -749,6 +758,7 @@ test("RPC review paginates bounded content and preserves colliding confirmation 
 			review: () => ({
 				...reviewScreen,
 				content,
+				enableSearch: true,
 				confirm: { id: "confirm-next", label: "Next", action: "apply" },
 			}),
 		},
@@ -810,6 +820,240 @@ test("owner abort dismisses an unanswered adaptive RPC review without invoking c
 	owner.abort(new DOMException("Session replaced", "AbortError"));
 	assert.deepEqual(await running, { kind: "stale" });
 	assert.equal(invoked, false);
+});
+
+test("review search is opt-in, focus-aware, navigable, and separately dismissible", () => {
+	const colors: string[] = [];
+	const harness = reviewComponentHarness(
+		{
+			...reviewScreen,
+			content: "first needle\nsecond\nthird needle",
+			enableSearch: true,
+		},
+		false,
+		10,
+		(color) => colors.push(color),
+	);
+	const focusable = harness.component as typeof harness.component & Focusable;
+	focusable.focused = true;
+	harness.component.render(40);
+	harness.component.handleInput("s");
+	assert.doesNotMatch(plainRender(harness.component, 40), /Find:/u);
+	harness.component.handleInput("\u001b[32u");
+	harness.component.handleInput("\u001b[20");
+	harness.component.handleInput("0~");
+	harness.component.handleInput("n");
+	harness.component.handleInput("eedle\u001b[201~");
+	assert.match(plainRender(harness.component, 40), /Find:/u);
+	assert.ok(colors.includes("searchMatchText"));
+	harness.component.handleInput("n");
+	assert.match(plainRender(harness.component, 40), /third needle/u);
+	harness.component.handleInput("x");
+	assert.doesNotMatch(plainRender(harness.component, 40), /Find:/u);
+	assert.deepEqual(harness.events, []);
+	harness.component.handleInput(" ");
+	harness.component.handleInput("\u001b[200~");
+	harness.component.handleInput("\u0003");
+	harness.component.handleInput("\u001b[201~");
+	assert.deepEqual(harness.events, []);
+	harness.component.handleInput("x");
+	harness.component.handleInput("q");
+	assert.deepEqual(harness.events, [{ kind: "back" }]);
+	harness.component.handleInput(" ");
+	harness.component.handleInput("\u001b[200~needle");
+	harness.component.handleInput("\u001b[201~\u0003");
+	assert.deepEqual(harness.events.at(-1), { kind: "close" });
+});
+
+test("review keeps the current search match visible after rewrapping", () => {
+	const harness = reviewComponentHarness(
+		{
+			...reviewScreen,
+			content: `${"prefix ".repeat(12)}\nneedle`,
+			enableSearch: true,
+		},
+		false,
+		8,
+	);
+	harness.component.render(80);
+	harness.component.handleInput(" ");
+	harness.component.handleInput("needle");
+	assert.equal(plainLines(harness.component, 80).includes("needle"), true);
+	assert.equal(plainLines(harness.component, 12).includes("needle"), true);
+	harness.setTerminalRows(6);
+	assert.equal(plainLines(harness.component, 12).includes("needle"), true);
+});
+
+test("review keeps the current match visible when width only changes chrome layout", () => {
+	const harness = reviewComponentHarness(
+		{
+			...reviewScreen,
+			title: "Very long review title ".repeat(6),
+			content: [
+				...Array.from({ length: 5 }, (_, index) => `row ${index + 1}`),
+				"needle",
+				...Array.from({ length: 5 }, (_, index) => `tail ${index + 1}`),
+			].join("\n"),
+			enableSearch: true,
+		},
+		false,
+		16,
+	);
+	harness.component.render(100);
+	harness.component.handleInput(" ");
+	harness.component.handleInput("needle");
+	assert.equal(plainLines(harness.component, 100).includes("needle"), true);
+	assert.equal(plainLines(harness.component, 20).includes("needle"), true);
+});
+
+test("review forwards Home and End to the active search input", () => {
+	const harness = reviewComponentHarness(
+		{ ...reviewScreen, content: "zabcd", enableSearch: true },
+		false,
+		8,
+	);
+	harness.component.render(30);
+	harness.component.handleInput(" ");
+	harness.component.handleInput("abcd");
+	harness.component.handleInput("\u001b[H");
+	harness.component.handleInput("z");
+	assert.match(plainRender(harness.component, 30), /Find:.*zabcd.*1\/1/u);
+	harness.component.handleInput("\u001b[F");
+	harness.component.handleInput("y");
+	assert.match(plainRender(harness.component, 30), /Find:.*zabcdy.*0\/0/u);
+});
+
+test("review preserves manual scrolling while search is active", () => {
+	const harness = reviewComponentHarness(
+		{
+			...reviewScreen,
+			content: ["needle", ...Array.from({ length: 12 }, (_, index) => `row ${index + 1}`)].join(
+				"\n",
+			),
+			enableSearch: true,
+		},
+		false,
+		8,
+	);
+	harness.component.render(30);
+	harness.component.handleInput(" ");
+	harness.component.handleInput("needle");
+	assert.match(plainRender(harness.component, 30), /needle/u);
+	harness.component.handleInput("d");
+	const scrolled = plainRender(harness.component, 30);
+	assert.equal(scrolled.split("\n").includes("needle"), false);
+	assert.match(scrolled, /row 1/u);
+});
+
+test("review keeps local activation and omits unavailable active-search hints", () => {
+	const hiddenSearchKeybindings: ReviewKeybindings = {
+		matches: () => false,
+		getKeys: () => [],
+	};
+	const harness = reviewComponentHarness(
+		{ ...reviewScreen, enableSearch: true },
+		false,
+		8,
+		undefined,
+		hiddenSearchKeybindings,
+	);
+	assert.match(plainRender(harness.component, 100), /space search/u);
+	harness.component.handleInput(" ");
+	const active = plainRender(harness.component, 40);
+	assert.doesNotMatch(active, /close search|\bnext\b/u);
+	assert.match(active, /ctrl\+c close/u);
+});
+
+test("review gives a configured Space action priority over search", () => {
+	const remappedKeybindings: ReviewKeybindings = {
+		matches(data, binding) {
+			if (binding === "tui.select.confirm") return data === " ";
+			if (binding === "tui.altScreen.searchClose") return data === "\u001b";
+			return reviewTestKeybindings.matches(data, binding);
+		},
+		getKeys(binding) {
+			if (binding === "tui.select.confirm") return ["space"];
+			if (binding === "tui.altScreen.searchClose") return ["escape"];
+			return reviewTestKeybindings.getKeys(binding);
+		},
+	};
+	const harness = reviewComponentHarness(
+		{ ...reviewScreen, enableSearch: true },
+		false,
+		8,
+		undefined,
+		remappedKeybindings,
+	);
+	const inactive = plainRender(harness.component, 80);
+	assert.doesNotMatch(inactive, /space search/u);
+	harness.component.handleInput(" ");
+	assert.deepEqual(harness.events, [{ kind: "activate", itemId: "raw-apply" }]);
+	assert.doesNotMatch(plainRender(harness.component, 40), /Find:/u);
+});
+
+test("review closes Space-activated search immediately on Escape", () => {
+	const escapeKeybindings: ReviewKeybindings = {
+		...reviewTestKeybindings,
+		matches(data, binding) {
+			if (binding === "tui.altScreen.searchClose") return data === "\u001b";
+			return reviewTestKeybindings.matches(data, binding);
+		},
+		getKeys(binding) {
+			if (binding === "tui.altScreen.searchClose") return ["escape"];
+			return reviewTestKeybindings.getKeys(binding);
+		},
+	};
+	const harness = reviewComponentHarness(
+		{ ...reviewScreen, enableSearch: true },
+		false,
+		8,
+		undefined,
+		escapeKeybindings,
+	);
+	assert.match(plainRender(harness.component, 80), /space search/u);
+	harness.component.handleInput(" ");
+	assert.match(plainRender(harness.component, 40), /Find:/u);
+	harness.component.handleInput("\u001b");
+	assert.doesNotMatch(plainRender(harness.component, 40), /Find:/u);
+	harness.component.handleInput("a");
+	assert.doesNotMatch(plainRender(harness.component, 40), /Find:/u);
+});
+
+test("review dispatches Escape when it is remapped to next search match", () => {
+	const escapeNextKeybindings: ReviewKeybindings = {
+		...reviewTestKeybindings,
+		matches(data, binding) {
+			if (binding === "tui.altScreen.searchNext") return data === "\u001b";
+			return reviewTestKeybindings.matches(data, binding);
+		},
+		getKeys(binding) {
+			if (binding === "tui.altScreen.searchNext") return ["escape"];
+			return reviewTestKeybindings.getKeys(binding);
+		},
+	};
+	const harness = reviewComponentHarness(
+		{ ...reviewScreen, content: "needle\nother\nneedle", enableSearch: true },
+		false,
+		8,
+		undefined,
+		escapeNextKeybindings,
+	);
+	harness.component.handleInput(" ");
+	harness.component.handleInput("needle");
+	assert.match(plainRender(harness.component, 40), /1\/2/u);
+	harness.component.handleInput("\u001b");
+	assert.match(plainRender(harness.component, 40), /2\/2/u);
+});
+
+test("search-disabled review keeps its prior component and disposal behavior", () => {
+	const harness = reviewComponentHarness(reviewScreen);
+	assert.equal("focused" in harness.component, false);
+	harness.component.render(30);
+	harness.component.handleInput(" ");
+	assert.doesNotMatch(plainRender(harness.component, 30), /Find:/u);
+	harness.component.dispose?.();
+	harness.component.handleInput("q");
+	assert.deepEqual(harness.events, []);
 });
 
 function reviewComponentHarness(

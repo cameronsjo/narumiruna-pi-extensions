@@ -524,7 +524,13 @@ test("RPC browse exact details preserve documents, bounds, identity, and Back be
 	const menu = defineMenu<undefined, "browse", "unused">({
 		start: "browse",
 		screens: {
-			browse: () => ({ kind: "browse", title: "Documents", items, hint: "back" }),
+			browse: () => ({
+				kind: "browse",
+				title: "Documents",
+				items,
+				enableDetailSearch: true,
+				hint: "back",
+			}),
 		},
 		actions: { unused: async () => ({ kind: "close" }) },
 	});
@@ -533,6 +539,9 @@ test("RPC browse exact details preserve documents, bounds, identity, and Back be
 	const context = createMockContext({
 		mode: "rpc",
 		hasUI: true,
+		custom: async () => {
+			throw new Error("RPC browse must not open custom TUI");
+		},
 		select: async (title: string, choices: string[]) => {
 			call += 1;
 			titles.push(title);
