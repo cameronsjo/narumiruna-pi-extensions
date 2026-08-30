@@ -1,6 +1,9 @@
-# Codex compaction mechanism research
+# Historical research: Codex compaction mechanism
 
-Research date: 2026-08-03.
+Research snapshot: 2026-08-03.
+
+Status: Historical and intentionally pinned to one Codex revision.
+Use the current Codex source for present behavior because provider selection, retained context, media budgeting, and context-window state have continued to evolve.
 
 ## Scope and authority
 
@@ -9,8 +12,9 @@ This note describes the implementation in the `~/workspace/codex` checkout at:
 - commit `bb5054fe47abe73ecbbd454751066a28c89f4bb9`;
 - commit subject `Capture rollout budget units from response usage (#36641)`.
 
-The Codex workspace source remains authoritative. Unless otherwise stated, source paths below are
-relative to `~/workspace/codex/codex-rs`. The main implementation surfaces are:
+The pinned Codex source revision remains authoritative for this historical note.
+Unless otherwise stated, source paths below are relative to `~/workspace/codex/codex-rs` at that revision.
+The main implementation surfaces were:
 
 - `~/workspace/codex/codex-rs/core/src/session/turn.rs`;
 - `~/workspace/codex/codex-rs/core/src/tasks/compact.rs`;
@@ -20,8 +24,9 @@ relative to `~/workspace/codex/codex-rs`. The main implementation surfaces are:
 - `~/workspace/codex/codex-rs/core/src/session/mod.rs`;
 - `~/workspace/codex/codex-rs/core/src/session/rollout_reconstruction.rs`.
 
-This is an internal implementation note, not a claim about every Codex release or the hosted
-backend's undocumented internals.
+This is an internal historical implementation note, not a current-version guide or a claim about every Codex release or the hosted backend's undocumented internals.
+Later Codex revisions added material changes, including provider-capability selection with Amazon Bedrock Remote V2 support, richer retained-content metadata, and revised image budgeting.
+All external Codex source paths, line numbers, provider claims, limits, and lifecycle details below apply only to the pinned commit; the final Pi extension section is maintained separately.
 
 ## Executive summary
 
@@ -783,7 +788,9 @@ The transferable design is the checkpoint protocol rather than any one summary p
 9. **Do not infer losslessness from persistence.** An exactly replayable summary checkpoint can still
    omit critical task state, so long conversations and repeated compactions remain accuracy risks.
 
-## Pi extension boundary
+## Current Pi extension boundary
+
+The external Codex research above remains pinned, while this section describes the maintained repository extension boundary and must be reconciled when that package changes.
 
 This repository contains
 [`packages/pi-codex-compact`](../../packages/pi-codex-compact/README.md), a stable Pi extension that

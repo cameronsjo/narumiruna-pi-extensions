@@ -128,12 +128,11 @@ prevent silent overwrite. Users must assign a distinct branch to every Git setup
 
 ### Cache and filesystem ownership
 
-Each backend identity owns a private bare SHA-1 repository under the agent directory's
-`.pisync/git/<identity>/repository.git`. The backend never discovers or mutates the process cwd's
-repository, working tree, index, hooks, or config. A missing, partial, non-bare, non-SHA-1, malformed, or unusable ordinary cache is removed and rebuilt
-without modifying settings, local sync state, backups, or remote data. A symlinked cache fails closed
-and requires explicit user inspection/removal; the backend never follows or automatically removes
-that link.
+Each backend identity owns a private bare SHA-1 repository at `git/<identity>/repository.git` beneath the active Pi Sync state directory.
+The package README owns the current canonical and legacy state-directory paths and their reviewed migration procedure.
+The backend never discovers or mutates the process cwd's repository, working tree, index, hooks, or config.
+A missing, partial, non-bare, non-SHA-1, malformed, or unusable ordinary cache is removed and rebuilt without modifying settings, local sync state, backups, or remote data.
+A symlinked cache fails closed and requires explicit user inspection or removal; the backend never follows or automatically removes that link.
 
 Every operation against the initialized private repository supplies `--git-dir`; version discovery
 and explicit-path `git init --bare <cache>` do not require it. Commit construction also supplies a

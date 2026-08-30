@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted. The policy is implemented by pi-sync snapshots, orchestration, and Settings review.
+Accepted.
+The policy is implemented by Pi Sync snapshots, orchestration, and review and recovery flows.
 
 ## Context
 
@@ -41,12 +42,13 @@ duplicates, and overlaps fail before settings or synced files change.
 
 ### Divergence behavior
 
-Orchestration compares an explicit remote policy with the current local setup before applying remote
-content. Ordinary sync, automatic startup/shutdown sync, and pull—including forced pull—pause on a difference.
+Orchestration compares an explicit remote policy with the current local setup before applying remote content.
+Ordinary sync, automatic startup and shutdown sync, and pull—including forced pull—pause on a difference.
 Status names the difference and lists local-only and remote-only selections.
-The no-argument TUI manager converts only the typed selection mismatch into inline resolution.
-Direct routes remain deterministic and report exact remote-only, device-only, or order-only differences plus `/sync` recovery guidance.
-Automatic startup/shutdown work remains warning-only, RPC review remains read-only, and print/JSON command behavior remains rejected.
+The TUI manager, direct interactive Sync, Pull, and Push routes without `--yes`, and eligible automatic startup work can open the shared inline resolution flow.
+An unresolved mismatch remains visible as session attention until it is resolved, invalidated, replaced, or shut down.
+Deterministic `--yes` routes report exact remote-only, device-only, or order-only differences plus recovery guidance without opening a dialog.
+Automatic shutdown remains warning-only, RPC review remains read-only, and print and JSON command behavior remains rejected.
 
 A force push is the explicit keep-local publication path.
 Its confirmation says that the local selection will replace the differing remote policy, while preserved unmanaged remote files remain subject to the existing preservation rules.
@@ -56,7 +58,7 @@ prior sync behavior because no authoritative remote intent exists.
 
 ### Review and adoption
 
-The no-argument TUI manager and **Settings → Compare synced content** share one review-first flow for a differing explicit policy.
+Interactive mismatch entry points and **Settings → Compare synced content** share one review-first flow for a differing explicit policy.
 The first screen is **Synced content differs**, says that nothing changed, and offers:
 
 - **Review all paths (recommended)** — show exact remote-only paths, device-only paths, and both ordered lists;
@@ -109,3 +111,5 @@ Users can copy needed paths through **Add custom path…**.
   `sync.test.ts` and `sync-decision.test.ts`.
 - Review-first presentation, order-only wording, adoption, explicit continuation, local-wins routing, legacy review, stale refresh, RPC read-only behavior, and disposal:
   `remote-selection-ui.test.ts` and `sync-resolution-ui.test.ts`.
+- Direct and automatic recovery, persistent attention, invalidation, session replacement, and shutdown:
+  `sync.test.ts` and `sync-attention.test.ts`.

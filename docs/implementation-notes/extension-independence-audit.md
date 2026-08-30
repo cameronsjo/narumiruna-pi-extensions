@@ -1,5 +1,7 @@
 # Extension Independence Audit
 
+Last reviewed: 2026-08-30.
+
 This is a small snapshot of known gaps against the repository rule that extension packages remain
 independently installable and semantically self-contained. It records existing behavior; fixes belong
 in separate, package-focused changes.
