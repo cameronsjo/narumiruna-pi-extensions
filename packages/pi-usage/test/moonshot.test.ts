@@ -30,6 +30,13 @@ const MODELS = {
 
 type ProviderId = keyof typeof MODELS;
 
+const UNRELATED_MODEL = {
+	id: "unrelated",
+	name: "Unrelated",
+	provider: "unrelated",
+	baseUrl: "https://unrelated.example.test/v1",
+};
+
 function moonshotAdapter(providerId: ProviderId): UsageProviderAdapter {
 	const candidate = SUPPORTED_ADAPTERS.find((adapter) => adapter.id === providerId);
 	assert.ok(candidate);
@@ -150,23 +157,47 @@ test("Moonshot shared environment auth is limited to the selected region", async
 	assert.deepEqual(resolvedProviders, ["moonshotai"]);
 });
 
-test("Moonshot sibling auth requires a region-specific source throughout resolution", async () => {
+test("Moonshot sibling accepts provider-specific environment credentials", async () => {
+	for (const [providerId, label] of [
+		["moonshotai", "MOONSHOT_GLOBAL_API_KEY"],
+		["moonshotai-cn", "MOONSHOT_CN_API_KEY"],
+	] as const) {
+		const { ctx } = createMockContext({
+			model: UNRELATED_MODEL,
+			modelRegistry: {
+				getProviderAuth: async () => ({ auth: { apiKey: `${providerId}-key` } }),
+				getProviderAuthStatus: () => ({
+					configured: true,
+					source: "environment" as const,
+					label,
+				}),
+				getAvailable: () => Object.values(MODELS),
+				getAll: () => Object.values(MODELS),
+			},
+		});
+
+		assert.equal(providerIsConfigured(ctx, providerId), true);
+		assert.deepEqual((await resolveUsageAuth(ctx, moonshotAdapter(providerId)))?.headers, {
+			Authorization: `Bearer ${providerId}-key`,
+		});
+	}
+});
+
+test("Moonshot sibling revalidates credential provenance throughout resolution", async () => {
 	let source: "environment" | "stored" = "stored";
+	let label: string | undefined;
 	let changeSourceDuringResolution = false;
-	const unrelatedModel = {
-		id: "unrelated",
-		name: "Unrelated",
-		provider: "unrelated",
-		baseUrl: "https://unrelated.example.test/v1",
-	};
 	const { ctx } = createMockContext({
-		model: unrelatedModel,
+		model: UNRELATED_MODEL,
 		modelRegistry: {
 			getProviderAuth: async () => {
-				if (changeSourceDuringResolution) source = "environment";
+				if (changeSourceDuringResolution) {
+					source = "environment";
+					label = "MOONSHOT_API_KEY";
+				}
 				return { auth: { apiKey: `${source}-key` } };
 			},
-			getProviderAuthStatus: () => ({ configured: true, source }),
+			getProviderAuthStatus: () => ({ configured: true, source, label }),
 			getAvailable: () => Object.values(MODELS),
 			getAll: () => Object.values(MODELS),
 		},

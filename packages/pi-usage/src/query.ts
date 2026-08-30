@@ -59,6 +59,7 @@ const MOONSHOT_BALANCE_URLS = Object.freeze({
 	moonshotai: "https://api.moonshot.ai/v1/users/me/balance",
 	"moonshotai-cn": "https://api.moonshot.cn/v1/users/me/balance",
 });
+const SHARED_MOONSHOT_ENV_VAR = "MOONSHOT_API_KEY";
 const XAI_USER_URL = "https://cli-chat-proxy.grok.com/v1/user?include=subscription";
 const XAI_BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
 const XAI_CLIENT_HEADERS = Object.freeze({
@@ -496,7 +497,10 @@ export async function queryProviderUsage(
 export function providerIsConfigured(ctx: ExtensionContext, providerId: string): boolean {
 	try {
 		const status = ctx.modelRegistry.getProviderAuthStatus(providerId);
-		return status.configured && moonshotProviderAuthSourceIsAllowed(ctx, providerId, status.source);
+		return (
+			status.configured &&
+			moonshotProviderAuthSourceIsAllowed(ctx, providerId, status.source, status.label)
+		);
 	} catch {
 		return (
 			!isMoonshotSiblingProvider(ctx, providerId) && candidateModels(ctx, providerId).length > 0
@@ -507,11 +511,8 @@ export function providerIsConfigured(ctx: ExtensionContext, providerId: string):
 function moonshotProviderAuthIsAllowed(ctx: ExtensionContext, providerId: string): boolean {
 	if (!isMoonshotSiblingProvider(ctx, providerId)) return true;
 	try {
-		return moonshotProviderAuthSourceIsAllowed(
-			ctx,
-			providerId,
-			ctx.modelRegistry.getProviderAuthStatus(providerId).source,
-		);
+		const status = ctx.modelRegistry.getProviderAuthStatus(providerId);
+		return moonshotProviderAuthSourceIsAllowed(ctx, providerId, status.source, status.label);
 	} catch {
 		return false;
 	}
@@ -521,10 +522,17 @@ function moonshotProviderAuthSourceIsAllowed(
 	ctx: ExtensionContext,
 	providerId: string,
 	source: string | undefined,
+	label: string | undefined,
 ): boolean {
+	if (!isMoonshotSiblingProvider(ctx, providerId)) return true;
+	if (source === undefined) return false;
+	if (source !== "environment") return true;
 	return (
-		!isMoonshotSiblingProvider(ctx, providerId) ||
-		(source !== undefined && source !== "environment")
+		label !== undefined &&
+		!label
+			.split(",")
+			.map((name) => name.trim())
+			.includes(SHARED_MOONSHOT_ENV_VAR)
 	);
 }
 
