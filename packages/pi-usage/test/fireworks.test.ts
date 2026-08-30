@@ -310,6 +310,7 @@ test("Fireworks transport auto-selects a single account and queries only the fix
 		}
 		return summaryResponse();
 	});
+	const nowMock = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-08-30T12:34:56Z"));
 	vi.stubGlobal("fetch", fetchMock);
 	try {
 		const report = await queryFireworks();
@@ -317,9 +318,9 @@ test("Fireworks transport auto-selects a single account and queries only the fix
 		assert.equal(report.accountLabel, "acme");
 		assert.equal(requests.length, 2);
 		assert.equal(requests[0]?.url, "https://api.fireworks.ai/v1/accounts?pageSize=200");
-		assert.match(
-			requests[1]?.url ?? "",
-			/^https:\/\/api\.fireworks\.ai\/v1\/accounts\/acme\/billing\/summary\?startTime=\d{4}-\d{2}-\d{2}T00%3A00%3A00Z&endTime=\d{4}-\d{2}-\d{2}T00%3A00%3A00Z$/u,
+		assert.equal(
+			requests[1]?.url,
+			"https://api.fireworks.ai/v1/accounts/acme/billing/summary?startTime=2026-08-01T00%3A00%3A00Z&endTime=2026-08-31T00%3A00%3A00Z",
 		);
 		assert.equal(requests[1]?.init?.method, "GET");
 		assert.equal(requests[1]?.init?.redirect, "error");
@@ -333,7 +334,39 @@ test("Fireworks transport auto-selects a single account and queries only the fix
 		fetchMock.mockResolvedValueOnce(redirected);
 		await assert.rejects(() => queryFireworks(), /refused a redirected response/iu);
 	} finally {
+		nowMock.mockRestore();
 		vi.unstubAllGlobals();
+	}
+});
+
+test("Fireworks transport shares one deadline across account pages", async () => {
+	vi.useFakeTimers();
+	vi.setSystemTime(0);
+	let page = 0;
+	const fetchMock = vi.fn(async () => {
+		await new Promise<void>((resolve) => setTimeout(resolve, 8));
+		page += 1;
+		return new Response(
+			JSON.stringify(
+				page === 1
+					? { accounts: [accountRow("acme")], nextPageToken: "token-1" }
+					: { accounts: [accountRow("beta")] },
+			),
+			{ status: 200 },
+		);
+	});
+	vi.stubGlobal("fetch", fetchMock);
+	try {
+		const rejection = assert.rejects(
+			queryFireworks(new AbortController().signal, 10),
+			/timed out after .* while fetching usage/iu,
+		);
+		await vi.advanceTimersByTimeAsync(16);
+		await rejection;
+		assert.equal(fetchMock.mock.calls.length, 2);
+	} finally {
+		vi.unstubAllGlobals();
+		vi.useRealTimers();
 	}
 });
 

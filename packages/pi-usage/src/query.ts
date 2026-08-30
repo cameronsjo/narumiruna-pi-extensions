@@ -828,6 +828,7 @@ async function resolveFireworksAccountId(
 	timeoutMs: number,
 	guard: () => Promise<void>,
 ): Promise<string> {
+	const startedAt = Date.now();
 	const accounts: string[] = [];
 	let pageToken: string | undefined;
 	for (let page = 0; page < FIREWORKS_MAX_ACCOUNT_PAGES; page += 1) {
@@ -836,7 +837,7 @@ async function resolveFireworksAccountId(
 			fireworksAccountsUrl(pageToken),
 			auth,
 			signal,
-			remainingTimeout(timeoutMs, Date.now(), "fetching Fireworks accounts"),
+			remainingTimeout(timeoutMs, startedAt, "fetching Fireworks accounts"),
 			"Fireworks accounts endpoint",
 			{ redirect: "error" },
 		)) as FireworksAccountsPayload;
@@ -903,8 +904,12 @@ function fireworksBillingSummaryUrl(accountId: string, startedAt: number): strin
 		`/v1/accounts/${accountId}/billing/summary`,
 		FIREWORKS_BILLING_SUMMARY_ORIGIN,
 	);
-	// The endpoint aggregates by UTC date; endTime is exclusive, so tomorrow's floor includes today.
-	url.searchParams.set("startTime", dayFloor(startedAt - FIREWORKS_SPEND_WINDOW_DAYS * dayMs));
+	// The endpoint aggregates by UTC date; endTime is exclusive, so the window includes today
+	// plus the preceding 29 dates.
+	url.searchParams.set(
+		"startTime",
+		dayFloor(startedAt - (FIREWORKS_SPEND_WINDOW_DAYS - 1) * dayMs),
+	);
 	url.searchParams.set("endTime", dayFloor(startedAt + dayMs));
 	return url.toString();
 }
