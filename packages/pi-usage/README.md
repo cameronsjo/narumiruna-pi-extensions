@@ -16,7 +16,6 @@ xAI OAuth subscription reporting follows the reviewed Grok Build contract and ru
 - Reports exact DeepSeek API balances with separate CNY and USD values.
 - Reports OpenCode Go plan windows and Z.AI Coding Plan quotas.
 - Reports Fireworks rated API spend for the last 30 days with per-series subtotals.
-- Reports Fireworks rated API spend for the last 30 days with per-series subtotals.
 - Reports xAI OAuth subscription allowances and credits.
 - Toggles persistent Codex Fast routing through `/fast` or the usage menu.
 - Redeems eligible Codex resets only after fresh account matching and explicit confirmation.
@@ -101,6 +100,21 @@ Saves preserve unknown JSON fields and publish through a private temporary file 
 Malformed or invalid files remain untouched.
 A failed save restores the prior displayed and effective value, while shutdown waits for queued writes.
 Separate Pi processes are not mutually locked.
+
+### Fireworks account
+
+A Fireworks key that can see one account needs no setting.
+For a key that can see several accounts, set the exact visible account slug in `pi-usage.json` and run `/reload`:
+
+```json
+{
+  "fireworksAccountId": "acme"
+}
+```
+
+The `fireworksAccountId` setting is validated as a URL-safe account slug and then checked against the official account listing before billing data is requested.
+Remove the field to restore single-account auto-selection.
+The TUI Settings screen edits the bounded Codex preferences; edit this free-form account slug through the documented settings file.
 
 ### Codex Fast mode
 
@@ -230,7 +244,7 @@ DeepSeek Harness `cd5ef8148158c3a752a658978873241fdf8e2bbc` reports only per-req
 - Statusline example: `fireworks USD 12.345678901`
 
 The extension queries the fixed endpoints only when the selected model origin is `https://api.fireworks.ai` and any resolved-auth origin override, when present, has the same official origin.
-The account slug is discovered through the documented account listing; a key that can see several accounts must set `FIREWORKS_ACCOUNT_ID` to one of the listed account slugs, and the slug must remain visible to the key.
+The account slug is discovered through the documented account listing; a key that can see several accounts must set `fireworksAccountId` in `pi-usage.json` to one of the listed account slugs, and the slug must remain visible to the key.
 Monetary `units` and `nanos` values are summed exactly with integer arithmetic and stay exact through display.
 Fireworks does not expose credit balance, spend caps, per-window quota, or reset times through its API, so `pi-usage` does not claim those Fireworks capabilities; the web console remains the authoritative balance source.
 Rated line items may differ from the final invoice once credits or adjustments are applied.
@@ -368,7 +382,7 @@ An absent or incompatible peer preserves standalone fallback and fail-closed mis
 - Credentials resolved for custom provider base URLs are never forwarded to the providers' official usage endpoints; effective auth origin validation requires Pi 0.81.0 or newer.
 - Provider reports are snapshots and may themselves be delayed by the provider.
 - DeepSeek reports current API balance only; it does not expose historical usage, quota windows, reset times, or account-wide token totals through the balance endpoint.
-- Fireworks reports rated 30-day spend only; credit balance and spend caps are visible only in the Fireworks web console, and keys that can see several accounts must set `FIREWORKS_ACCOUNT_ID`.
+- Fireworks reports rated 30-day spend only; credit balance and spend caps are visible only in the Fireworks web console, and keys that can see several accounts must set `fireworksAccountId` in `pi-usage.json`.
 - OpenRouter successful inference responses do not expose proactive request-rate counters; `/usage` reports the documented per-key credit/spend fields instead.
 - A provider may not return a safe human-readable account identity.
   In that case the provider and runtime credential state remain visible without exposing secrets.

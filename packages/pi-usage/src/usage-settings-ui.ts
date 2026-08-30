@@ -11,19 +11,19 @@ import {
 	Text,
 } from "@earendil-works/pi-tui";
 import { errorMessage } from "./core.js";
-import type { UsageSettings, UsageSettingsRuntime } from "./settings.js";
+import type { UsageSettingsRuntime } from "./settings.js";
 
 const OFF = "Off";
 const ON = "On";
 
-type UsageSettingId = keyof UsageSettings;
+type UsageToggleSettingId = "codexFastMode" | "codexStatusResetCountdown";
 
 export async function showUsageSettings(
 	ctx: ExtensionCommandContext,
 	settingsRuntime: UsageSettingsRuntime,
 	parentSignal: AbortSignal,
 	isCurrent: () => boolean,
-	onApplied: (id: UsageSettingId) => void,
+	onApplied: (id: UsageToggleSettingId) => void,
 ): Promise<boolean> {
 	if (ctx.mode !== "tui") {
 		if (ctx.hasUI) ctx.ui.notify(`Edit settings manually: ${settingsRuntime.get().path}`, "info");
@@ -70,7 +70,7 @@ export async function showUsageSettings(
 			getSettingsListTheme(),
 			(id, value) => {
 				if (closing || signal.aborted || !isCurrent()) return;
-				const settingId = id as UsageSettingId;
+				const settingId = id as UsageToggleSettingId;
 				const requested = value !== OFF;
 				saveQueue = saveQueue.then(async () => {
 					const previous = settingsRuntime.get().settings[settingId];

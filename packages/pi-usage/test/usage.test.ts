@@ -58,6 +58,13 @@ const deepSeekModel = {
 	baseUrl: "https://api.deepseek.com",
 };
 
+const fireworksModel = {
+	id: "accounts/fireworks/models/kimi-k2p6",
+	name: "Kimi K2.6",
+	provider: "fireworks",
+	baseUrl: "https://api.fireworks.ai/inference",
+};
+
 function codexAccessToken(accountId: string): string {
 	const payload = Buffer.from(
 		JSON.stringify({
@@ -70,6 +77,7 @@ function codexAccessToken(accountId: string): string {
 function memorySettingsRuntime(
 	options: {
 		codexStatusResetCountdown?: boolean;
+		fireworksAccountId?: string;
 		document?: Record<string, unknown>;
 		failUpdates?: boolean;
 		kind?: UsageSettingsState["kind"];
@@ -82,10 +90,19 @@ function memorySettingsRuntime(
 		settings: {
 			codexFastMode: false,
 			codexStatusResetCountdown: options.codexStatusResetCountdown ?? false,
+			...(options.fireworksAccountId ? { fireworksAccountId: options.fireworksAccountId } : {}),
 		},
 		...(kind === "invalid"
 			? { issue: "invalid test settings" }
-			: { document: { codexFastMode: false, ...options.document } }),
+			: {
+					document: {
+						codexFastMode: false,
+						...(options.fireworksAccountId
+							? { fireworksAccountId: options.fireworksAccountId }
+							: {}),
+						...options.document,
+					},
+				}),
 	};
 	const runtime: UsageSettingsRuntime = {
 		get: () => structuredClone(state),
@@ -949,6 +966,60 @@ test("current DeepSeek API balance follows account changes and clears status", a
 		ctx,
 	);
 	assert.equal(statuses.get("usage"), undefined);
+	mock.events.get("session_shutdown")?.[0]?.({}, ctx);
+	assert.equal(statuses.get("usage"), undefined);
+});
+
+test("current Fireworks usage receives its guard and settings-backed account selector", async (t) => {
+	const originalFetch = globalThis.fetch;
+	t.onTestFinished(() => {
+		globalThis.fetch = originalFetch;
+	});
+	const requests: string[] = [];
+	globalThis.fetch = async (input) => {
+		const url = String(input);
+		requests.push(url);
+		if (url.includes("/v1/accounts?")) {
+			return new Response(
+				JSON.stringify({ accounts: [{ name: "accounts/acme" }, { name: "accounts/beta" }] }),
+				{ status: 200 },
+			);
+		}
+		return new Response(
+			JSON.stringify({
+				lineItems: [
+					{
+						series: "SERVERLESS",
+						totalCost: { currencyCode: "USD", units: "1", nanos: 0 },
+					},
+				],
+			}),
+			{ status: 200 },
+		);
+	};
+	const settings = memorySettingsRuntime({ fireworksAccountId: "beta" });
+	const mock = createMockPi();
+	usageExtension(mock.pi, { settingsRuntime: settings.runtime });
+	const { ctx, statuses } = createMockContext({
+		model: fireworksModel,
+		modelRegistry: {
+			getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "fw-key" }),
+			getProviderAuth: async () => ({
+				auth: { apiKey: "fw-key", baseUrl: fireworksModel.baseUrl },
+			}),
+			getAvailable: () => [fireworksModel],
+			getAll: () => [fireworksModel],
+		},
+	});
+
+	mock.events.get("session_start")?.[0]?.({}, ctx);
+	await settle();
+	await settle();
+
+	assert.equal(statuses.get("usage"), "fireworks USD 1");
+	const billingRequests = requests.filter((url) => url.includes("/billing/summary"));
+	assert.ok(billingRequests.length > 0);
+	assert.ok(billingRequests.every((url) => url.includes("/accounts/beta/billing/summary")));
 	mock.events.get("session_shutdown")?.[0]?.({}, ctx);
 	assert.equal(statuses.get("usage"), undefined);
 });

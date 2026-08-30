@@ -78,6 +78,7 @@ export type {
 	UsageMetric,
 	UsageModel,
 	UsageProviderAdapter,
+	UsageQuerySettings,
 	UsageReport,
 	UsageSemantics,
 	UsageSemanticsKind,

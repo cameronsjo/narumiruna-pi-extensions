@@ -54,8 +54,14 @@ function fireworksAuth(secret = "fw-test-secret"): ResolvedUsageAuth {
 	};
 }
 
-function queryFireworks(signal = new AbortController().signal, timeoutMs = 1_000) {
-	return queryProviderUsage(adapter, fireworksAuth(), signal, timeoutMs, async () => undefined);
+function queryFireworks(
+	signal = new AbortController().signal,
+	timeoutMs = 1_000,
+	fireworksAccountId?: string,
+) {
+	return queryProviderUsage(adapter, fireworksAuth(), signal, timeoutMs, async () => undefined, {
+		fireworksAccountId,
+	});
 }
 
 test("Fireworks billing summary sums rated line items exactly per currency and series", () => {
@@ -339,6 +345,31 @@ test("Fireworks transport auto-selects a single account and queries only the fix
 	}
 });
 
+test("Fireworks billing window uses the current UTC date after account discovery", async () => {
+	let now = Date.parse("2026-08-30T23:59:59.900Z");
+	const nowMock = vi.spyOn(Date, "now").mockImplementation(() => now);
+	const requests: string[] = [];
+	const fetchMock = vi.fn(async (input: string | URL | Request) => {
+		requests.push(String(input));
+		if (requests.length === 1) {
+			now = Date.parse("2026-08-31T00:00:00.100Z");
+			return new Response(JSON.stringify({ accounts: [accountRow("acme")] }), { status: 200 });
+		}
+		return summaryResponse();
+	});
+	vi.stubGlobal("fetch", fetchMock);
+	try {
+		await queryFireworks();
+		assert.equal(
+			requests[1],
+			"https://api.fireworks.ai/v1/accounts/acme/billing/summary?startTime=2026-08-02T00%3A00%3A00Z&endTime=2026-09-01T00%3A00%3A00Z",
+		);
+	} finally {
+		nowMock.mockRestore();
+		vi.unstubAllGlobals();
+	}
+});
+
 test("Fireworks transport shares one deadline across account pages", async () => {
 	vi.useFakeTimers();
 	vi.setSystemTime(0);
@@ -370,13 +401,36 @@ test("Fireworks transport shares one deadline across account pages", async () =>
 	}
 });
 
-test("Fireworks transport follows documented pagination across account pages", async () => {
+test("Fireworks transport stops long account listings after finding the configured account", async () => {
 	const requests: string[] = [];
 	const fetchMock = vi.fn(async (input: string | URL | Request) => {
 		requests.push(String(input));
 		if (requests.length === 1) {
 			return new Response(
-				JSON.stringify({ accounts: [accountRow("acme")], nextPageToken: "token-1" }),
+				JSON.stringify({ accounts: [accountRow("acme")], nextPageToken: "still-more" }),
+				{ status: 200 },
+			);
+		}
+		return summaryResponse();
+	});
+	vi.stubGlobal("fetch", fetchMock);
+	try {
+		const report = await queryFireworks(new AbortController().signal, 1_000, "acme");
+		assert.equal(report.accountLabel, "acme");
+		assert.equal(requests.length, 2);
+		assert.match(requests[1] ?? "", /\/v1\/accounts\/acme\/billing\/summary\?/u);
+	} finally {
+		vi.unstubAllGlobals();
+	}
+});
+
+test("Fireworks transport follows opaque pagination tokens across account pages", async () => {
+	const requests: string[] = [];
+	const fetchMock = vi.fn(async (input: string | URL | Request) => {
+		requests.push(String(input));
+		if (requests.length === 1) {
+			return new Response(
+				JSON.stringify({ accounts: [accountRow("acme")], nextPageToken: "token+/=" }),
 				{ status: 200 },
 			);
 		}
@@ -386,19 +440,17 @@ test("Fireworks transport follows documented pagination across account pages", a
 		return summaryResponse();
 	});
 	vi.stubGlobal("fetch", fetchMock);
-	vi.stubEnv("FIREWORKS_ACCOUNT_ID", "acme");
 	try {
-		const report = await queryFireworks();
-		assert.equal(report.accountLabel, "acme");
+		const report = await queryFireworks(new AbortController().signal, 1_000, "bold");
+		assert.equal(report.accountLabel, "bold");
 		assert.equal(requests.length, 3);
 		assert.equal(requests[0], "https://api.fireworks.ai/v1/accounts?pageSize=200");
 		assert.equal(
 			requests[1],
-			"https://api.fireworks.ai/v1/accounts?pageSize=200&pageToken=token-1",
+			"https://api.fireworks.ai/v1/accounts?pageSize=200&pageToken=token%2B%2F%3D",
 		);
-		assert.match(requests[2] ?? "", /\/v1\/accounts\/acme\/billing\/summary\?/u);
+		assert.match(requests[2] ?? "", /\/v1\/accounts\/bold\/billing\/summary\?/u);
 	} finally {
-		vi.unstubAllEnvs();
 		vi.unstubAllGlobals();
 	}
 });
@@ -413,30 +465,26 @@ test("Fireworks transport fails closed for ambiguous, hostile, or unresolvable a
 	try {
 		await assert.rejects(
 			() => queryFireworks(),
-			/see 2 accounts \(acme, beta\); set FIREWORKS_ACCOUNT_ID to one of them\./iu,
+			/see 2 accounts \(acme, beta\); set fireworksAccountId in pi-usage\.json/iu,
 		);
-
-		vi.stubEnv("FIREWORKS_ACCOUNT_ID", "../other");
 		await assert.rejects(
-			() => queryFireworks(),
-			/environment variable was not a safe account slug/iu,
+			() => queryFireworks(new AbortController().signal, 1_000, "../other"),
+			/account setting was not a safe account slug/iu,
 		);
-		vi.stubEnv("FIREWORKS_ACCOUNT_ID", "hidden-account");
 		await assert.rejects(
-			() => queryFireworks(),
-			/does not match an account visible to this Fireworks key/iu,
+			() => queryFireworks(new AbortController().signal, 1_000, "hidden-account"),
+			/configured Fireworks account does not match an account visible/iu,
 		);
 	} finally {
-		vi.unstubAllEnvs();
 		vi.unstubAllGlobals();
 	}
 });
 
-test("Fireworks transport rejects unsafe page tokens and bounds bodies, JSON, and errors", async () => {
+test("Fireworks transport rejects invalid page tokens and bounds bodies, JSON, and errors", async () => {
 	const fetchMock = vi.fn(
 		async () =>
 			new Response(
-				JSON.stringify({ accounts: [accountRow("acme")], nextPageToken: "bad token!" }),
+				JSON.stringify({ accounts: [accountRow("acme")], nextPageToken: "x".repeat(513) }),
 				{
 					status: 200,
 				},
@@ -444,7 +492,7 @@ test("Fireworks transport rejects unsafe page tokens and bounds bodies, JSON, an
 	);
 	vi.stubGlobal("fetch", fetchMock);
 	try {
-		await assert.rejects(() => queryFireworks(), /unsafe page token/iu);
+		await assert.rejects(() => queryFireworks(), /invalid page token/iu);
 
 		fetchMock.mockResolvedValueOnce(
 			new Response(JSON.stringify({ accounts: [accountRow("acme")] }), { status: 200 }),

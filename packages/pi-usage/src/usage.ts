@@ -254,6 +254,10 @@ export default function usageExtension(
 		const expectedSessionGeneration = sessionGeneration;
 		const expectedSessionId = ctx.sessionManager.getSessionId();
 		const expectedModelIdentity = modelIdentity(ctx.model);
+		const expectedFireworksAccountId =
+			adapter.id === "fireworks" ? settingsRuntime.get().settings.fireworksAccountId : undefined;
+		const querySettings =
+			adapter.id === "fireworks" ? { fireworksAccountId: expectedFireworksAccountId } : undefined;
 		let auth: ResolvedUsageAuth | undefined;
 		try {
 			auth = await awaitWithDeadline(
@@ -277,11 +281,13 @@ export default function usageExtension(
 				},
 			};
 		}
-		const requiresRequestBoundaryGuard = adapter.id === "deepseek" || adapter.id === "xai";
+		const requiresRequestBoundaryGuard = ["deepseek", "fireworks", "xai"].includes(adapter.id);
 		const requestContextChanged = () =>
 			expectedSessionGeneration !== sessionGeneration ||
 			ctx.sessionManager.getSessionId() !== expectedSessionId ||
-			modelIdentity(ctx.model) !== expectedModelIdentity;
+			modelIdentity(ctx.model) !== expectedModelIdentity ||
+			(adapter.id === "fireworks" &&
+				settingsRuntime.get().settings.fireworksAccountId !== expectedFireworksAccountId);
 		if (requiresRequestBoundaryGuard && requestContextChanged()) throw abortError();
 		if (!auth) {
 			if (displayState === "current") {
@@ -298,11 +304,15 @@ export default function usageExtension(
 				authState: "unavailable",
 			};
 		}
+		const queryFingerprint =
+			adapter.id === "fireworks"
+				? `${auth.fingerprint}:account:${expectedFireworksAccountId ?? "auto"}`
+				: auth.fingerprint;
 		if (displayState === "current") {
-			transitionCurrentIdentity(`${adapter.id}:${auth.fingerprint}`, adapter.id);
+			transitionCurrentIdentity(`${adapter.id}:${queryFingerprint}`, adapter.id);
 		}
 
-		const cached = !force ? cache.get(adapter.id, auth.fingerprint) : undefined;
+		const cached = !force ? cache.get(adapter.id, queryFingerprint) : undefined;
 		if (cached) {
 			return {
 				state: {
@@ -316,7 +326,7 @@ export default function usageExtension(
 			};
 		}
 
-		const failureKey = `${adapter.id}:${auth.fingerprint}`;
+		const failureKey = `${adapter.id}:${queryFingerprint}`;
 		const previousFailure = failureBackoff.get(failureKey);
 		if (!force && previousFailure && previousFailure.until > Date.now()) {
 			return {
@@ -357,10 +367,17 @@ export default function usageExtension(
 						}
 					}
 				: undefined;
-			const report = await queryProviderUsage(adapter, auth, signal, remainingMs, guard);
+			const report = await queryProviderUsage(
+				adapter,
+				auth,
+				signal,
+				remainingMs,
+				guard,
+				querySettings,
+			);
 			if (guard) await guard();
 			if (latestQueries.get(failureKey) === queryId) {
-				cache.set(adapter.id, auth.fingerprint, report);
+				cache.set(adapter.id, queryFingerprint, report);
 				failureBackoff.delete(failureKey);
 			}
 			return {

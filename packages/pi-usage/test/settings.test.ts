@@ -40,9 +40,16 @@ test("normalizes owned settings and ignores the retired xAI field", () => {
 		codexFastMode: true,
 		codexStatusResetCountdown: true,
 	});
+	assert.deepEqual(normalizeUsageSettings({ fireworksAccountId: "acme-prod" }), {
+		codexFastMode: false,
+		codexStatusResetCountdown: true,
+		fireworksAccountId: "acme-prod",
+	});
 	assert.deepEqual(normalizeUsageSettings({ xaiUsage: false }), DEFAULT_USAGE_SETTINGS);
 	assert.deepEqual(normalizeUsageSettings({ xaiUsage: "retired" }), DEFAULT_USAGE_SETTINGS);
 	assert.equal(normalizeUsageSettings({ codexFastMode: "true" }), undefined);
+	assert.equal(normalizeUsageSettings({ fireworksAccountId: "../other" }), undefined);
+	assert.equal(normalizeUsageSettings({ fireworksAccountId: "" }), undefined);
 	assert.equal(normalizeUsageSettings([]), undefined);
 });
 
@@ -52,10 +59,14 @@ test("missing loads are side-effect free and valid loads preserve unknown fields
 	assert.equal(missing.kind, "missing");
 	assert.equal((await readdir(join(path, ".."))).length, 0);
 
-	await writeFile(path, '{"codexFastMode":true,"xaiUsage":false,"future":"kept"}\n');
+	await writeFile(
+		path,
+		'{"codexFastMode":true,"fireworksAccountId":"acme","xaiUsage":false,"future":"kept"}\n',
+	);
 	const loaded = await loadUsageSettings(path);
 	assert.equal(loaded.kind, "loaded");
 	assert.equal(loaded.settings.codexFastMode, true);
+	assert.equal(loaded.settings.fireworksAccountId, "acme");
 	assert.equal(loaded.document?.xaiUsage, false);
 	assert.equal(loaded.document?.future, "kept");
 });

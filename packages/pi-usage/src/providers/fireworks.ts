@@ -23,6 +23,10 @@ const SERIES_LABELS: Readonly<Record<SeriesKey, string>> = {
 	other: "Other",
 };
 
+export function isFireworksAccountId(value: unknown): value is string {
+	return typeof value === "string" && ACCOUNT_ID_PATTERN.test(value);
+}
+
 export function normalizeFireworksAccountsPayload(payload: FireworksAccountsPayload): string[] {
 	if (!Array.isArray(payload.accounts)) {
 		throw new Error("Fireworks accounts response did not contain an accounts array.");
@@ -35,7 +39,7 @@ export function normalizeFireworksAccountsPayload(payload: FireworksAccountsPayl
 			throw new Error("Fireworks accounts response omitted the account resource name.");
 		}
 		const match = /^accounts\/([^/]+)$/u.exec(account.name);
-		if (!match || !ACCOUNT_ID_PATTERN.test(match[1])) {
+		if (!match || !isFireworksAccountId(match[1])) {
 			throw new Error("Fireworks accounts response returned an unsafe account resource name.");
 		}
 		const accountId = match[1];
@@ -52,7 +56,7 @@ export function normalizeFireworksBillingSummaryPayload(
 	accountId: string,
 	capturedAt: number,
 ): UsageReport {
-	if (!ACCOUNT_ID_PATTERN.test(accountId)) {
+	if (!isFireworksAccountId(accountId)) {
 		throw new Error("Fireworks billing summary received an unsafe account identifier.");
 	}
 	if (payload.lineItems !== undefined && !Array.isArray(payload.lineItems)) {

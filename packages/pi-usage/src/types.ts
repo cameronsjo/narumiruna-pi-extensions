@@ -55,6 +55,10 @@ export interface ResolvedUsageAuth {
 	model: PiModel;
 }
 
+export interface UsageQuerySettings {
+	fireworksAccountId?: string;
+}
+
 export interface UsageProviderAdapter {
 	id: string;
 	displayName: string;
@@ -65,6 +69,7 @@ export interface UsageProviderAdapter {
 		signal: AbortSignal,
 		timeoutMs: number,
 		guard?: () => Promise<void>,
+		settings?: Readonly<UsageQuerySettings>,
 	): Promise<UsageReport>;
 }
 
