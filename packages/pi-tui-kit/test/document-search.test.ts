@@ -435,11 +435,52 @@ test("keeps repetitive alternate table matches compact", () => {
 		tablePresentation.searchSources,
 	);
 	assert.equal(tableController.count, 20_000);
-	assert.equal((tableController as unknown as { matches: unknown[] }).matches.length, 0);
+	assert.equal(
+		(tableController as unknown as { compactMatchGroups: unknown[] }).compactMatchGroups.length,
+		1,
+	);
 });
 
-test("bounds pasted search queries before compiling matchers", () => {
+test("keeps logical table matches stable across wrapping widths", () => {
+	const content = `| left | value |\n|---|---|\n| x | ${"a".repeat(500)} |`;
+	for (const width of [600, 83]) {
+		const presentation = formatDocumentPresentation(content, { kind: "markdown" }, width, theme);
+		const controller = search(presentation.searchLines, "aaaaa");
+		controller.updateLines(
+			presentation.searchLines,
+			presentation.softWrapAfter,
+			presentation.ignoreLeadingWhitespace,
+			presentation.searchSources,
+		);
+		assert.equal(controller.count, 100);
+		const currentTheme = { ...theme, bold: (text: string) => `<current>${text}</current>` };
+		for (let index = 0; index < controller.count; index += 1) {
+			assert.match(controller.highlight(presentation.lines, currentTheme).join("\n"), /<current>/u);
+			controller.next();
+		}
+	}
+});
+
+test("bounds the stored query across typed and pasted input", () => {
 	const controller = new DocumentSearchController();
+	controller.activate(["x".repeat(4_096)]);
+	controller.handleInput("x".repeat(4_096));
+	controller.handleInput("y");
+	assert.equal(controller.input.getValue(), "x".repeat(4_096));
+	assert.equal(controller.count, 1);
+
+	controller.handleInput("\u001b[H");
+	controller.handleInput("z");
+	assert.equal(controller.input.getValue(), `z${"x".repeat(4_095)}`);
+	assert.equal(controller.input.getValue().length, 4_096);
+
+	controller.close();
+	controller.activate(["short"]);
+	controller.handleInput("x".repeat(100_000));
+	assert.equal(controller.input.getValue().length, 4_096);
+	assert.equal(controller.count, 0);
+
+	controller.close();
 	controller.activate(["short"]);
 	controller.handleInput(`\u001b[200~${"x".repeat(100_000)}`);
 	assert.equal(controller.input.getValue(), "");

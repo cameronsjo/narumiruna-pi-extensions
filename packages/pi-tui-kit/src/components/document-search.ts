@@ -73,6 +73,11 @@ interface CorpusCells {
 	ends: Uint32Array;
 }
 
+interface CompactMatchGroup {
+	cells: CorpusCells;
+	offsets: Uint32Array;
+}
+
 const INVALID_CELL = 0xffffffff;
 
 class CorpusCellBuilder {
@@ -174,9 +179,10 @@ export class DocumentSearchController implements Focusable {
 	private corpus = "";
 	private cells = emptyCorpusCells();
 	private corpusReady = false;
-	private matches: DocumentMatch[] = [];
 	private compactMatchOffsets: Uint32Array | undefined;
-	private alternateGlobalIndexes: number[] = [];
+	private compactMatchGroups: CompactMatchGroup[] = [];
+	private compactMatchGroupIndexes = new Uint32Array();
+	private compactMatchIndexes = new Uint32Array();
 	private currentIndex = 0;
 	private pasting = false;
 	private pasteBuffer = "";
@@ -197,7 +203,10 @@ export class DocumentSearchController implements Focusable {
 	}
 
 	get count() {
-		return (this.compactMatchOffsets?.length ?? 0) / 2 + this.matches.length;
+		if (this.compactMatchGroups.length === 1) {
+			return (this.compactMatchGroups[0]?.offsets.length ?? 0) / 2;
+		}
+		return this.compactMatchGroupIndexes.length;
 	}
 
 	get current() {
@@ -315,6 +324,8 @@ export class DocumentSearchController implements Focusable {
 		this.pasting = pasted.pasting;
 		this.pasteBuffer = pasted.buffer;
 		handleSearchInput(this.input, pasted.data);
+		const bounded = this.input.getValue().slice(0, MAX_SEARCH_QUERY_LENGTH);
+		if (bounded !== this.input.getValue()) this.input.setValue(bounded);
 		if (this.input.getValue() === previous) return false;
 		this.rebuildMatches();
 		return true;
@@ -388,9 +399,10 @@ export class DocumentSearchController implements Focusable {
 		this.corpus = "";
 		this.cells = emptyCorpusCells();
 		this.corpusReady = false;
-		this.matches = [];
 		this.compactMatchOffsets = undefined;
-		this.alternateGlobalIndexes = [];
+		this.compactMatchGroups = [];
+		this.compactMatchGroupIndexes = new Uint32Array();
+		this.compactMatchIndexes = new Uint32Array();
 	}
 
 	private rebuildMatches() {
@@ -401,21 +413,32 @@ export class DocumentSearchController implements Focusable {
 		this.anchorRow = this.currentRow ?? this.anchorRow;
 		const query = normalizeQuery(this.input.getValue());
 		this.compactMatchOffsets = undefined;
-		this.matches = [];
-		this.alternateGlobalIndexes = [];
+		this.compactMatchGroups = [];
+		this.compactMatchGroupIndexes = new Uint32Array();
+		this.compactMatchIndexes = new Uint32Array();
 		if (query) {
-			this.compactMatchOffsets = findMatchOffsets(this.corpus, query);
-			const alternates = sortMatches(
-				uniqueMatches(
-					this.searchSources.flatMap((source) =>
-						findAlternateMatches(buildSearchSourceCorpus(source), query),
-					),
-				),
+			const sourceGroups: CompactMatchGroup[] = [];
+			const matchingSources: DocumentSearchSource[] = [];
+			for (const source of this.searchSources) {
+				const sourceCorpus = buildSearchSourceCorpus(source);
+				const offsets = findMatchOffsets(sourceCorpus.text, query);
+				if (offsets.length > 0) {
+					sourceGroups.push({ cells: sourceCorpus.cells, offsets });
+					matchingSources.push(source);
+				}
+			}
+			this.compactMatchOffsets = filterMatchOffsets(
+				findMatchOffsets(this.corpus, query),
+				this.cells,
+				buildSearchSourceRanges(matchingSources),
 			);
-			this.matches = alternates.filter((match) => !this.hasPrimaryMatch(match));
-			this.alternateGlobalIndexes = this.matches.map(
-				(match, index) => this.primaryInsertionIndex(match) + index,
-			);
+			if (this.compactMatchOffsets.length > 0) {
+				this.compactMatchGroups.push({ cells: this.cells, offsets: this.compactMatchOffsets });
+			}
+			this.compactMatchGroups.push(...sourceGroups);
+			const order = mergeCompactMatchGroups(this.compactMatchGroups);
+			this.compactMatchGroupIndexes = order.groupIndexes;
+			this.compactMatchIndexes = order.matchIndexes;
 		}
 		this.currentIndex = this.matchIndexAtOrAfter(this.anchorRow);
 		this.anchorRow = this.currentRow ?? this.anchorRow;
@@ -433,47 +456,23 @@ export class DocumentSearchController implements Focusable {
 		return low < this.count ? low : 0;
 	}
 
-	private primaryMatch(index: number) {
-		if (!this.compactMatchOffsets || index < 0 || index >= this.compactMatchOffsets.length / 2) {
-			return undefined;
-		}
-		const offsetIndex = index * 2;
-		return materializeMatch(
-			this.cells,
-			this.compactMatchOffsets[offsetIndex] ?? 0,
-			this.compactMatchOffsets[offsetIndex + 1] ?? 0,
-		);
-	}
-
-	private primaryInsertionIndex(match: DocumentMatch) {
-		let low = 0;
-		let high = (this.compactMatchOffsets?.length ?? 0) / 2;
-		while (low < high) {
-			const middle = Math.floor((low + high) / 2);
-			const candidate = this.primaryMatch(middle);
-			if (candidate && compareMatchStarts(candidate, match) < 0) low = middle + 1;
-			else high = middle;
-		}
-		return low;
-	}
-
-	private hasPrimaryMatch(match: DocumentMatch) {
-		const insertion = this.primaryInsertionIndex(match);
-		return [this.primaryMatch(insertion - 1), this.primaryMatch(insertion)].some(
-			(candidate) => candidate !== undefined && matchIdentity(candidate) === matchIdentity(match),
-		);
-	}
-
 	private currentMatch() {
 		return this.matchAt(this.currentIndex);
 	}
 
 	private matchAt(index: number) {
-		const alternateIndex = lowerBound(this.alternateGlobalIndexes, index);
-		if (this.alternateGlobalIndexes[alternateIndex] === index) {
-			return this.matches[alternateIndex];
-		}
-		return this.primaryMatch(index - alternateIndex);
+		if (index < 0 || index >= this.count) return undefined;
+		const groupIndex =
+			this.compactMatchGroups.length === 1 ? 0 : (this.compactMatchGroupIndexes[index] ?? 0);
+		const matchIndex =
+			this.compactMatchGroups.length === 1 ? index : (this.compactMatchIndexes[index] ?? 0);
+		const group = this.compactMatchGroups[groupIndex];
+		if (!group) return undefined;
+		return materializeMatch(
+			group.cells,
+			group.offsets[matchIndex * 2] ?? 0,
+			group.offsets[matchIndex * 2 + 1] ?? 0,
+		);
 	}
 
 	private highlightMatches(): Array<[number, DocumentMatch]> {
@@ -575,7 +574,6 @@ function buildSearchSourceCorpus(source: DocumentSearchSource) {
 		source.reduce((total, segment) => total + segment.text.length, 0) +
 		Math.max(0, source.length - 1);
 	const cells = new CorpusCellBuilder(estimatedCells);
-	const boundaries: number[] = [];
 	let pendingRow = INVALID_CELL;
 	let pendingStart = 0;
 	let pendingEnd = 0;
@@ -590,8 +588,7 @@ function buildSearchSourceCorpus(source: DocumentSearchSource) {
 		text += " ";
 		cells.push(pendingRow, pendingStart, pendingEnd);
 	};
-	for (const [segmentIndex, segment] of source.entries()) {
-		if (segmentIndex > 0) boundaries.push(text.length);
+	for (const segment of source) {
 		let column = segment.column;
 		if (segment.separatorBefore) setPendingWhitespace(segment.row, column, column);
 		for (const { segment: grapheme } of graphemeSegmenter.segment(segment.text)) {
@@ -610,7 +607,7 @@ function buildSearchSourceCorpus(source: DocumentSearchSource) {
 			column = end;
 		}
 	}
-	return { text, cells: cells.finish(), boundaries };
+	return { text, cells: cells.finish() };
 }
 
 function sanitizePastedSearchData(data: string, initiallyPasting: boolean, initialBuffer: string) {
@@ -701,20 +698,104 @@ function findMatchOffsets(corpus: string, query: string) {
 	return offsets.finish();
 }
 
-function findAlternateMatches(
-	corpus: ReturnType<typeof buildSearchSourceCorpus>,
-	query: string,
-): DocumentMatch[] {
-	const offsets = findMatchOffsets(corpus.text, query);
-	const matches: DocumentMatch[] = [];
+interface SearchSourceRange {
+	start: number;
+	end: number;
+}
+
+function buildSearchSourceRanges(sources: readonly DocumentSearchSource[]) {
+	const ranges = new Map<number, SearchSourceRange[]>();
+	for (const source of sources) {
+		for (const segment of source) {
+			const rowRanges = ranges.get(segment.row) ?? [];
+			rowRanges.push({
+				start: segment.column,
+				end: segment.column + visibleWidth(segment.text),
+			});
+			ranges.set(segment.row, rowRanges);
+		}
+	}
+	return ranges;
+}
+
+function filterMatchOffsets(
+	offsets: Uint32Array,
+	cells: CorpusCells,
+	sourceRanges: ReadonlyMap<number, readonly SearchSourceRange[]>,
+) {
+	if (sourceRanges.size === 0) return offsets;
+	const retained = new MatchOffsetBuilder();
 	for (let index = 0; index < offsets.length; index += 2) {
 		const start = offsets[index] ?? 0;
-		const end = offsets[index + 1] ?? 0;
-		const boundaryIndex = lowerBound(corpus.boundaries, start + 1);
-		if ((corpus.boundaries[boundaryIndex] ?? Number.POSITIVE_INFINITY) >= end) continue;
-		matches.push(materializeMatch(corpus.cells, start, end));
+		const row = cells.rows[start] ?? INVALID_CELL;
+		const column = cells.starts[start] ?? 0;
+		if (sourceRanges.get(row)?.some((range) => column >= range.start && column < range.end)) {
+			continue;
+		}
+		retained.push(start, offsets[index + 1] ?? start);
 	}
-	return matches;
+	return retained.finish();
+}
+
+function mergeCompactMatchGroups(groups: readonly CompactMatchGroup[]) {
+	if (groups.length < 2) {
+		return { groupIndexes: new Uint32Array(), matchIndexes: new Uint32Array() };
+	}
+	const total = groups.reduce((count, group) => count + group.offsets.length / 2, 0);
+	const groupIndexes = new Uint32Array(total);
+	const matchIndexes = new Uint32Array(total);
+	const positions = new Uint32Array(groups.length);
+	const heap = groups.map((_, groupIndex) => groupIndex);
+	const precedes = (leftGroup: number, rightGroup: number) => {
+		const comparison = compareCompactMatchStarts(
+			groups[leftGroup],
+			positions[leftGroup] ?? 0,
+			groups[rightGroup],
+			positions[rightGroup] ?? 0,
+		);
+		return comparison < 0 || (comparison === 0 && leftGroup < rightGroup);
+	};
+	const siftDown = (start: number) => {
+		let parent = start;
+		while (true) {
+			const left = parent * 2 + 1;
+			if (left >= heap.length) return;
+			const right = left + 1;
+			const child =
+				right < heap.length && precedes(heap[right] ?? 0, heap[left] ?? 0) ? right : left;
+			if (precedes(heap[parent] ?? 0, heap[child] ?? 0)) return;
+			[heap[parent], heap[child]] = [heap[child] ?? 0, heap[parent] ?? 0];
+			parent = child;
+		}
+	};
+	for (let index = Math.floor(heap.length / 2) - 1; index >= 0; index -= 1) siftDown(index);
+	for (let target = 0; target < total; target += 1) {
+		const groupIndex = heap[0] ?? 0;
+		const matchIndex = positions[groupIndex] ?? 0;
+		groupIndexes[target] = groupIndex;
+		matchIndexes[target] = matchIndex;
+		positions[groupIndex] = matchIndex + 1;
+		if (positions[groupIndex] >= (groups[groupIndex]?.offsets.length ?? 0) / 2) {
+			heap[0] = heap.at(-1) ?? 0;
+			heap.pop();
+		}
+		if (heap.length > 0) siftDown(0);
+	}
+	return { groupIndexes, matchIndexes };
+}
+
+function compareCompactMatchStarts(
+	left: CompactMatchGroup | undefined,
+	leftIndex: number,
+	right: CompactMatchGroup | undefined,
+	rightIndex: number,
+) {
+	const leftOffset = left?.offsets[leftIndex * 2] ?? 0;
+	const rightOffset = right?.offsets[rightIndex * 2] ?? 0;
+	return (
+		(left?.cells.rows[leftOffset] ?? 0) - (right?.cells.rows[rightOffset] ?? 0) ||
+		(left?.cells.starts[leftOffset] ?? 0) - (right?.cells.starts[rightOffset] ?? 0)
+	);
 }
 
 function materializeMatch(cells: CorpusCells, start: number, end: number): DocumentMatch {
@@ -785,46 +866,6 @@ function sameSearchSources(
 				}),
 		)
 	);
-}
-
-function uniqueMatches(matches: readonly DocumentMatch[]) {
-	const seen = new Set<string>();
-	return matches.filter((match) => {
-		const identity = matchIdentity(match);
-		if (seen.has(identity)) return false;
-		seen.add(identity);
-		return true;
-	});
-}
-
-function matchIdentity(match: DocumentMatch) {
-	const first = match.ranges[0];
-	const last = match.ranges.at(-1);
-	return `${first?.row}:${first?.start}-${last?.row}:${last?.end}`;
-}
-
-function compareMatchStarts(left: DocumentMatch, right: DocumentMatch) {
-	const leftStart = left.ranges[0];
-	const rightStart = right.ranges[0];
-	return (
-		(leftStart?.row ?? 0) - (rightStart?.row ?? 0) ||
-		(leftStart?.start ?? 0) - (rightStart?.start ?? 0)
-	);
-}
-
-function sortMatches(matches: DocumentMatch[]) {
-	return matches.sort(compareMatchStarts);
-}
-
-function lowerBound(values: readonly number[], target: number) {
-	let low = 0;
-	let high = values.length;
-	while (low < high) {
-		const middle = Math.floor((low + high) / 2);
-		if ((values[middle] ?? 0) < target) low = middle + 1;
-		else high = middle;
-	}
-	return low;
 }
 
 function escapeRegExp(value: string) {
