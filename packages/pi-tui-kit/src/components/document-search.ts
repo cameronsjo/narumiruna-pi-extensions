@@ -1,5 +1,6 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import {
+	decodeKittyPrintable,
 	type Focusable,
 	Input,
 	sliceByColumn,
@@ -144,6 +145,7 @@ export class DocumentSearchController implements Focusable {
 	private currentIndex = 0;
 	private pasting = false;
 	private pasteBuffer = "";
+	private pasteStartBuffer = "";
 	private anchorRow = 0;
 
 	get focused() {
@@ -189,6 +191,7 @@ export class DocumentSearchController implements Focusable {
 		this.anchorRow = 0;
 		this.pasting = false;
 		this.pasteBuffer = "";
+		this.pasteStartBuffer = "";
 		this.syncFocus();
 	}
 
@@ -218,35 +221,41 @@ export class DocumentSearchController implements Focusable {
 
 	routeInput(data: string, handleOutsidePaste: (data: string) => boolean) {
 		let changed = false;
+		const input = this.pasteStartBuffer + data;
+		this.pasteStartBuffer = "";
 		let offset = 0;
-		while (offset < data.length) {
+		while (offset < input.length) {
 			if (this.pasting) {
 				const markerPrefix = this.pasteBuffer.slice(-(PASTE_END.length - 1));
-				const combined = markerPrefix + data.slice(offset);
+				const combined = markerPrefix + input.slice(offset);
 				const end = combined.indexOf(PASTE_END);
 				const consumed =
 					end < 0
-						? data.length - offset
+						? input.length - offset
 						: Math.max(0, end + PASTE_END.length - markerPrefix.length);
 				const nextOffset = offset + consumed;
-				changed = this.handleInput(data.slice(offset, nextOffset)) || changed;
+				changed = this.handleInput(input.slice(offset, nextOffset)) || changed;
 				offset = nextOffset;
 				continue;
 			}
-			const start = data.indexOf(PASTE_START, offset);
+			const start = input.indexOf(PASTE_START, offset);
 			if (start < 0) {
-				return {
-					changed,
-					stopped: !handleOutsidePaste(data.slice(offset)),
-				};
+				const remainder = input.slice(offset);
+				const prefixLength = trailingMarkerPrefixLength(remainder, PASTE_START);
+				const outsidePaste = remainder.slice(0, remainder.length - prefixLength);
+				if (outsidePaste && !handleOutsidePaste(outsidePaste)) {
+					return { changed, stopped: true };
+				}
+				this.pasteStartBuffer = remainder.slice(remainder.length - prefixLength);
+				return { changed, stopped: false };
 			}
-			if (start > offset && !handleOutsidePaste(data.slice(offset, start))) {
+			if (start > offset && !handleOutsidePaste(input.slice(offset, start))) {
 				return { changed, stopped: true };
 			}
 			if (!this.active) return { changed, stopped: true };
-			const end = data.indexOf(PASTE_END, start + PASTE_START.length);
-			const nextOffset = end < 0 ? data.length : end + PASTE_END.length;
-			changed = this.handleInput(data.slice(start, nextOffset)) || changed;
+			const end = input.indexOf(PASTE_END, start + PASTE_START.length);
+			const nextOffset = end < 0 ? input.length : end + PASTE_END.length;
+			changed = this.handleInput(input.slice(start, nextOffset)) || changed;
 			offset = nextOffset;
 		}
 		return { changed, stopped: false };
@@ -576,8 +585,14 @@ function sanitizePastedSearchData(data: string, initiallyPasting: boolean, initi
 			continue;
 		}
 		const start = data.indexOf(PASTE_START, offset);
-		if (start < 0) return { data: result + data.slice(offset), pasting, buffer };
-		result += data.slice(offset, start) + PASTE_START;
+		if (start < 0) {
+			return {
+				data: result + sanitizeUnbracketedSearchData(data.slice(offset)),
+				pasting,
+				buffer,
+			};
+		}
+		result += sanitizeUnbracketedSearchData(data.slice(offset, start)) + PASTE_START;
 		offset = start + PASTE_START.length;
 		pasting = true;
 	}
@@ -589,6 +604,23 @@ function appendPasteBuffer(buffer: string, value: string) {
 	if (combined.length <= MAX_PASTE_BUFFER_LENGTH) return combined;
 	const tailLength = PASTE_END.length - 1;
 	return combined.slice(0, MAX_PASTE_BUFFER_LENGTH - tailLength) + combined.slice(-tailLength);
+}
+
+function trailingMarkerPrefixLength(value: string, marker: string) {
+	for (let length = Math.min(value.length, marker.length - 1); length > 0; length -= 1) {
+		if (marker.startsWith(value.slice(-length))) return length;
+	}
+	return 0;
+}
+
+function sanitizeUnbracketedSearchData(value: string) {
+	const kittyPrintable = decodeKittyPrintable(value);
+	if (kittyPrintable !== undefined) return sanitizeTerminalDocument(kittyPrintable);
+	const hasTerminalControl = Array.from(value).some((character) => {
+		const codePoint = character.codePointAt(0) ?? 0;
+		return codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f);
+	});
+	return hasTerminalControl ? value : sanitizeTerminalDocument(value);
 }
 
 function sanitizeSearchQuery(value: string) {

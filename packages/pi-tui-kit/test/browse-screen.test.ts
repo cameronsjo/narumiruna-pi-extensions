@@ -435,8 +435,9 @@ test("browse detail search stays independent from list filtering", () => {
 	harness.component.render(40);
 	harness.component.handleInput("s");
 	assert.doesNotMatch(plainRender(harness.component, 40).join("\n"), /Find:/u);
-	harness.component.handleInput("/");
-	harness.component.handleInput("\u001b[200~");
+	harness.component.handleInput("\u001b[47u");
+	harness.component.handleInput("\u001b[20");
+	harness.component.handleInput("0~");
 	harness.component.handleInput("n");
 	harness.component.handleInput("eedle\u001b[201~");
 	assert.match(plainRender(harness.component, 40).join("\n"), /Find:/u);

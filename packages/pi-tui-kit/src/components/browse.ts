@@ -333,7 +333,7 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 					);
 				} else if (matchesKey(data, Key.home)) detailScrollOffset = 0;
 				else if (matchesKey(data, Key.end)) detailScrollOffset = detailMaximumScroll;
-				else if (detailSearch && data === DOCUMENT_SEARCH_ACTIVATE_KEY) {
+				else if (detailSearch && matchesKey(data, DOCUMENT_SEARCH_ACTIVATE_KEY)) {
 					detailSearch.activate(
 						lastDetailLines,
 						lastDetailSoftWrapAfter,

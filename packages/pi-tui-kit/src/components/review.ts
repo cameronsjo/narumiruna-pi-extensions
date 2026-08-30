@@ -193,7 +193,7 @@ export function createReviewComponent<ScreenId extends string, ActionId extends 
 			else if (matchesKey(data, Key.end)) moveTo(lastMaximumScroll);
 			else if (options.screen.confirm && options.keybindings.matches(data, "tui.select.confirm")) {
 				options.onEvent({ kind: "activate", itemId: options.screen.confirm.id });
-			} else if (search && data === DOCUMENT_SEARCH_ACTIVATE_KEY) {
+			} else if (search && matchesKey(data, DOCUMENT_SEARCH_ACTIVATE_KEY)) {
 				search.activate(
 					lastLines,
 					lastSoftWrapAfter,

@@ -310,6 +310,17 @@ test("handles empty, absent, repeated, resized, invalidated, and sanitized queri
 	assert.equal(controller.count, 0);
 });
 
+test("sanitizes unbracketed and Kitty-encoded search input before rendering", () => {
+	const controller = new DocumentSearchController();
+	controller.activate(["safelink"]);
+	controller.handleInput("safe\u202e");
+	controller.handleInput("\u001b[8238u");
+	controller.handleInput("\u001b[108u");
+	controller.handleInput("ink");
+	assert.equal(controller.input.getValue(), "safelink");
+	assert.equal(controller.count, 1);
+});
+
 test("normalizes whitespace for matching without moving the input cursor", () => {
 	const controller = new DocumentSearchController();
 	controller.activate(["a xb"]);
@@ -399,11 +410,32 @@ test("bounds pasted search queries before compiling matchers", () => {
 	assert.equal(controller.count, 0);
 });
 
-test("routes only pasted bytes ahead of surrounding shortcuts", () => {
+test("routes only pasted bytes across split markers ahead of surrounding shortcuts", () => {
+	const pasteStart = "\u001b[200~";
+	for (let split = 1; split < pasteStart.length; split += 1) {
+		const splitController = new DocumentSearchController();
+		const splitOutsidePaste: string[] = [];
+		splitController.activate(["needle"]);
+		splitController.routeInput(pasteStart.slice(0, split), (data) => {
+			splitOutsidePaste.push(data);
+			return true;
+		});
+		splitController.routeInput(`${pasteStart.slice(split)}needle\u001b[201~`, (data) => {
+			splitOutsidePaste.push(data);
+			return true;
+		});
+		assert.equal(splitController.input.getValue(), "needle");
+		assert.deepEqual(splitOutsidePaste, []);
+	}
+
 	const controller = new DocumentSearchController();
 	const outsidePaste: string[] = [];
 	controller.activate(["needle"]);
-	controller.routeInput("before\u001b[200~nee", (data) => {
+	controller.routeInput("before\u001b[20", (data) => {
+		outsidePaste.push(data);
+		return true;
+	});
+	controller.routeInput("0~nee", (data) => {
 		outsidePaste.push(data);
 		return true;
 	});
