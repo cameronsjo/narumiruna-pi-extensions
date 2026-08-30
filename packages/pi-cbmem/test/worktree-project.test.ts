@@ -8,6 +8,7 @@ import { afterAll, beforeAll, beforeEach, test } from "vitest";
 import type { ToolName } from "../src/tool-definitions.js";
 import {
 	type CbmemJsonQuery,
+	currentRelativePath,
 	defaultProjectResolutionService,
 	resolveCurrentProject,
 } from "../src/worktree-project.js";
@@ -64,6 +65,15 @@ test("current project resolution prefers an exact worktree index", async () => {
 		sourceRoot: worktreeRoot,
 		headSha,
 	});
+	await defaultProjectResolutionService.revalidate(resolution, undefined, query);
+	await assert.rejects(
+		defaultProjectResolutionService.revalidate(
+			resolution,
+			undefined,
+			fixtureQuery({ currentStatusRoot: sourceRoot, includeWorktree: true }),
+		),
+		/project root changed while resolving/u,
+	);
 });
 
 test("unindexed clean linked worktree borrows the matching canonical index", async () => {
@@ -137,6 +147,80 @@ test("borrowed resolution is invalidated when the worktree changes", async () =>
 	);
 });
 
+test("linked worktrees resolve canonical indexes with a separate Git directory", async () => {
+	const root = await mkdtemp(path.join(tmpdir(), "pi-cbmem-separate-git-test-"));
+	const separateSource = path.join(root, "source");
+	const separateMetadata = path.join(root, "metadata.git");
+	const separateWorktree = path.join(root, "worktree");
+	try {
+		await git(
+			root,
+			"init",
+			"--initial-branch=main",
+			`--separate-git-dir=${separateMetadata}`,
+			separateSource,
+		);
+		await writeFile(path.join(separateSource, "example.ts"), "export const value = 1;\n", "utf8");
+		await git(separateSource, "add", "example.ts");
+		await git(
+			separateSource,
+			"-c",
+			"commit.gpgsign=false",
+			"-c",
+			"user.name=Pi Test",
+			"-c",
+			"user.email=pi@example.invalid",
+			"commit",
+			"-m",
+			"separate fixture",
+		);
+		const separateHead = await git(separateSource, "rev-parse", "HEAD");
+		await git(
+			separateSource,
+			"worktree",
+			"add",
+			"-b",
+			"separate-feature",
+			separateWorktree,
+			"HEAD",
+		);
+		const query = fixtureQuery({
+			indexedGitCommonDir: separateMetadata,
+			indexedHead: separateHead,
+			sourceRoot: separateSource,
+			worktreeRoot: separateWorktree,
+		});
+
+		assert.deepEqual(await resolveCurrentProject(separateWorktree, undefined, query), {
+			kind: "borrowed",
+			project: "source-project",
+			currentRoot: separateWorktree,
+			sourceRoot: separateSource,
+			headSha: separateHead,
+		});
+	} finally {
+		await rm(root, { force: true, recursive: true });
+	}
+});
+
+test("borrowed paths allow legal two-dot names but reject parent traversal", () => {
+	const resolution = {
+		kind: "borrowed" as const,
+		project: "source-project",
+		currentRoot: worktreeRoot,
+		sourceRoot,
+		headSha,
+	};
+	assert.equal(
+		currentRelativePath(resolution, path.join(sourceRoot, "..foo.ts")),
+		path.join(worktreeRoot, "..foo.ts"),
+	);
+	assert.throws(
+		() => currentRelativePath(resolution, path.join(sourceRoot, "..", "outside.ts")),
+		/escapes the canonical project root/u,
+	);
+});
+
 test("project resolution honors cancellation before Git or backend work", async () => {
 	const controller = new AbortController();
 	controller.abort();
@@ -153,23 +237,29 @@ test("project resolution honors cancellation before Git or backend work", async 
 
 function fixtureQuery(
 	options: {
+		currentStatusRoot?: string;
 		decoyCount?: number;
 		duplicateSource?: boolean;
 		includeWorktree?: boolean;
+		indexedGitCommonDir?: string;
 		indexedHead?: string;
+		sourceRoot?: string;
+		worktreeRoot?: string;
 	} = {},
 ): CbmemJsonQuery {
+	const sourcePath = options.sourceRoot ?? sourceRoot;
+	const worktreePath = options.worktreeRoot ?? worktreeRoot;
 	const decoys = Array.from({ length: options.decoyCount ?? 0 }, (_, index) => ({
 		name: `decoy-${index}`,
 		root_path: path.join(fixtureRoot, `decoy-${index}`),
 	}));
 	const projects = [
 		...decoys,
-		{ name: "source-project", root_path: sourceRoot },
+		{ name: "source-project", root_path: sourcePath },
 		...(options.duplicateSource
-			? [{ name: "duplicate-source-project", root_path: sourceRoot }]
+			? [{ name: "duplicate-source-project", root_path: sourcePath }]
 			: []),
-		...(options.includeWorktree ? [{ name: "worktree-project", root_path: worktreeRoot }] : []),
+		...(options.includeWorktree ? [{ name: "worktree-project", root_path: worktreePath }] : []),
 	];
 	return async (tool: ToolName, args: Record<string, unknown>) => {
 		if (tool === "list_projects") {
@@ -189,7 +279,10 @@ function fixtureQuery(
 			return {
 				project: args.project,
 				status: "ready",
-				root_path: args.project === "worktree-project" ? worktreeRoot : sourceRoot,
+				root_path:
+					args.project === "worktree-project"
+						? (options.currentStatusRoot ?? worktreePath)
+						: sourcePath,
 			};
 		}
 		if (tool === "search_graph") {
@@ -203,7 +296,7 @@ function fixtureQuery(
 					"in",
 					"out",
 					"head_sha",
-					"canonical_root",
+					"git_common_dir",
 					"worktree_root",
 					"is_worktree",
 				],
@@ -217,8 +310,8 @@ function fixtureQuery(
 								0,
 								0,
 								options.indexedHead ?? headSha,
-								sourceRoot,
-								sourceRoot,
+								options.indexedGitCommonDir ?? ".git",
+								sourcePath,
 								false,
 							],
 						],

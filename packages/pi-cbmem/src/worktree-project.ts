@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { ToolName } from "./tool-definitions.js";
 
 export const CURRENT_PROJECT_ALIAS = "@current";
@@ -48,7 +48,7 @@ interface GitContext {
 	root: string;
 	gitDir: string;
 	commonDir: string;
-	canonicalRoot: string;
+	canonicalRoot?: string;
 	headSha: string;
 	isWorktree: boolean;
 }
@@ -60,7 +60,7 @@ interface IndexedProject {
 
 interface IndexedBranch {
 	headSha: string;
-	canonicalRoot: string;
+	gitCommonDir: string;
 	worktreeRoot: string;
 	isWorktree: boolean;
 }
@@ -106,14 +106,13 @@ export async function resolveCurrentProject(
 	await assertClean(current.root, signal);
 	signal?.throwIfAborted();
 
-	const sourceProjects = projectsAtRoot(projects, current.canonicalRoot);
+	const sourceProjects = await findCanonicalProjects(current, projects, signal);
+	signal?.throwIfAborted();
 	if (sourceProjects.length === 0) {
-		throw new Error(
-			`Codebase Memory has no canonical checkout index for this linked worktree: ${current.canonicalRoot}`,
-		);
+		throw new Error("Codebase Memory has no canonical checkout index for this linked worktree");
 	}
 	if (sourceProjects.length > 1) {
-		throw ambiguousProjectError(current.canonicalRoot, sourceProjects);
+		throw ambiguousProjectError("this Git repository", sourceProjects);
 	}
 
 	const sourceProject = sourceProjects[0];
@@ -146,10 +145,22 @@ export async function revalidateProjectResolution(
 	signal: AbortSignal | undefined,
 	query: CbmemJsonQuery,
 ): Promise<void> {
-	if (resolution.kind !== "borrowed") return;
 	signal?.throwIfAborted();
 	const current = await resolveGitContext(resolution.currentRoot, signal);
 	signal?.throwIfAborted();
+	if (
+		normalizePath(current.root) !== normalizePath(resolution.currentRoot) ||
+		current.headSha !== resolution.headSha
+	) {
+		throw changedDuringCallError();
+	}
+	if (resolution.kind === "current") {
+		const project = { name: resolution.project, rootPath: resolution.currentRoot };
+		const status = await query("index_status", { project: resolution.project }, signal);
+		signal?.throwIfAborted();
+		assertReadyStatus(status, project);
+		return;
+	}
 	const source = await resolveGitContext(resolution.sourceRoot, signal);
 	signal?.throwIfAborted();
 	await assertClean(current.root, signal);
@@ -157,9 +168,6 @@ export async function revalidateProjectResolution(
 	await assertClean(source.root, signal);
 	signal?.throwIfAborted();
 	assertMatchingGitContexts(current, source);
-	if (current.headSha !== resolution.headSha) {
-		throw changedDuringCallError();
-	}
 	const branch = await readIndexedBranch(resolution.project, query, signal);
 	signal?.throwIfAborted();
 	assertMatchingIndexedBranch(current, source, branch);
@@ -168,6 +176,47 @@ export async function revalidateProjectResolution(
 function projectsAtRoot(projects: IndexedProject[], root: string): IndexedProject[] {
 	const normalizedRoot = normalizePath(root);
 	return projects.filter((project) => normalizePath(project.rootPath) === normalizedRoot);
+}
+
+async function findCanonicalProjects(
+	current: GitContext,
+	projects: IndexedProject[],
+	signal: AbortSignal | undefined,
+): Promise<IndexedProject[]> {
+	if (current.canonicalRoot) {
+		const direct = await projectsSharingCommonDir(
+			current,
+			projectsAtRoot(projects, current.canonicalRoot),
+			signal,
+		);
+		if (direct.length > 0) return direct;
+	}
+	return await projectsSharingCommonDir(current, projects, signal);
+}
+
+async function projectsSharingCommonDir(
+	current: GitContext,
+	projects: IndexedProject[],
+	signal: AbortSignal | undefined,
+): Promise<IndexedProject[]> {
+	const matches: IndexedProject[] = [];
+	for (const project of projects) {
+		if (normalizePath(project.rootPath) === normalizePath(current.root)) continue;
+		try {
+			const candidate = await resolveGitContext(project.rootPath, signal);
+			signal?.throwIfAborted();
+			if (
+				!candidate.isWorktree &&
+				normalizePath(candidate.commonDir) === normalizePath(current.commonDir)
+			) {
+				matches.push(project);
+			}
+		} catch {
+			if (signal?.aborted) throw abortReason(signal);
+			// Missing, stale, and non-Git project roots are unrelated candidates.
+		}
+	}
+	return matches;
 }
 
 async function listIndexedProjects(
@@ -227,7 +276,7 @@ async function readIndexedBranch(
 		"search_graph",
 		{
 			detail: "default",
-			fields: ["head_sha", "canonical_root", "worktree_root", "is_worktree"],
+			fields: ["head_sha", "git_common_dir", "worktree_root", "is_worktree"],
 			format: "json",
 			label: "Branch",
 			limit: 2,
@@ -255,31 +304,31 @@ async function readIndexedBranch(
 		return index >= 0 ? row[index] : undefined;
 	};
 	const headSha = value("head_sha");
-	const canonicalRoot = value("canonical_root");
+	const gitCommonDir = value("git_common_dir");
 	const worktreeRoot = value("worktree_root");
 	const isWorktree = value("is_worktree");
 	if (
 		typeof headSha !== "string" ||
-		typeof canonicalRoot !== "string" ||
+		typeof gitCommonDir !== "string" ||
 		typeof worktreeRoot !== "string" ||
 		typeof isWorktree !== "boolean"
 	) {
 		throw invalidResponse("indexed Branch metadata");
 	}
-	return { headSha, canonicalRoot, worktreeRoot, isWorktree };
+	return { headSha, gitCommonDir, worktreeRoot, isWorktree };
 }
 
 function assertMatchingGitContexts(current: GitContext, source: GitContext): void {
-	if (
-		normalizePath(current.commonDir) !== normalizePath(source.commonDir) ||
-		normalizePath(current.canonicalRoot) !== normalizePath(source.canonicalRoot)
-	) {
+	if (normalizePath(current.commonDir) !== normalizePath(source.commonDir)) {
 		throw new Error("The current worktree and canonical checkout no longer share a Git repository");
 	}
 	if (current.headSha !== source.headSha) {
 		throw new Error("The current worktree and canonical checkout are at different Git HEADs");
 	}
-	if (source.isWorktree || normalizePath(source.root) !== normalizePath(current.canonicalRoot)) {
+	if (
+		source.isWorktree ||
+		(current.canonicalRoot && normalizePath(source.root) !== normalizePath(current.canonicalRoot))
+	) {
 		throw new Error("The indexed source project is not the canonical checkout");
 	}
 }
@@ -289,9 +338,12 @@ function assertMatchingIndexedBranch(
 	source: GitContext,
 	branch: IndexedBranch,
 ): void {
+	const branchCommonDir = isAbsolute(branch.gitCommonDir)
+		? normalizePath(branch.gitCommonDir)
+		: normalizePath(resolve(branch.worktreeRoot, branch.gitCommonDir));
 	if (
 		branch.headSha !== current.headSha ||
-		normalizePath(branch.canonicalRoot) !== normalizePath(current.canonicalRoot) ||
+		branchCommonDir !== normalizePath(current.commonDir) ||
 		normalizePath(branch.worktreeRoot) !== normalizePath(source.root) ||
 		branch.isWorktree
 	) {
@@ -323,15 +375,21 @@ async function resolveGitContext(
 		throw new Error(`Unable to resolve Git worktree context from: ${cwd}`);
 	}
 	const [root, gitDir, commonDir, headSha] = lines as [string, string, string, string];
-	const canonicalRoot =
-		commonDir.endsWith("/.git") || commonDir.endsWith("\\.git") ? dirname(commonDir) : commonDir;
+	const normalizedRoot = normalizePath(root);
+	const normalizedGitDir = normalizePath(gitDir);
+	const normalizedCommonDir = normalizePath(commonDir);
+	const isWorktree = normalizedGitDir !== normalizedCommonDir;
+	const conventionalRoot =
+		commonDir.endsWith("/.git") || commonDir.endsWith("\\.git")
+			? normalizePath(resolve(commonDir, ".."))
+			: undefined;
 	return {
-		root: normalizePath(root),
-		gitDir: normalizePath(gitDir),
-		commonDir: normalizePath(commonDir),
-		canonicalRoot: normalizePath(canonicalRoot),
+		root: normalizedRoot,
+		gitDir: normalizedGitDir,
+		commonDir: normalizedCommonDir,
+		canonicalRoot: isWorktree ? conventionalRoot : normalizedRoot,
 		headSha,
-		isWorktree: normalizePath(gitDir) !== normalizePath(commonDir),
+		isWorktree,
 	};
 }
 
@@ -436,7 +494,12 @@ function normalizePath(path: string): string {
 export function currentRelativePath(resolution: ProjectResolution, sourcePath: string): string {
 	if (!isAbsolute(sourcePath)) throw new Error("Borrowed source path is not absolute");
 	const relativePath = relative(resolution.sourceRoot, sourcePath);
-	if (relativePath === "" || relativePath.startsWith("..") || isAbsolute(relativePath)) {
+	if (
+		relativePath === "" ||
+		relativePath === ".." ||
+		relativePath.startsWith(`..${sep}`) ||
+		isAbsolute(relativePath)
+	) {
 		throw new Error("Borrowed source path escapes the canonical project root");
 	}
 	return resolve(resolution.currentRoot, relativePath);

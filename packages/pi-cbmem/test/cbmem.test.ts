@@ -12,7 +12,12 @@ import {
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { afterAll, beforeAll, test } from "vitest";
-import cbmem, { type CbmemToolDetails, callCodebaseMemory, TOOL_NAMES } from "../src/cbmem.js";
+import cbmem, {
+	type CbmemToolDetails,
+	callCodebaseMemory,
+	readLineRange,
+	TOOL_NAMES,
+} from "../src/cbmem.js";
 import type { ProjectResolution, ProjectResolutionService } from "../src/worktree-project.js";
 
 const packageDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -44,6 +49,9 @@ process.stdin.on("end", () => {
       return;
     case "largeMalformed":
       process.stdout.write("not-json".repeat(10000));
+      return;
+    case "nearLimit":
+      process.stdout.write(JSON.stringify({ payload: "x".repeat(51000) }));
       return;
     case "manyLines":
       process.stdout.write(JSON.stringify({ rows: Array.from({ length: 2500 }, (_, i) => i) }, null, 2));
@@ -203,7 +211,7 @@ test("borrowed snippets are read from and point to the current worktree", async 
 	const sourcePath = path.join(sourceRoot, "example.ts");
 	const currentPath = path.join(currentRoot, "example.ts");
 	await writeFile(sourcePath, "first\nsource copy\nthird\n", "utf8");
-	await writeFile(currentPath, "first\ncurrent copy\nthird\n", "utf8");
+	await writeFile(currentPath, `first\ncurrent copy\n${"x".repeat(4 * 1024 * 1024)}`, "utf8");
 	const resolution: ProjectResolution = {
 		kind: "borrowed",
 		project: "source-project",
@@ -247,6 +255,34 @@ test("borrowed snippets are read from and point to the current worktree", async 
 		),
 		/escapes the canonical project root/u,
 	);
+});
+
+test("project resolution refuses to corrupt JSON when metadata exceeds output bounds", async () => {
+	const resolution: ProjectResolution = {
+		kind: "current",
+		project: "current-project",
+		currentRoot: fixtureDirectory,
+		sourceRoot: fixtureDirectory,
+		headSha: "a".repeat(40),
+	};
+	const tools = registerTools(fixtureBinary, resolutionService(resolution));
+	await assert.rejects(
+		executeTool(
+			tools,
+			"search_graph",
+			{ project: "@current", testMode: "nearLimit" },
+			toolContext(async () => true),
+		),
+		/project-resolved output exceeded.*refusing to return truncated structured data/u,
+	);
+});
+
+test("borrowed snippet range reads honor cancellation", async () => {
+	const path = await makeLargeSnippetFile("cancel-range-", "x".repeat(8 * 1024 * 1024));
+	const controller = new AbortController();
+	const pending = readLineRange(path, 2, 2, controller.signal);
+	controller.abort();
+	await assert.rejects(pending, (error: Error) => error.name === "AbortError");
 });
 
 test("borrowed results are discarded when post-call revalidation fails", async () => {
@@ -601,6 +637,13 @@ function resultText(result: { content: readonly unknown[] }): string {
 function countLines(text: string): number {
 	if (!text) return 0;
 	return text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
+}
+
+async function makeLargeSnippetFile(prefix: string, content: string): Promise<string> {
+	const directory = await mkdtemp(path.join(fixtureDirectory, prefix));
+	const file = path.join(directory, "example.ts");
+	await writeFile(file, content, "utf8");
+	return file;
 }
 
 async function waitForProcessExit(pid: number): Promise<void> {

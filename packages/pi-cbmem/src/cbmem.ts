@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { lstat, readFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { lstat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -277,26 +278,23 @@ async function rewriteBorrowedSnippet(
 	) {
 		throw new Error("Codebase Memory returned incomplete borrowed code snippet metadata");
 	}
+	const start = record.start_line;
+	const end = record.end_line;
+	if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 1 || end < start) {
+		throw new Error("Codebase Memory returned an invalid borrowed code snippet range");
+	}
+	if (end - start + 1 > DEFAULT_MAX_LINES) {
+		throw new Error("The borrowed code snippet range exceeds Pi's line limit");
+	}
 	const currentPath = currentRelativePath(resolution, record.file_path);
 	const file = await lstat(currentPath);
 	signal?.throwIfAborted();
 	if (!file.isFile() || file.isSymbolicLink()) {
 		throw new Error("Borrowed code snippet does not resolve to a regular worktree file");
 	}
-	const source = await readFile(currentPath, "utf8");
-	signal?.throwIfAborted();
-	const lines = source.split(/(?<=\n)/u);
-	const start = record.start_line;
-	const end = record.end_line;
-	if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 1 || end < start) {
-		throw new Error("Codebase Memory returned an invalid borrowed code snippet range");
-	}
-	const selected = lines.slice(start - 1, end);
-	if (selected.length !== end - start + 1) {
-		throw new Error("The borrowed code snippet range is outside the current worktree file");
-	}
 	record.file_path = currentPath;
-	record.source = selected.join("");
+	record.source = await readLineRange(currentPath, start, end, signal);
+	signal?.throwIfAborted();
 	return replaceTextResult(result, JSON.stringify(record));
 }
 
@@ -336,36 +334,76 @@ function replaceTextResult(
 	result: AgentToolResult<CbmemToolDetails>,
 	text: string,
 ): AgentToolResult<CbmemToolDetails> {
-	const bounded = boundStandaloneOutput(text);
+	const totalBytes = Buffer.byteLength(text, "utf8");
+	const totalLines = countLines(text);
+	if (totalBytes > DEFAULT_MAX_BYTES || totalLines > DEFAULT_MAX_LINES) {
+		throw new Error(
+			`pi-cbmem project-resolved output exceeded ${DEFAULT_MAX_LINES} lines or ${formatSize(DEFAULT_MAX_BYTES)} (${totalLines} lines, ${formatSize(totalBytes)}); refusing to return truncated structured data`,
+		);
+	}
 	return {
 		...result,
-		content: [{ type: "text", text: bounded.text }],
+		content: [{ type: "text", text }],
 		details: {
 			...result.details,
-			truncated: result.details.truncated || bounded.truncated,
-			totalBytes: Buffer.byteLength(text, "utf8"),
-			totalLines: countLines(text),
+			totalBytes,
+			totalLines,
 		},
 	};
 }
 
-function boundStandaloneOutput(text: string): { text: string; truncated: boolean } {
-	const totalBytes = Buffer.byteLength(text, "utf8");
-	const totalLines = countLines(text);
-	if (totalBytes <= DEFAULT_MAX_BYTES && totalLines <= DEFAULT_MAX_LINES) {
-		return { text, truncated: false };
+export async function readLineRange(
+	path: string,
+	startLine: number,
+	endLine: number,
+	signal: AbortSignal | undefined,
+): Promise<string> {
+	signal?.throwIfAborted();
+	const stream = createReadStream(path, {
+		encoding: "utf8",
+		highWaterMark: 64 * 1024,
+		signal,
+	});
+	let currentLine = 1;
+	let completedLine = 0;
+	let currentLineHasContent = false;
+	let selected = "";
+	let selectedBytes = 0;
+	try {
+		for await (const value of stream) {
+			signal?.throwIfAborted();
+			const chunk = String(value);
+			let offset = 0;
+			while (offset < chunk.length) {
+				const newline = chunk.indexOf("\n", offset);
+				const end = newline >= 0 ? newline + 1 : chunk.length;
+				const segment = chunk.slice(offset, end);
+				currentLineHasContent ||= segment.length > 0;
+				if (currentLine >= startLine && currentLine <= endLine) {
+					selectedBytes += Buffer.byteLength(segment, "utf8");
+					if (selectedBytes > DEFAULT_MAX_BYTES) {
+						throw new Error("The borrowed code snippet exceeds Pi's byte limit");
+					}
+					selected += segment;
+				}
+				if (newline >= 0) {
+					completedLine = currentLine;
+					if (currentLine === endLine) return selected;
+					currentLine += 1;
+					currentLineHasContent = false;
+				}
+				offset = end;
+			}
+		}
+		signal?.throwIfAborted();
+		if (currentLineHasContent) completedLine = currentLine;
+		if (completedLine < endLine) {
+			throw new Error("The borrowed code snippet range is outside the current worktree file");
+		}
+		return selected;
+	} finally {
+		stream.destroy();
 	}
-	const notice = `[Output truncated after pi-cbmem project resolution: ${totalLines} lines (${formatSize(totalBytes)}).]`;
-	const separator = "\n";
-	const body = takeUtf8Prefix(
-		text,
-		Math.max(0, DEFAULT_MAX_BYTES - Buffer.byteLength(notice + separator, "utf8")),
-		Math.max(0, DEFAULT_MAX_LINES - 1),
-	);
-	return {
-		text: body ? `${body}${body.endsWith("\n") ? "" : separator}${notice}` : notice,
-		truncated: true,
-	};
 }
 
 async function confirmDestructiveCall(
