@@ -474,6 +474,27 @@ test("bounds the stored query across typed and pasted input", () => {
 	assert.equal(controller.input.getValue(), `z${"x".repeat(4_095)}`);
 	assert.equal(controller.input.getValue().length, 4_096);
 
+	for (const suffix of ["🙂", "e\u0301"]) {
+		controller.close();
+		controller.activate(["short"]);
+		controller.handleInput("x".repeat(4_095));
+		controller.handleInput(suffix);
+		assert.equal(controller.input.getValue(), "x".repeat(4_095));
+
+		controller.close();
+		controller.activate(["short"]);
+		controller.handleInput(`\u001b[200~${"x".repeat(4_095)}${suffix}\u001b[201~`);
+		assert.equal(controller.input.getValue(), "x".repeat(4_095));
+	}
+
+	const exactGraphemeBoundary = `${"x".repeat(4_094)}🙂`;
+	controller.close();
+	controller.activate([exactGraphemeBoundary]);
+	controller.handleInput(exactGraphemeBoundary);
+	assert.equal(controller.input.getValue(), exactGraphemeBoundary);
+	assert.equal(controller.input.getValue().length, 4_096);
+	assert.equal(controller.count, 1);
+
 	controller.close();
 	controller.activate(["short"]);
 	controller.handleInput("x".repeat(100_000));
