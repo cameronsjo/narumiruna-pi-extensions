@@ -200,7 +200,7 @@ test("generated runtime is loadable by Pi's Jiti resource loader", async () => {
 		assert.ok(tool);
 		await tool.definition.execute(
 			"generated-todo",
-			{ items: [{ text: "Verify generated runtime", status: "in_progress" }] },
+			{ todos: [{ step: "Verify generated runtime", status: "in_progress" }] },
 			undefined,
 			undefined,
 			ctx,

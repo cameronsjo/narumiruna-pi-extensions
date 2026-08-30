@@ -11,14 +11,14 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import { test } from "vitest";
 import todoWidgetExtension, {
 	renderTodoWidget,
-	sanitizeTodoText,
+	sanitizeTodoStep,
 	TODO_CONTEXT_MESSAGE_TYPE,
 	TODO_CONTEXT_VERSION,
 	TODO_DETAILS_VERSION,
 	TODO_RESTORED_BOUNDARY_ENTRY_TYPE,
 	TOOL_NAME,
+	type Todo,
 	type TodoDetails,
-	type TodoItem,
 	WIDGET_KEY,
 } from "../src/todo-widget.js";
 
@@ -31,9 +31,10 @@ interface RegisteredTool {
 	description: string;
 	promptSnippet: string;
 	promptGuidelines: string[];
+	parameters: unknown;
 	execute(
 		toolCallId: string,
-		params: { items: TodoItem[] },
+		params: { todos: Todo[] },
 		signal: AbortSignal | undefined,
 		onUpdate: undefined,
 		ctx: ExtensionContext,
@@ -126,7 +127,7 @@ function identityTheme() {
 }
 
 function todoToolResultMessage(
-	details: TodoDetails,
+	details: unknown,
 	toolName = TOOL_NAME,
 	isError = false,
 ): ContextEvent["messages"][number] {
@@ -142,8 +143,9 @@ function todoToolResultMessage(
 }
 
 function todoToolCallMessage(
-	items: unknown,
+	todos: unknown,
 	toolName = TOOL_NAME,
+	argumentName: "todos" | "items" = "todos",
 ): ContextEvent["messages"][number] {
 	return {
 		role: "assistant",
@@ -152,7 +154,7 @@ function todoToolCallMessage(
 				type: "toolCall",
 				id: "todo-call",
 				name: toolName,
-				arguments: { items },
+				arguments: { [argumentName]: todos },
 			},
 		],
 		api: "openai-responses",
@@ -172,7 +174,7 @@ function todoToolCallMessage(
 }
 
 function toolResultEntry(
-	details: TodoDetails,
+	details: unknown,
 	toolName = TOOL_NAME,
 	id = "tool-result",
 	parentId: string | null = null,
@@ -205,35 +207,60 @@ function customEntry(
 async function setTodos(
 	harness: ReturnType<typeof createHarness>,
 	ctx: ExtensionContext,
-	items: TodoItem[],
+	todos: Todo[],
 ) {
-	return harness.tool.execute("todo-call", { items }, undefined, undefined, ctx);
+	return harness.tool.execute("todo-call", { todos }, undefined, undefined, ctx);
 }
 
-test("registers concise guidance for using and maintaining the todo list", () => {
+test("registers the todos-by-step schema and concise maintenance guidance", () => {
 	const { tool } = createHarness();
 
 	assert.equal(tool.name, "update_todo_list");
 	assert.equal(tool.label, "Todo List");
-	assert.match(tool.description, /whenever actual task state changes/u);
+	assert.match(tool.description, /whenever actual step state changes/u);
 	assert.match(tool.promptSnippet, /multi-step work progresses/u);
 	assert.deepEqual(tool.promptGuidelines, [
 		"Use update_todo_list to track work with multiple meaningful steps; skip it for simple, single-step tasks.",
-		"Use update_todo_list to keep the list aligned with actual work: mark a task in_progress before starting it, mark it completed as soon as it finishes, and revise the list before continuing when the plan changes.",
-		"Before a progress report or final response, call update_todo_list to reconcile every item with actual work; do not report completion while the list is stale.",
-		"On every update_todo_list call, send the complete current list, keep at most one task in_progress, and send an empty list when no tracked work remains.",
+		"Use update_todo_list to keep the list aligned with actual work: mark a step in_progress before starting it, mark it completed as soon as it finishes, and revise the list before continuing when the plan changes.",
+		"Before a progress report or final response, call update_todo_list to reconcile every todo with actual work; do not report completion while the list is stale.",
+		"On every update_todo_list call, send the complete current todos array, keep at most one todo in_progress, and send an empty array when no tracked work remains.",
 	]);
+
+	const parameters = tool.parameters as {
+		required?: string[];
+		properties?: Record<string, unknown>;
+	};
+	assert.deepEqual(parameters.required, ["todos"]);
+	assert.deepEqual(Object.keys(parameters.properties ?? {}), ["todos"]);
+	const todosSchema = parameters.properties?.todos as {
+		maxItems?: number;
+		items?: { required?: string[]; properties?: Record<string, unknown> };
+	};
+	assert.equal(todosSchema.maxItems, 50);
+	assert.deepEqual(todosSchema.items?.required, ["step", "status"]);
+	assert.deepEqual(Object.keys(todosSchema.items?.properties ?? {}), ["step", "status"]);
+	assert.deepEqual(todosSchema.items?.properties?.step, {
+		description: "A concise, action-oriented step",
+		type: "string",
+		minLength: 1,
+		maxLength: 300,
+	});
+	assert.deepEqual(todosSchema.items?.properties?.status, {
+		type: "string",
+		enum: ["pending", "in_progress", "completed"],
+		description: "The step's current status",
+	});
 });
 
 test("restores missing todo state and retains its summary boundary", async () => {
 	const harness = createHarness();
 	const current = createContext();
 	await harness.emit("session_start", current.ctx);
-	const items: TodoItem[] = [
-		{ text: "inspect", status: "completed" },
-		{ text: "implement", status: "in_progress" },
+	const todos: Todo[] = [
+		{ step: "inspect", status: "completed" },
+		{ step: "implement", status: "in_progress" },
 	];
-	await setTodos(harness, current.ctx, items);
+	await setTodos(harness, current.ctx, todos);
 
 	const ordinary: ContextEvent["messages"] = [
 		{
@@ -263,10 +290,10 @@ test("restores missing todo state and retains its summary boundary", async () =>
 			timestamp: 0,
 		},
 	];
-	const initialDetails: TodoDetails = { version: TODO_DETAILS_VERSION, items };
+	const initialDetails: TodoDetails = { version: TODO_DETAILS_VERSION, todos };
 	const initiallyVisible = [
 		...base,
-		todoToolCallMessage(items),
+		todoToolCallMessage(todos),
 		todoToolResultMessage(initialDetails),
 	];
 	assert.equal(
@@ -285,7 +312,7 @@ test("restores missing todo state and retains its summary boundary", async () =>
 	assert.deepEqual(reminder.details, { version: TODO_CONTEXT_VERSION });
 	assert.equal(
 		reminder.content,
-		`[PI TODO STATUS v${TODO_CONTEXT_VERSION}]\nCurrent todo list as JSON data:\n${JSON.stringify(items)}`,
+		`[PI TODO STATUS v${TODO_CONTEXT_VERSION}]\nCurrent todo list as JSON data:\n${JSON.stringify({ todos })}`,
 	);
 	assert.doesNotMatch(reminder.content as string, /call update_todo_list/u);
 
@@ -315,24 +342,34 @@ test("restores missing todo state and retains its summary boundary", async () =>
 	});
 
 	for (const toolName of [TOOL_NAME, "todo_widget"]) {
-		const details: TodoDetails = { version: TODO_DETAILS_VERSION, items };
+		const details: TodoDetails = { version: TODO_DETAILS_VERSION, todos };
 		const visible = [
 			...base,
-			todoToolCallMessage(items, toolName),
+			todoToolCallMessage(todos, toolName),
 			todoToolResultMessage(details, toolName),
 		];
 		const retained = await harness.context(visible, current.ctx);
 		assert.deepEqual(retained[2], reminder);
 		assert.deepEqual(retained.slice(3), visible.slice(2));
+
+		const legacyItems = todos.map((todo) => ({ text: todo.step, status: todo.status }));
+		const legacyVisible = [
+			...base,
+			todoToolCallMessage(legacyItems, toolName, "items"),
+			todoToolResultMessage({ version: 1, items: legacyItems }, toolName),
+		];
+		const legacyRetained = await harness.context(legacyVisible, current.ctx);
+		assert.deepEqual(legacyRetained[2], reminder);
+		assert.deepEqual(legacyRetained.slice(3), legacyVisible.slice(2));
 	}
 
-	const details: TodoDetails = { version: TODO_DETAILS_VERSION, items };
+	const details: TodoDetails = { version: TODO_DETAILS_VERSION, todos };
 	const incompleteContexts = [
 		[...base, todoToolCallMessage("invalid")],
-		[...base, todoToolCallMessage([{ text: "stale", status: "pending" }])],
-		[...base, todoToolCallMessage(items)],
+		[...base, todoToolCallMessage([{ step: "stale", status: "pending" }])],
+		[...base, todoToolCallMessage(todos)],
 		[...base, todoToolResultMessage(details)],
-		[...base, todoToolCallMessage(items), todoToolResultMessage(details, TOOL_NAME, true)],
+		[...base, todoToolCallMessage(todos), todoToolResultMessage(details, TOOL_NAME, true)],
 	];
 	for (const incomplete of incompleteContexts) {
 		const fallback = await harness.context(incomplete, current.ctx);
@@ -346,15 +383,15 @@ test("restores missing todo state and retains its summary boundary", async () =>
 		assert.equal(fallbackReminder.content, reminder.content);
 	}
 
-	const replacementItems: TodoItem[] = [{ text: "implement", status: "completed" }];
-	await setTodos(harness, current.ctx, replacementItems);
+	const replacementTodos: Todo[] = [{ step: "implement", status: "completed" }];
+	await setTodos(harness, current.ctx, replacementTodos);
 	const replacementDetails: TodoDetails = {
 		version: TODO_DETAILS_VERSION,
-		items: replacementItems,
+		todos: replacementTodos,
 	};
 	const replacement = [
 		...transformed,
-		todoToolCallMessage(replacementItems),
+		todoToolCallMessage(replacementTodos),
 		todoToolResultMessage(replacementDetails),
 	];
 	assert.equal(
@@ -383,8 +420,8 @@ test("restores missing todo state and retains its summary boundary", async () =>
 });
 
 test("restored todo boundaries survive reload and stay branch-local", async () => {
-	const initialItems: TodoItem[] = [{ text: "before compaction", status: "in_progress" }];
-	const initialDetails: TodoDetails = { version: TODO_DETAILS_VERSION, items: initialItems };
+	const initialTodos: Todo[] = [{ step: "before compaction", status: "in_progress" }];
+	const initialDetails: TodoDetails = { version: TODO_DETAILS_VERSION, todos: initialTodos };
 	const branch: SessionEntry[] = [
 		toolResultEntry(initialDetails, TOOL_NAME, "initial", null),
 		{
@@ -419,7 +456,7 @@ test("restored todo boundaries survive reload and stay branch-local", async () =
 	assert.equal(persisted?.customType, TODO_RESTORED_BOUNDARY_ENTRY_TYPE);
 	branch.push(customEntry(persisted?.customType ?? "", persisted?.data, "boundary", "compaction"));
 
-	const cleared: TodoDetails = { version: TODO_DETAILS_VERSION, items: [] };
+	const cleared: TodoDetails = { version: TODO_DETAILS_VERSION, todos: [] };
 	const clearCall = todoToolCallMessage([]);
 	const clearResult = todoToolResultMessage(cleared);
 	branch.push(
@@ -479,13 +516,13 @@ test("restored todo boundaries survive reload and stay branch-local", async () =
 	assert.equal(await reloadedHarness.context(sibling, current.ctx), sibling);
 });
 
-test("renders completed, current, and pending tasks with themed semantic symbols", () => {
+test("renders completed, current, and pending todos with themed semantic symbols", () => {
 	const { calls, theme } = identityTheme();
 	const lines = renderTodoWidget(
 		[
-			{ text: "done", status: "completed" },
-			{ text: "working", status: "in_progress" },
-			{ text: "later", status: "pending" },
+			{ step: "done", status: "completed" },
+			{ step: "working", status: "in_progress" },
+			{ step: "later", status: "pending" },
 		],
 		theme,
 		80,
@@ -506,21 +543,21 @@ test("renders completed, current, and pending tasks with themed semantic symbols
 	assert.ok(calls.some(([kind, role]) => kind === "style" && role === "strikethrough"));
 });
 
-test("wraps task text with hanging indentation at narrow widths", () => {
+test("wraps todo steps with hanging indentation at narrow widths", () => {
 	const { theme } = identityTheme();
 	const wrappedWords = renderTodoWidget(
-		[{ text: "alpha beta gamma", status: "in_progress" }],
+		[{ step: "alpha beta gamma", status: "in_progress" }],
 		theme,
 		10,
 	);
 	assert.deepEqual(wrappedWords.slice(2), ["▶ alpha", "  beta", "  gamma"]);
 
-	const wrappedCjk = renderTodoWidget([{ text: "界界界", status: "pending" }], theme, 6);
+	const wrappedCjk = renderTodoWidget([{ step: "界界界", status: "pending" }], theme, 6);
 	assert.deepEqual(wrappedCjk.slice(2), ["○ 界界", "  界"]);
 
 	for (const width of [0, 1, 2]) {
 		const lines = renderTodoWidget(
-			[{ text: "hidden until enough room", status: "completed" }],
+			[{ step: "hidden until enough room", status: "completed" }],
 			theme,
 			width,
 		);
@@ -530,10 +567,10 @@ test("wraps task text with hanging indentation at narrow widths", () => {
 
 test("sanitizes terminal and bidi controls and bounds every rendered line", () => {
 	const hostile = "safe\u001b]8;;https://evil\u0007link\u001b]8;;\u0007\n界界\u202e";
-	assert.equal(sanitizeTodoText(hostile), "safelink 界界");
+	assert.equal(sanitizeTodoStep(hostile), "safelink 界界");
 
 	const { theme } = identityTheme();
-	const lines = renderTodoWidget([{ text: hostile, status: "in_progress" }], theme, 6);
+	const lines = renderTodoWidget([{ step: hostile, status: "in_progress" }], theme, 6);
 	for (const line of lines) assert.ok(visibleWidth(line) <= 6);
 	const unsafeSequences = [
 		`${String.fromCharCode(0x1b)}]`,
@@ -554,22 +591,22 @@ test("tool replaces the complete list, updates the widget, clears it, and reject
 	const cancelled = new AbortController();
 	cancelled.abort();
 	await assert.rejects(
-		harness.tool.execute("todo-call", { items: [] }, cancelled.signal, undefined, current.ctx),
+		harness.tool.execute("todo-call", { todos: [] }, cancelled.signal, undefined, current.ctx),
 		/aborted/iu,
 	);
 
 	const result = await setTodos(harness, current.ctx, [
-		{ text: "task 1", status: "completed" },
-		{ text: "task 2", status: "in_progress" },
-		{ text: "task 3", status: "pending" },
+		{ step: "task 1", status: "completed" },
+		{ step: "task 2", status: "in_progress" },
+		{ step: "task 3", status: "pending" },
 	]);
 	assert.equal(result.content[0]?.text, "Todo list updated: 1 of 3 complete; 1 in progress.");
 	assert.deepEqual(result.details, {
 		version: TODO_DETAILS_VERSION,
-		items: [
-			{ text: "task 1", status: "completed" },
-			{ text: "task 2", status: "in_progress" },
-			{ text: "task 3", status: "pending" },
+		todos: [
+			{ step: "task 1", status: "completed" },
+			{ step: "task 2", status: "in_progress" },
+			{ step: "task 3", status: "pending" },
 		],
 	});
 
@@ -588,14 +625,14 @@ test("tool replaces the complete list, updates the widget, clears it, and reject
 
 	await assert.rejects(
 		setTodos(harness, current.ctx, [
-			{ text: "one", status: "in_progress" },
-			{ text: "two", status: "in_progress" },
+			{ step: "one", status: "in_progress" },
+			{ step: "two", status: "in_progress" },
 		]),
 		/at most one in_progress/u,
 	);
 	await assert.rejects(
-		setTodos(harness, current.ctx, [{ text: " \n ", status: "pending" }]),
-		/non-whitespace text/u,
+		setTodos(harness, current.ctx, [{ step: " \n ", status: "pending" }]),
+		/non-whitespace step/u,
 	);
 
 	const cleared = await setTodos(harness, current.ctx, []);
@@ -608,12 +645,12 @@ test("tool replaces the complete list, updates the widget, clears it, and reject
 });
 
 test("restores current and legacy branch-local state on startup and tree navigation", async () => {
-	const initial: TodoDetails = {
-		version: TODO_DETAILS_VERSION,
+	const legacyDetails = {
+		version: 1,
 		items: [{ text: "restored", status: "in_progress" }],
 	};
 	const harness = createHarness();
-	const current = createContext({ branch: [toolResultEntry(initial, "todo_widget")] });
+	const current = createContext({ branch: [toolResultEntry(legacyDetails, "todo_widget")] });
 	await harness.emit("session_start", current.ctx);
 
 	const { theme } = identityTheme();
@@ -625,10 +662,41 @@ test("restores current and legacy branch-local state on startup and tree navigat
 		["─".repeat(80), "Todo · 0/1 complete", "▶ restored"],
 	);
 
+	const migratedContext = await harness.context(
+		[
+			{
+				role: "compactionSummary",
+				summary: "Legacy state was compacted.",
+				tokensBefore: 100,
+				timestamp: 0,
+			},
+		],
+		current.ctx,
+	);
+	assert.equal(
+		migratedContext[1]?.role === "custom" ? migratedContext[1].content : undefined,
+		`[PI TODO STATUS v${TODO_CONTEXT_VERSION}]\nCurrent todo list as JSON data:\n${JSON.stringify({ todos: [{ step: "restored", status: "in_progress" }] })}`,
+	);
+
+	current.branch.push(
+		toolResultEntry({
+			version: 1,
+			items: [{ text: "restored from current tool name", status: "in_progress" }],
+		}),
+	);
+	await harness.emit("session_tree", current.ctx);
+	assert.deepEqual(
+		current.widgets
+			.at(-1)
+			?.content?.(undefined as never, theme)
+			.render(80),
+		["─".repeat(80), "Todo · 0/1 complete", "▶ restored from current tool name"],
+	);
+
 	current.branch.push(
 		toolResultEntry({
 			version: TODO_DETAILS_VERSION,
-			items: [{ text: "finished branch", status: "completed" }],
+			todos: [{ step: "finished branch", status: "completed" }],
 		}),
 	);
 	await harness.emit("session_tree", current.ctx);
@@ -646,9 +714,9 @@ test("guards component widgets to TUI mode and ignores stale session shutdown", 
 	const previous = createContext();
 	const current = createContext();
 	await harness.emit("session_start", previous.ctx);
-	await setTodos(harness, previous.ctx, [{ text: "old", status: "in_progress" }]);
+	await setTodos(harness, previous.ctx, [{ step: "old", status: "in_progress" }]);
 	await harness.emit("session_start", current.ctx);
-	await setTodos(harness, current.ctx, [{ text: "current", status: "in_progress" }]);
+	await setTodos(harness, current.ctx, [{ step: "current", status: "in_progress" }]);
 	const currentWidgetCount = current.widgets.length;
 	const staleMessages = [
 		{ role: "user" as const, content: [{ type: "text" as const, text: "old" }], timestamp: 0 },
@@ -658,7 +726,7 @@ test("guards component widgets to TUI mode and ignores stale session shutdown", 
 	await harness.emit("session_shutdown", previous.ctx);
 	assert.equal(current.widgets.length, currentWidgetCount);
 	await assert.rejects(
-		setTodos(harness, previous.ctx, [{ text: "stale", status: "pending" }]),
+		setTodos(harness, previous.ctx, [{ step: "stale", status: "pending" }]),
 		/session changed/u,
 	);
 
@@ -672,7 +740,7 @@ test("guards component widgets to TUI mode and ignores stale session shutdown", 
 	const rpcHarness = createHarness();
 	const rpc = createContext({ mode: "rpc" });
 	await rpcHarness.emit("session_start", rpc.ctx);
-	const result = await setTodos(rpcHarness, rpc.ctx, [{ text: "headless", status: "in_progress" }]);
-	assert.equal(result.details.items[0]?.text, "headless");
+	const result = await setTodos(rpcHarness, rpc.ctx, [{ step: "headless", status: "in_progress" }]);
+	assert.equal(result.details.todos[0]?.step, "headless");
 	assert.equal(rpc.widgets.length, 0);
 });

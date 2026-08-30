@@ -11,7 +11,7 @@ The list follows the active session branch and disappears when no tracked work r
 ## ✨ Features
 
 - Registers one `update_todo_list` tool for meaningful multi-step work.
-- Keeps task text concise and action-oriented, with at most one task in progress.
+- Keeps todo steps concise and action-oriented, with at most one todo in progress.
 - Shows a compact themed task list and completion count above the editor in TUI mode.
 - Restores the latest valid list when Pi starts a session or navigates between branches.
 - Restores the exact current list to model context only when compaction removes its latest visible successful tool update.
@@ -47,9 +47,9 @@ Pi extensions run with the user's permissions, so install only trusted code.
 
 Ask Pi to perform work with multiple meaningful steps.
 
-The model can use `update_todo_list` to create a concise list, mark one task `in_progress`, and revise the plan as work changes.
+The model can use `update_todo_list` to create a concise list, mark one todo `in_progress`, and revise the plan as work changes.
 
-Each update replaces the complete list, and an empty list clears it.
+Each update replaces the complete `todos` array, and an empty array clears it.
 
 Tool guidance tells the model to update changed statuses promptly and reconcile the list before progress reports or the final response.
 
@@ -59,18 +59,22 @@ Tool guidance tells the model to update changed statuses promptly and reconcile 
 
 Replaces the complete todo list for the active session.
 
-Each item has this shape:
+The tool accepts this shape:
 
 ```json
 {
-  "text": "Run the focused tests",
-  "status": "in_progress"
+  "todos": [
+    {
+      "step": "Run the focused tests",
+      "status": "in_progress"
+    }
+  ]
 }
 ```
 
 Accepted statuses are `pending`, `in_progress`, and `completed`.
 
-A list may contain up to 50 items, each item may contain up to 300 characters, and at most one item may be `in_progress`.
+The `todos` array may contain up to 50 entries, each `step` may contain up to 300 characters, and at most one todo may be `in_progress`.
 
 ### Session and compaction behavior
 
@@ -78,7 +82,9 @@ Each successful tool result stores a versioned snapshot on the active session br
 
 Session startup and branch navigation reconstruct the latest valid list from those results.
 
-Reconstruction also accepts valid results stored under the former `todo_widget` name, but new calls use only `update_todo_list`.
+New results store version 2 `{ todos: [{ step, status }] }` details.
+
+Reconstruction also migrates valid version 1 `{ items: [{ text, status }] }` details stored under `update_todo_list` or the former `todo_widget` name, but new calls use only the version 2 schema.
 
 During ordinary turns, the persisted assistant tool call and successful result keep the complete current list visible to the model without rewriting prompt history.
 
@@ -106,7 +112,7 @@ In RPC, print, and JSON modes, the tool still returns structured details but doe
 
 The extension does not read or write files, start processes, access credentials, or make network requests.
 
-Pi stores task text in normal session tool results, so it follows the user's session persistence choices.
+Pi stores todo steps in normal session tool results, so they follow the user's session persistence choices.
 
 Terminal escape sequences, control characters, and bidirectional display controls are removed at the rendering boundary without changing the stored tool payload.
 
