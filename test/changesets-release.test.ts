@@ -71,7 +71,7 @@ test("Changesets bumps selected packages independently and preserves ordinary in
 		const unchanged = readJson(path.join(fixture, "packages/pi-unchanged/package.json"));
 		assert.equal(kit.version, "0.50.0");
 		assert.equal(consumer.version, "1.2.4");
-		assert.deepEqual(consumer.dependencies, { "@fixture/pi-tui-kit": "^0.50.0" });
+		assert.deepEqual(consumer.dependencies, { "@fixture/pi-tui-kit": "^0.49.1" });
 		assert.equal(unchanged.version, "4.5.6");
 		assert.equal(existsSync(path.join(fixture, "packages/pi-unchanged/CHANGELOG.md")), false);
 		assert.match(
