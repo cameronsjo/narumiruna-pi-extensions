@@ -14,6 +14,7 @@ import {
 } from "./providers/fireworks.js";
 import { normalizeGitHubCopilotUsagePayload } from "./providers/github-copilot.js";
 import { normalizeKimiCodingUsagePayload } from "./providers/kimi-coding.js";
+import { normalizeMoonshotBalancePayload } from "./providers/moonshot.js";
 import { normalizeOpenCodeZenPayload } from "./providers/opencode-zen.js";
 import { normalizeOpenRouterKeyPayload } from "./providers/openrouter.js";
 import { normalizeXaiBillingPayload } from "./providers/xai.js";
@@ -25,6 +26,7 @@ import type {
 	FireworksBillingSummaryPayload,
 	GitHubCopilotUsagePayload,
 	KimiCodingUsagePayload,
+	MoonshotBalancePayload,
 	OpenCodeZenPayload,
 	OpenRouterKeyPayload,
 	PiModel,
@@ -46,6 +48,10 @@ const GITHUB_COPILOT_USAGE_URL = "https://api.github.com/copilot_internal/user";
 const OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key";
 const OPENCODE_GO_USAGE_URL = "https://opencode.ai/zen/go/v1/usage";
 const KIMI_CODING_USAGE_URL = "https://api.kimi.com/coding/v1/usages";
+const MOONSHOT_BALANCE_URLS = Object.freeze({
+	moonshotai: "https://api.moonshot.ai/v1/users/me/balance",
+	"moonshotai-cn": "https://api.moonshot.cn/v1/users/me/balance",
+});
 const XAI_USER_URL = "https://cli-chat-proxy.grok.com/v1/user?include=subscription";
 const XAI_BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
 const XAI_CLIENT_HEADERS = Object.freeze({
@@ -191,6 +197,22 @@ export const SUPPORTED_ADAPTERS: readonly UsageProviderAdapter[] = [
 				{ redirect: "error" },
 			);
 			return normalizeKimiCodingUsagePayload(payload as KimiCodingUsagePayload, Date.now());
+		},
+	},
+	{
+		id: "moonshotai",
+		displayName: "Moonshot AI",
+		semantics: { kind: "api-key", label: "Moonshot API account balance" },
+		async query(auth, signal, timeoutMs, guard) {
+			return queryMoonshotBalance("moonshotai", auth, signal, timeoutMs, guard);
+		},
+	},
+	{
+		id: "moonshotai-cn",
+		displayName: "Moonshot AI CN",
+		semantics: { kind: "api-key", label: "Moonshot API account balance" },
+		async query(auth, signal, timeoutMs, guard) {
+			return queryMoonshotBalance("moonshotai-cn", auth, signal, timeoutMs, guard);
 		},
 	},
 	{
@@ -778,6 +800,8 @@ function hasOfficialUrlOrigin(value: string, providerId: string): boolean {
 		if (providerId === "openrouter") return url.origin === "https://openrouter.ai";
 		if (providerId === "opencode-go") return url.origin === "https://opencode.ai";
 		if (providerId === "kimi-coding") return url.origin === "https://api.kimi.com";
+		if (providerId === "moonshotai") return url.origin === "https://api.moonshot.ai";
+		if (providerId === "moonshotai-cn") return url.origin === "https://api.moonshot.cn";
 		if (providerId === "xai") return url.origin === "https://api.x.ai";
 		if (providerId === "zai") return url.origin === "https://api.z.ai";
 		if (providerId === "zai-coding-cn") return url.origin === "https://open.bigmodel.cn";
@@ -811,6 +835,28 @@ function validatedXaiUserId(value: unknown): string {
 		throw new Error("xAI consumer identity returned an unsafe canonical user ID.");
 	}
 	return value;
+}
+
+async function queryMoonshotBalance(
+	providerId: "moonshotai" | "moonshotai-cn",
+	auth: ResolvedUsageAuth,
+	signal: AbortSignal,
+	timeoutMs: number,
+	guard: UsageRequestGuard | undefined,
+): Promise<UsageReport> {
+	if (!guard) throw new Error("Moonshot AI balance requires request-boundary revalidation.");
+	const startedAt = Date.now();
+	await guard();
+	const payload = (await fetchProviderJson(
+		MOONSHOT_BALANCE_URLS[providerId],
+		auth,
+		signal,
+		remainingTimeout(timeoutMs, startedAt, "fetching Moonshot AI balance"),
+		"Moonshot AI balance endpoint",
+		{ redirect: "error" },
+	)) as MoonshotBalancePayload;
+	await guard();
+	return normalizeMoonshotBalancePayload(providerId, payload, Date.now());
 }
 
 function remainingTimeout(

@@ -281,7 +281,13 @@ export default function usageExtension(
 				},
 			};
 		}
-		const requiresRequestBoundaryGuard = ["deepseek", "fireworks", "xai"].includes(adapter.id);
+		const requiresRequestBoundaryGuard = [
+			"deepseek",
+			"fireworks",
+			"moonshotai",
+			"moonshotai-cn",
+			"xai",
+		].includes(adapter.id);
 		const requestContextChanged = () =>
 			expectedSessionGeneration !== sessionGeneration ||
 			ctx.sessionManager.getSessionId() !== expectedSessionId ||

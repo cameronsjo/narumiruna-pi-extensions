@@ -16,7 +16,9 @@ export function formatUsageReport(report: UsageReport, displayState: UsageDispla
 			? "DeepSeek API Balance"
 			: report.providerId === "fireworks"
 				? "Fireworks API Spend"
-				: `${report.providerName} Usage`;
+				: report.providerId === "moonshotai" || report.providerId === "moonshotai-cn"
+					? `${report.providerName} Balance`
+					: `${report.providerName} Usage`;
 	const lines = [`${title} · ${stateLabel}`];
 	if (report.accountLabel) lines.push(`Account: ${report.accountLabel}`);
 	lines.push(`Semantics: ${report.semantics.label}`, "");
@@ -28,7 +30,9 @@ export function formatUsageReport(report: UsageReport, displayState: UsageDispla
 	else if (report.providerId === "openrouter") formatOpenRouterReport(lines, report);
 	else if (report.providerId === "opencode-go") formatOpenCodeZenReport(lines, report);
 	else if (report.providerId === "kimi-coding") formatKimiCodingReport(lines, report);
-	else if (report.providerId === "xai") formatXaiReport(lines, report);
+	else if (report.providerId === "moonshotai" || report.providerId === "moonshotai-cn") {
+		formatMoonshotReport(lines, report);
+	} else if (report.providerId === "xai") formatXaiReport(lines, report);
 	else if (report.providerId === "zai" || report.providerId === "zai-coding-cn") {
 		formatZaiReport(lines, report);
 	} else formatGenericReport(lines, report);
@@ -59,6 +63,9 @@ export function formatUsageStatusline(
 	}
 	if (report.providerId === "opencode-go") return formatOpenCodeZenStatusline(report);
 	if (report.providerId === "kimi-coding") return formatKimiCodingStatusline(report);
+	if (report.providerId === "moonshotai" || report.providerId === "moonshotai-cn") {
+		return formatMoonshotStatusline(report);
+	}
 	if (report.providerId === "zai" || report.providerId === "zai-coding-cn") {
 		return formatZaiStatusline(report);
 	}
@@ -284,6 +291,18 @@ function formatKimiCodingStatusline(report: UsageReport): string | undefined {
 		);
 	}
 	return parts.length > 1 ? parts.join(" ") : undefined;
+}
+
+function formatMoonshotReport(lines: string[], report: UsageReport): void {
+	for (const metric of report.metrics) {
+		lines.push(`${`${metric.label}:`.padEnd(VALUE_COLUMN)}${metric.currency} ${metric.value}`);
+	}
+}
+
+function formatMoonshotStatusline(report: UsageReport): string {
+	const available = report.metrics.find((metric) => metric.id === "available-balance");
+	if (!available) return "moonshot balance unavailable";
+	return `moonshot ${available.currency ?? ""} ${available.value}`.replace(/\s+/gu, " ");
 }
 
 function formatZaiStatusline(report: UsageReport): string | undefined {
