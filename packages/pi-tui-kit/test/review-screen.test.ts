@@ -964,7 +964,7 @@ test("review keeps local activation and omits unavailable active-search hints", 
 	assert.match(active, /ctrl\+c close/u);
 });
 
-test("review reserves standalone Space activation and closes immediately on Escape", () => {
+test("review gives a configured Space action priority over search", () => {
 	const remappedKeybindings: ReviewKeybindings = {
 		matches(data, binding) {
 			if (binding === "tui.select.confirm") return data === " ";
@@ -985,9 +985,33 @@ test("review reserves standalone Space activation and closes immediately on Esca
 		remappedKeybindings,
 	);
 	const inactive = plainRender(harness.component, 80);
-	assert.match(inactive, /space search/u);
+	assert.doesNotMatch(inactive, /space search/u);
 	harness.component.handleInput(" ");
-	assert.deepEqual(harness.events, []);
+	assert.deepEqual(harness.events, [{ kind: "activate", itemId: "raw-apply" }]);
+	assert.doesNotMatch(plainRender(harness.component, 40), /Find:/u);
+});
+
+test("review closes Space-activated search immediately on Escape", () => {
+	const escapeKeybindings: ReviewKeybindings = {
+		...reviewTestKeybindings,
+		matches(data, binding) {
+			if (binding === "tui.altScreen.searchClose") return data === "\u001b";
+			return reviewTestKeybindings.matches(data, binding);
+		},
+		getKeys(binding) {
+			if (binding === "tui.altScreen.searchClose") return ["escape"];
+			return reviewTestKeybindings.getKeys(binding);
+		},
+	};
+	const harness = reviewComponentHarness(
+		{ ...reviewScreen, enableSearch: true },
+		false,
+		8,
+		undefined,
+		escapeKeybindings,
+	);
+	assert.match(plainRender(harness.component, 80), /space search/u);
+	harness.component.handleInput(" ");
 	assert.match(plainRender(harness.component, 40), /Find:/u);
 	harness.component.handleInput("\u001b");
 	assert.doesNotMatch(plainRender(harness.component, 40), /Find:/u);

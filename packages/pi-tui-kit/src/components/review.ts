@@ -19,7 +19,11 @@ import {
 	RPC_DOCUMENT_LINE_WIDTH,
 	RPC_DOCUMENT_PAGE_SIZE,
 } from "./document-formatting.js";
-import { DOCUMENT_SEARCH_ACTIVATE_KEY, DocumentSearchController } from "./document-search.js";
+import {
+	DOCUMENT_SEARCH_ACTIVATE_KEY,
+	DocumentSearchController,
+	documentSearchActivationAvailable,
+} from "./document-search.js";
 import {
 	componentRows,
 	fitCompactHintSegments,
@@ -57,6 +61,10 @@ export function createReviewComponent<ScreenId extends string, ActionId extends 
 		Boolean(options.screen.enableSearch),
 	);
 	const search = options.screen.enableSearch ? new DocumentSearchController() : undefined;
+	const searchActivationAvailable = Boolean(
+		search &&
+			documentSearchActivationAvailable(options.keybindings, Boolean(options.screen.confirm)),
+	);
 
 	const moveTo = (offset: number) => {
 		scrollOffset = Math.max(0, Math.min(offset, lastMaximumScroll));
@@ -101,7 +109,7 @@ export function createReviewComponent<ScreenId extends string, ActionId extends 
 				screen: options.screen,
 				allLines: search?.highlight(allLines, options.theme) ?? allLines,
 				searchLine: searchActive ? search?.render(safeWidth) : undefined,
-				searchEnabled: Boolean(search),
+				searchEnabled: searchActivationAvailable,
 				searchActive,
 				width: safeWidth,
 				terminalRows,
@@ -183,16 +191,7 @@ export function createReviewComponent<ScreenId extends string, ActionId extends 
 				return;
 			}
 			if (matchesKey(data, Key.ctrl("c"))) options.onEvent({ kind: "close" });
-			else if (search && matchesKey(data, DOCUMENT_SEARCH_ACTIVATE_KEY)) {
-				search.activate(
-					lastLines,
-					lastSoftWrapAfter,
-					lastIgnoreLeadingWhitespace,
-					lastSearchSources,
-					scrollOffset,
-				);
-				options.tui.requestRender();
-			} else if (options.keybindings.matches(data, "tui.select.cancel")) {
+			else if (options.keybindings.matches(data, "tui.select.cancel")) {
 				options.onEvent({ kind: options.screen.hint ?? "back" });
 			} else if (options.keybindings.matches(data, "tui.select.up")) {
 				moveTo(scrollOffset - 1);
@@ -206,6 +205,19 @@ export function createReviewComponent<ScreenId extends string, ActionId extends 
 			else if (matchesKey(data, Key.end)) moveTo(lastMaximumScroll);
 			else if (options.screen.confirm && options.keybindings.matches(data, "tui.select.confirm")) {
 				options.onEvent({ kind: "activate", itemId: options.screen.confirm.id });
+			} else if (
+				search &&
+				searchActivationAvailable &&
+				matchesKey(data, DOCUMENT_SEARCH_ACTIVATE_KEY)
+			) {
+				search.activate(
+					lastLines,
+					lastSoftWrapAfter,
+					lastIgnoreLeadingWhitespace,
+					lastSearchSources,
+					scrollOffset,
+				);
+				options.tui.requestRender();
 			}
 		},
 		async waitForPending() {},

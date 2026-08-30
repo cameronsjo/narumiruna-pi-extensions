@@ -107,14 +107,10 @@ function hardWrapLine(line: string, width: number): string[] {
 	return lines;
 }
 
+type SequenceKind = "escape" | "csi" | "string";
+
 function skipEscSequence(value: string, start: number): number {
-	const introducer = value.charCodeAt(start + 1);
-	if (introducer === 0x5b) return skipCsi(value, start + 2);
-	if (introducer === 0x5d) return skipStringSequence(value, start + 2, true);
-	if (introducer === 0x50 || introducer === 0x58 || introducer === 0x5e || introducer === 0x5f) {
-		return skipStringSequence(value, start + 2, false);
-	}
-	return skipGenericEscSequence(value, start);
+	return skipSequence(value, "escape", start, false);
 }
 
 function skipGenericEscSequence(value: string, start: number): number {
@@ -129,31 +125,77 @@ function skipGenericEscSequence(value: string, start: number): number {
 }
 
 function skipCsi(value: string, start: number): number {
-	for (let index = start; index < value.length; index += 1) {
-		const code = value.charCodeAt(index);
-		const interrupted = skipIntroducedSequence(value, index);
-		if (interrupted !== undefined) return interrupted;
-		if (code >= 0x40 && code <= 0x7e) return index + 1;
-	}
-	return value.length;
+	return skipSequence(value, "csi", start, false);
 }
 
 function skipStringSequence(value: string, start: number, bellTerminates: boolean): number {
-	for (let index = start; index < value.length; index += 1) {
+	return skipSequence(value, "string", start, bellTerminates);
+}
+
+function skipSequence(
+	value: string,
+	initialKind: SequenceKind,
+	start: number,
+	initialBellTerminates: boolean,
+): number {
+	let kind = initialKind;
+	let index = start;
+	let bellTerminates = initialBellTerminates;
+	while (index < value.length) {
+		if (kind === "escape") {
+			const introducer = value.charCodeAt(index + 1);
+			if (introducer === 0x5b) {
+				kind = "csi";
+				index += 2;
+				continue;
+			}
+			if (introducer === 0x5d) {
+				kind = "string";
+				bellTerminates = true;
+				index += 2;
+				continue;
+			}
+			if (
+				introducer === 0x50 ||
+				introducer === 0x58 ||
+				introducer === 0x5e ||
+				introducer === 0x5f
+			) {
+				kind = "string";
+				bellTerminates = false;
+				index += 2;
+				continue;
+			}
+			return skipGenericEscSequence(value, index);
+		}
+
 		const code = value.charCodeAt(index);
-		if (bellTerminates && code === BEL) return index + 1;
-		if (code === ST) return index + 1;
-		if (code === ESC && value.charCodeAt(index + 1) === 0x5c) return index + 2;
-		const interrupted = skipIntroducedSequence(value, index);
-		if (interrupted !== undefined) return interrupted;
+		if (kind === "string") {
+			if (bellTerminates && code === BEL) return index + 1;
+			if (code === ST) return index + 1;
+			if (code === ESC && value.charCodeAt(index + 1) === 0x5c) return index + 2;
+		}
+		const interrupted = introducedSequenceState(value, index);
+		if (interrupted) {
+			kind = interrupted.kind;
+			index = interrupted.index;
+			bellTerminates = interrupted.bellTerminates;
+			continue;
+		}
+		if (kind === "csi" && code >= 0x40 && code <= 0x7e) return index + 1;
+		index += 1;
 	}
 	return value.length;
 }
 
-function skipIntroducedSequence(value: string, start: number) {
+function introducedSequenceState(value: string, start: number) {
 	const introducer = value.charCodeAt(start);
-	if (introducer === ESC) return skipEscSequence(value, start);
-	if (introducer === CSI) return skipCsi(value, start + 1);
+	if (introducer === ESC) {
+		return { kind: "escape" as const, index: start, bellTerminates: false };
+	}
+	if (introducer === CSI) {
+		return { kind: "csi" as const, index: start + 1, bellTerminates: false };
+	}
 	if (
 		introducer === OSC ||
 		introducer === DCS ||
@@ -161,7 +203,7 @@ function skipIntroducedSequence(value: string, start: number) {
 		introducer === PM ||
 		introducer === APC
 	) {
-		return skipStringSequence(value, start + 1, introducer === OSC);
+		return { kind: "string" as const, index: start + 1, bellTerminates: introducer === OSC };
 	}
 	return undefined;
 }

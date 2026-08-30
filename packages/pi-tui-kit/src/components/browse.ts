@@ -19,7 +19,11 @@ import {
 	RPC_DOCUMENT_LINE_WIDTH,
 	RPC_DOCUMENT_PAGE_SIZE,
 } from "./document-formatting.js";
-import { DOCUMENT_SEARCH_ACTIVATE_KEY, DocumentSearchController } from "./document-search.js";
+import {
+	DOCUMENT_SEARCH_ACTIVATE_KEY,
+	DocumentSearchController,
+	documentSearchActivationAvailable,
+} from "./document-search.js";
 import {
 	componentRows,
 	handleSearchInput,
@@ -48,6 +52,9 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 	const detailSearch = options.screen.enableDetailSearch
 		? new DocumentSearchController()
 		: undefined;
+	const detailSearchActivationAvailable = Boolean(
+		detailSearch && documentSearchActivationAvailable(options.keybindings, false),
+	);
 	const allItems: SearchableItem[] = options.screen.items.map((item) => ({
 		item,
 		label: safeBrowseText(item.label),
@@ -196,7 +203,7 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 									"dim",
 									detailHint(
 										options.keybindings,
-										Boolean(detailSearch),
+										detailSearchActivationAvailable,
 										detailSearch?.active ?? false,
 									),
 								),
@@ -307,18 +314,6 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 			}
 			if (matchesKey(data, Key.ctrl("c"))) {
 				options.onEvent({ kind: "close" });
-			} else if (
-				view === "detail" &&
-				detailSearch &&
-				matchesKey(data, DOCUMENT_SEARCH_ACTIVATE_KEY)
-			) {
-				detailSearch.activate(
-					lastDetailLines,
-					lastDetailSoftWrapAfter,
-					lastDetailIgnoreLeadingWhitespace,
-					lastDetailSearchSources,
-					detailScrollOffset,
-				);
 			} else if (options.keybindings.matches(data, "tui.select.cancel")) {
 				if (view === "detail") {
 					view = "list";
@@ -349,6 +344,19 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 					);
 				} else if (matchesKey(data, Key.home)) detailScrollOffset = 0;
 				else if (matchesKey(data, Key.end)) detailScrollOffset = detailMaximumScroll;
+				else if (
+					detailSearch &&
+					detailSearchActivationAvailable &&
+					matchesKey(data, DOCUMENT_SEARCH_ACTIVATE_KEY)
+				) {
+					detailSearch.activate(
+						lastDetailLines,
+						lastDetailSoftWrapAfter,
+						lastDetailIgnoreLeadingWhitespace,
+						lastDetailSearchSources,
+						detailScrollOffset,
+					);
+				}
 			} else if (options.keybindings.matches(data, "tui.select.up")) move(-1);
 			else if (options.keybindings.matches(data, "tui.select.down")) move(1);
 			else if (options.keybindings.matches(data, "tui.select.pageUp")) page(-1);

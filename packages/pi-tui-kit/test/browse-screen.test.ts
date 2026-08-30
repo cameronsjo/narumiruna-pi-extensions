@@ -469,7 +469,7 @@ test("browse detail search stays independent from list filtering", () => {
 	assert.deepEqual(harness.events, [{ kind: "close" }]);
 });
 
-test("browse detail reserves standalone Space activation and closes on Escape", () => {
+test("browse detail gives a configured Space action priority over search", () => {
 	const remappedKeybindings = {
 		matches(data: string, binding: string) {
 			if (binding === "tui.select.down") return data === " ";
@@ -498,7 +498,33 @@ test("browse detail reserves standalone Space activation and closes on Escape", 
 	harness.component.render(40);
 	harness.component.handleInput("y");
 	const inactive = plainRender(harness.component, 40).join("\n");
-	assert.match(inactive, /space search/u);
+	assert.doesNotMatch(inactive, /space search/u);
+	harness.component.handleInput(" ");
+	assert.doesNotMatch(plainRender(harness.component, 40).join("\n"), /Find:/u);
+});
+
+test("browse detail closes Space-activated search immediately on Escape", () => {
+	const escapeKeybindings = {
+		...keybindings,
+		matches(data: string, binding: string) {
+			if (binding === "tui.altScreen.searchClose") return data === "\u001b";
+			return keybindings.matches(data, binding);
+		},
+		getKeys(binding: string) {
+			if (binding === "tui.altScreen.searchClose") return ["escape"];
+			return keybindings.getKeys(binding);
+		},
+	};
+	const screen: MenuScreen<ScreenId, ActionId> = {
+		kind: "browse",
+		title: "Documents",
+		enableDetailSearch: true,
+		items: [{ id: "exact", label: "Exact", detailDocument: { content: "needle" } }],
+	};
+	const harness = componentHarness(screen, { rows: 10, keybindings: escapeKeybindings });
+	harness.component.render(40);
+	harness.component.handleInput("y");
+	assert.match(plainRender(harness.component, 40).join("\n"), /space search/u);
 	harness.component.handleInput(" ");
 	assert.match(plainRender(harness.component, 40).join("\n"), /Find:/u);
 	harness.component.handleInput("\u001b");

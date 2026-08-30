@@ -30,6 +30,8 @@ test("removes complete and unterminated terminal control sequences as units", ()
 		"beforeafter",
 	);
 	assert.equal(sanitizeTerminalText("before\u001bPdata\u0098private\u009cafter"), "beforeafter");
+	assert.equal(sanitizeTerminalText("\u001b[".repeat(5_000)), "");
+	assert.equal(sanitizeTerminalText("\u009b".repeat(5_000)), "");
 });
 
 test("parses generic ESC sequences without corrupting following Unicode", () => {

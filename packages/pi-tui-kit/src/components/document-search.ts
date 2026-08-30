@@ -10,6 +10,7 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import { sanitizeTerminalDocument } from "../terminal-document.js";
+import type { MenuBinding, MenuKeybindings } from "./contracts.js";
 import { handleSearchInput } from "./rendering.js";
 
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -18,7 +19,25 @@ const PASTE_END = "\u001b[201~";
 const MAX_HIGHLIGHTED_MATCHES = 1_000;
 const MAX_SEARCH_QUERY_LENGTH = 4_096;
 const MAX_PASTE_BUFFER_LENGTH = MAX_SEARCH_QUERY_LENGTH * 16;
+const DOCUMENT_SEARCH_CONFLICT_BINDINGS = [
+	"tui.select.up",
+	"tui.select.down",
+	"tui.select.pageUp",
+	"tui.select.pageDown",
+	"tui.select.cancel",
+	"tui.altScreen.search",
+] as const satisfies readonly MenuBinding[];
 export const DOCUMENT_SEARCH_ACTIVATE_KEY = Key.space;
+
+export function documentSearchActivationAvailable(
+	keybindings: MenuKeybindings,
+	includeConfirm: boolean,
+) {
+	return ![
+		...DOCUMENT_SEARCH_CONFLICT_BINDINGS,
+		...(includeConfirm ? (["tui.select.confirm"] as const) : []),
+	].some((binding) => keybindings.matches(" ", binding));
+}
 
 type SearchTheme = Pick<Theme, "bold" | "fg"> &
 	Partial<Pick<Theme, "bg" | "inverse" | "underline">>;
