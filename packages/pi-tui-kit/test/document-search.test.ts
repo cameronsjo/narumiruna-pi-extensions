@@ -345,6 +345,20 @@ test("sanitizes unbracketed and Kitty-encoded search input before rendering", ()
 	assert.equal(controller.count, 1);
 });
 
+test("clears search input history when closing", () => {
+	const controller = new DocumentSearchController();
+	controller.activate(["a b"]);
+	controller.handleInput("a");
+	controller.handleInput(" ");
+	controller.handleInput("b");
+	assert.equal(controller.count, 1);
+	controller.close();
+	controller.activate(["a b"]);
+	controller.handleInput("\u001f");
+	assert.equal(controller.input.getValue(), "");
+	assert.equal(controller.count, 0);
+});
+
 test("normalizes whitespace for matching without moving the input cursor", () => {
 	const controller = new DocumentSearchController();
 	controller.activate(["a xb"]);

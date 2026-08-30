@@ -27,6 +27,15 @@ const DOCUMENT_SEARCH_CONFLICT_BINDINGS = [
 	"tui.select.cancel",
 	"tui.altScreen.search",
 ] as const satisfies readonly MenuBinding[];
+const DOCUMENT_SEARCH_ACTIVE_ACTION_BINDINGS = [
+	"tui.select.up",
+	"tui.select.down",
+	"tui.select.pageUp",
+	"tui.select.pageDown",
+	"tui.altScreen.searchNext",
+	"tui.altScreen.searchPrevious",
+	"tui.altScreen.searchClose",
+] as const satisfies readonly MenuBinding[];
 export const DOCUMENT_SEARCH_ACTIVATE_KEY = Key.space;
 
 export function documentSearchActivationAvailable(
@@ -37,6 +46,12 @@ export function documentSearchActivationAvailable(
 		...DOCUMENT_SEARCH_CONFLICT_BINDINGS,
 		...(includeConfirm ? (["tui.select.confirm"] as const) : []),
 	].some((binding) => keybindings.matches(" ", binding));
+}
+
+export function documentSearchActionMatches(keybindings: MenuKeybindings, data: string) {
+	return DOCUMENT_SEARCH_ACTIVE_ACTION_BINDINGS.some((binding) =>
+		keybindings.matches(data, binding),
+	);
 }
 
 type SearchTheme = Pick<Theme, "bold" | "fg"> &
@@ -149,7 +164,7 @@ export interface DocumentSearchSegment {
 export type DocumentSearchSource = readonly DocumentSearchSegment[];
 
 export class DocumentSearchController implements Focusable {
-	readonly input = new Input();
+	private inputComponent = new Input();
 	active = false;
 	private parentFocused = false;
 	private lines: readonly string[] = [];
@@ -167,6 +182,10 @@ export class DocumentSearchController implements Focusable {
 	private pasteBuffer = "";
 	private pasteStartBuffer = "";
 	private anchorRow = 0;
+
+	get input() {
+		return this.inputComponent;
+	}
 
 	get focused() {
 		return this.parentFocused;
@@ -205,7 +224,8 @@ export class DocumentSearchController implements Focusable {
 
 	close() {
 		this.active = false;
-		this.input.setValue("");
+		this.input.focused = false;
+		this.inputComponent = new Input();
 		this.releaseCorpus();
 		this.currentIndex = 0;
 		this.anchorRow = 0;
@@ -661,8 +681,7 @@ function normalizeQuery(value: string) {
 
 function findMatchOffsets(corpus: string, query: string) {
 	if (query.length > corpus.length) return new Uint32Array();
-	const maximumOffsetCount = Math.floor(corpus.length / query.length) * 2;
-	const offsets = new MatchOffsetBuilder(maximumOffsetCount);
+	const offsets = new MatchOffsetBuilder();
 	if (/^[\x20-\x7e]+$/u.test(query) && /^[\x20-\x7e]*$/u.test(corpus)) {
 		const haystack = corpus.toLowerCase();
 		const needle = query.toLowerCase();

@@ -22,6 +22,7 @@ import {
 import {
 	DOCUMENT_SEARCH_ACTIVATE_KEY,
 	DocumentSearchController,
+	documentSearchActionMatches,
 	documentSearchActivationAvailable,
 } from "./document-search.js";
 import {
@@ -306,7 +307,9 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 						}
 						return true;
 					},
-					(outsidePaste) => options.keybindings.matches(outsidePaste, "tui.altScreen.searchClose"),
+					(outsidePaste) =>
+						matchesKey(outsidePaste, Key.ctrl("c")) ||
+						documentSearchActionMatches(options.keybindings, outsidePaste),
 				);
 				if (routed.changed && !routed.stopped) moveToDetailMatch(detailSearch.currentRow);
 				options.tui.requestRender();

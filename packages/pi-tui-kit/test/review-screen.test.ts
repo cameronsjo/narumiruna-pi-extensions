@@ -1019,6 +1019,32 @@ test("review closes Space-activated search immediately on Escape", () => {
 	assert.doesNotMatch(plainRender(harness.component, 40), /Find:/u);
 });
 
+test("review dispatches Escape when it is remapped to next search match", () => {
+	const escapeNextKeybindings: ReviewKeybindings = {
+		...reviewTestKeybindings,
+		matches(data, binding) {
+			if (binding === "tui.altScreen.searchNext") return data === "\u001b";
+			return reviewTestKeybindings.matches(data, binding);
+		},
+		getKeys(binding) {
+			if (binding === "tui.altScreen.searchNext") return ["escape"];
+			return reviewTestKeybindings.getKeys(binding);
+		},
+	};
+	const harness = reviewComponentHarness(
+		{ ...reviewScreen, content: "needle\nother\nneedle", enableSearch: true },
+		false,
+		8,
+		undefined,
+		escapeNextKeybindings,
+	);
+	harness.component.handleInput(" ");
+	harness.component.handleInput("needle");
+	assert.match(plainRender(harness.component, 40), /1\/2/u);
+	harness.component.handleInput("\u001b");
+	assert.match(plainRender(harness.component, 40), /2\/2/u);
+});
+
 test("search-disabled review keeps its prior component and disposal behavior", () => {
 	const harness = reviewComponentHarness(reviewScreen);
 	assert.equal("focused" in harness.component, false);

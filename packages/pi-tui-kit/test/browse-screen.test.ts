@@ -533,6 +533,40 @@ test("browse detail closes Space-activated search immediately on Escape", () => 
 	assert.doesNotMatch(plainRender(harness.component, 40).join("\n"), /Find:/u);
 });
 
+test("browse detail dispatches Escape when it is remapped to next search match", () => {
+	const escapeNextKeybindings = {
+		...keybindings,
+		matches(data: string, binding: string) {
+			if (binding === "tui.altScreen.searchNext") return data === "\u001b";
+			return keybindings.matches(data, binding);
+		},
+		getKeys(binding: string) {
+			if (binding === "tui.altScreen.searchNext") return ["escape"];
+			return keybindings.getKeys(binding);
+		},
+	};
+	const screen: MenuScreen<ScreenId, ActionId> = {
+		kind: "browse",
+		title: "Documents",
+		enableDetailSearch: true,
+		items: [
+			{
+				id: "exact",
+				label: "Exact",
+				detailDocument: { content: "needle\nother\nneedle" },
+			},
+		],
+	};
+	const harness = componentHarness(screen, { rows: 10, keybindings: escapeNextKeybindings });
+	harness.component.render(40);
+	harness.component.handleInput("y");
+	harness.component.handleInput(" ");
+	harness.component.handleInput("needle");
+	assert.match(plainRender(harness.component, 40).join("\n"), /1\/2/u);
+	harness.component.handleInput("\u001b");
+	assert.match(plainRender(harness.component, 40).join("\n"), /2\/2/u);
+});
+
 test("browse keeps the current detail match visible after rewrapping", () => {
 	const screen: MenuScreen<ScreenId, ActionId> = {
 		kind: "browse",
