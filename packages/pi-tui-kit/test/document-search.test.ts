@@ -220,7 +220,7 @@ test("uses one width-sensitive Markdown transform for display and search metadat
 
 test("bounds Markdown reference rendering without losing capped-wrap matches", () => {
 	const token = `${"a".repeat(497)}XYZ${"b".repeat(100)}`;
-	const content = [token, ...Array.from({ length: 2_000 }, () => "short")].join("\n");
+	const content = [token, ...Array.from({ length: 500 }, () => "short")].join("\n");
 	const presentation = formatDocumentPresentation(content, { kind: "markdown" }, 20, theme);
 	const controller = search(presentation.searchLines, "XYZb");
 	controller.updateLines(
@@ -235,7 +235,7 @@ test("keeps explicit Markdown lines separate under the reference-render cap", ()
 	const explicitContent = [
 		"a".repeat(499),
 		"b",
-		...Array.from({ length: 1_999 }, () => "short"),
+		...Array.from({ length: 499 }, () => "short"),
 	].join("\n");
 	const explicitPresentation = formatDocumentPresentation(
 		explicitContent,
@@ -258,7 +258,7 @@ test("preserves capped Markdown table-cell matches", () => {
 		"| value |",
 		"|---|",
 		`| ${tableToken} |`,
-		...Array.from({ length: 1_998 }, () => "short"),
+		...Array.from({ length: 498 }, () => "short"),
 	].join("\n");
 	const tablePresentation = formatDocumentPresentation(
 		tableContent,

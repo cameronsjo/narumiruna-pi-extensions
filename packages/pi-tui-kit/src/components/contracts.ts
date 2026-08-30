@@ -10,7 +10,6 @@ const MENU_BINDINGS = [
 	"tui.select.confirm",
 	"tui.select.cancel",
 	"tui.input.submit",
-	"tui.altScreen.search",
 	"tui.altScreen.searchNext",
 	"tui.altScreen.searchPrevious",
 	"tui.altScreen.searchClose",

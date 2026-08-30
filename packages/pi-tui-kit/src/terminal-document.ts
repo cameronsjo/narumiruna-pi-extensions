@@ -131,6 +131,8 @@ function skipGenericEscSequence(value: string, start: number): number {
 function skipCsi(value: string, start: number): number {
 	for (let index = start; index < value.length; index += 1) {
 		const code = value.charCodeAt(index);
+		const interrupted = skipIntroducedSequence(value, index);
+		if (interrupted !== undefined) return interrupted;
 		if (code >= 0x40 && code <= 0x7e) return index + 1;
 	}
 	return value.length;
@@ -142,8 +144,26 @@ function skipStringSequence(value: string, start: number, bellTerminates: boolea
 		if (bellTerminates && code === BEL) return index + 1;
 		if (code === ST) return index + 1;
 		if (code === ESC && value.charCodeAt(index + 1) === 0x5c) return index + 2;
+		const interrupted = skipIntroducedSequence(value, index);
+		if (interrupted !== undefined) return interrupted;
 	}
 	return value.length;
+}
+
+function skipIntroducedSequence(value: string, start: number) {
+	const introducer = value.charCodeAt(start);
+	if (introducer === ESC) return skipEscSequence(value, start);
+	if (introducer === CSI) return skipCsi(value, start + 1);
+	if (
+		introducer === OSC ||
+		introducer === DCS ||
+		introducer === SOS ||
+		introducer === PM ||
+		introducer === APC
+	) {
+		return skipStringSequence(value, start + 1, introducer === OSC);
+	}
+	return undefined;
 }
 
 function isControl(codePoint: number): boolean {

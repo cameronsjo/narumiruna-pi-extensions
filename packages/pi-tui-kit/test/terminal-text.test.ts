@@ -24,6 +24,12 @@ test("removes complete and unterminated terminal control sequences as units", ()
 	assert.equal(sanitizeTerminalText("before\u001b[31"), "before");
 	assert.equal(sanitizeTerminalText("before\u001bXprivate\u001b\\after"), "beforeafter");
 	assert.equal(sanitizeTerminalText("before\u0098private\u009cafter"), "beforeafter");
+	assert.equal(sanitizeTerminalText("before\u001b[31\u001bXprivate\u001b\\after"), "beforeafter");
+	assert.equal(
+		sanitizeTerminalText("before\u001b]title\u001bXprivate\u001b\\after"),
+		"beforeafter",
+	);
+	assert.equal(sanitizeTerminalText("before\u001bPdata\u0098private\u009cafter"), "beforeafter");
 });
 
 test("parses generic ESC sequences without corrupting following Unicode", () => {

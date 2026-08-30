@@ -435,7 +435,7 @@ test("browse detail search stays independent from list filtering", () => {
 	harness.component.render(40);
 	harness.component.handleInput("s");
 	assert.doesNotMatch(plainRender(harness.component, 40).join("\n"), /Find:/u);
-	harness.component.handleInput("\u001b[47u");
+	harness.component.handleInput("\u001b[32u");
 	harness.component.handleInput("\u001b[20");
 	harness.component.handleInput("0~");
 	harness.component.handleInput("n");
@@ -446,13 +446,13 @@ test("browse detail search stays independent from list filtering", () => {
 	harness.component.handleInput("x");
 	assert.doesNotMatch(plainRender(harness.component, 40).join("\n"), /Find:/u);
 	harness.component.render(4);
-	harness.component.handleInput("/");
+	harness.component.handleInput(" ");
 	harness.component.handleInput("def");
 	colors.length = 0;
 	harness.component.render(4);
 	assert.ok(colors.includes("searchMatchText"));
 	harness.component.handleInput("x");
-	harness.component.handleInput("/");
+	harness.component.handleInput(" ");
 	harness.component.handleInput("\u001b[200~");
 	harness.component.handleInput("\u0003");
 	harness.component.handleInput("\u001b[201~");
@@ -463,21 +463,21 @@ test("browse detail search stays independent from list filtering", () => {
 	assert.doesNotMatch(plainRender(harness.component, 40).join("\n"), /No matching items/u);
 	harness.component.handleInput("y");
 	harness.component.render(40);
-	harness.component.handleInput("/");
+	harness.component.handleInput(" ");
 	harness.component.handleInput("\u001b[200~needle");
 	harness.component.handleInput("\u001b[201~\u0003");
 	assert.deepEqual(harness.events, [{ kind: "close" }]);
 });
 
-test("browse detail search falls back from claimed activation and closes on Escape", () => {
+test("browse detail reserves standalone Space activation and closes on Escape", () => {
 	const remappedKeybindings = {
 		matches(data: string, binding: string) {
-			if (binding === "tui.select.down") return data === "/";
+			if (binding === "tui.select.down") return data === " ";
 			if (binding === "tui.altScreen.searchClose") return data === "\u001b";
 			return keybindings.matches(data, binding);
 		},
 		getKeys(binding: string) {
-			if (binding === "tui.select.down") return ["/"];
+			if (binding === "tui.select.down") return ["space"];
 			if (binding === "tui.altScreen.searchClose") return ["escape"];
 			return keybindings.getKeys(binding);
 		},
@@ -498,11 +498,8 @@ test("browse detail search falls back from claimed activation and closes on Esca
 	harness.component.render(40);
 	harness.component.handleInput("y");
 	const inactive = plainRender(harness.component, 40).join("\n");
-	assert.doesNotMatch(inactive, /\/ search/u);
-	assert.match(inactive, /\? search/u);
-	harness.component.handleInput("/");
-	assert.doesNotMatch(plainRender(harness.component, 40).join("\n"), /Find:/u);
-	harness.component.handleInput("?");
+	assert.match(inactive, /space search/u);
+	harness.component.handleInput(" ");
 	assert.match(plainRender(harness.component, 40).join("\n"), /Find:/u);
 	harness.component.handleInput("\u001b");
 	assert.doesNotMatch(plainRender(harness.component, 40).join("\n"), /Find:/u);
@@ -527,7 +524,7 @@ test("browse keeps the current detail match visible after rewrapping", () => {
 	harness.component.render(80);
 	harness.component.handleInput("y");
 	harness.component.render(80);
-	harness.component.handleInput("/");
+	harness.component.handleInput(" ");
 	harness.component.handleInput("needle");
 	assert.equal(plainRender(harness.component, 80).includes("needle"), true);
 	assert.equal(plainRender(harness.component, 12).includes("needle"), true);
@@ -546,7 +543,7 @@ test("browse forwards Home and End to the active detail search input", () => {
 	harness.component.render(30);
 	harness.component.handleInput("y");
 	harness.component.render(30);
-	harness.component.handleInput("/");
+	harness.component.handleInput(" ");
 	harness.component.handleInput("abcd");
 	harness.component.handleInput("\u001b[H");
 	harness.component.handleInput("z");
@@ -577,7 +574,7 @@ test("browse preserves manual detail scrolling while search is active", () => {
 	harness.component.render(30);
 	harness.component.handleInput("y");
 	harness.component.render(30);
-	harness.component.handleInput("/");
+	harness.component.handleInput(" ");
 	harness.component.handleInput("needle");
 	assert.match(plainRender(harness.component, 30).join("\n"), /needle/u);
 	harness.component.handleInput("d");
@@ -606,7 +603,7 @@ test("browse searches exact detail documents and resets on exit", () => {
 	harness.component.render(40);
 	harness.component.handleInput("y");
 	harness.component.render(40);
-	harness.component.handleInput("/");
+	harness.component.handleInput(" ");
 	harness.component.handleInput("missing");
 	assert.match(plainRender(harness.component, 40).join("\n"), /0\/0/u);
 	harness.component.handleInput("q");

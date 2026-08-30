@@ -10,7 +10,7 @@ import { getLanguageFromPath, highlightCode } from "./syntax-highlighting.js";
 
 export const RPC_DOCUMENT_LINE_WIDTH = 120;
 export const RPC_DOCUMENT_PAGE_SIZE = 8;
-const MAX_MARKDOWN_REFERENCE_CELLS = 250_000;
+const MAX_MARKDOWN_REFERENCE_CELLS = 100_000;
 
 type DocumentTheme = Pick<Theme, "fg" | "bold"> &
 	Partial<Pick<Theme, "italic" | "underline" | "strikethrough">>;
