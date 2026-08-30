@@ -404,7 +404,9 @@ export async function resolveUsageAuth(
 	if (typeof registry.getProviderAuth !== "function") {
 		throw new Error("pi-usage requires Pi 0.81.0 or newer to validate resolved provider auth.");
 	}
+	if (!moonshotProviderAuthIsAllowed(ctx, adapter.id)) return undefined;
 	const providerResult = await registry.getProviderAuth(adapter.id);
+	if (!moonshotProviderAuthIsAllowed(ctx, adapter.id)) return undefined;
 	if (
 		providerResult?.auth.baseUrl &&
 		!hasOfficialUrlOrigin(providerResult.auth.baseUrl, adapter.id)
@@ -493,10 +495,44 @@ export async function queryProviderUsage(
 
 export function providerIsConfigured(ctx: ExtensionContext, providerId: string): boolean {
 	try {
-		return ctx.modelRegistry.getProviderAuthStatus(providerId).configured;
+		const status = ctx.modelRegistry.getProviderAuthStatus(providerId);
+		return status.configured && moonshotProviderAuthSourceIsAllowed(ctx, providerId, status.source);
 	} catch {
-		return candidateModels(ctx, providerId).length > 0;
+		return (
+			!isMoonshotSiblingProvider(ctx, providerId) && candidateModels(ctx, providerId).length > 0
+		);
 	}
+}
+
+function moonshotProviderAuthIsAllowed(ctx: ExtensionContext, providerId: string): boolean {
+	if (!isMoonshotSiblingProvider(ctx, providerId)) return true;
+	try {
+		return moonshotProviderAuthSourceIsAllowed(
+			ctx,
+			providerId,
+			ctx.modelRegistry.getProviderAuthStatus(providerId).source,
+		);
+	} catch {
+		return false;
+	}
+}
+
+function moonshotProviderAuthSourceIsAllowed(
+	ctx: ExtensionContext,
+	providerId: string,
+	source: string | undefined,
+): boolean {
+	return (
+		!isMoonshotSiblingProvider(ctx, providerId) ||
+		(source !== undefined && source !== "environment")
+	);
+}
+
+function isMoonshotSiblingProvider(ctx: ExtensionContext, providerId: string): boolean {
+	return (
+		(providerId === "moonshotai" || providerId === "moonshotai-cn") &&
+		ctx.model?.provider !== providerId
+	);
 }
 
 function candidateModels(ctx: ExtensionContext, providerId: string): PiModel[] {
