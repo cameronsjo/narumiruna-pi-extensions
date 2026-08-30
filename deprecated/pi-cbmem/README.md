@@ -1,8 +1,17 @@
-# 🧠 pi-cbmem — Codebase Memory Tools for Pi
+# 🧠 pi-cbmem — Deprecated Codebase Memory Tools for Pi
 
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-cbmem)](https://www.npmjs.com/package/@narumitw/pi-cbmem) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-Connect Pi to the local Codebase Memory daemon through a persistent MCP stdio session and give the model graph-first operating guidance.
+> [!WARNING]
+> `@narumitw/pi-cbmem` is deprecated without a replacement, kept under `deprecated/` for reference, and excluded from active workspace checks, tests, releases, and maintenance.
+> A simple benchmark found that the extension did not improve results enough to justify its overhead, while token usage increased substantially.
+> Remove the deprecated package with:
+>
+> ```bash
+> pi uninstall npm:@narumitw/pi-cbmem
+> ```
+
+This archived extension connected Pi to the local Codebase Memory daemon through a persistent MCP stdio session and gave the model graph-first operating guidance.
 
 ## ✨ Features
 
@@ -13,31 +22,20 @@ Connect Pi to the local Codebase Memory daemon through a persistent MCP stdio se
 - Resolves `@current` to an exact current-root index or a matching clean canonical-checkout graph for approved read tools.
 - Loads the extension and skill from one package.
 
-## 📦 Install
+## 📦 Archived reference
 
-Install persistently from npm:
-
-```bash
-pi install npm:@narumitw/pi-cbmem
-```
-
-Try from npm without installing permanently:
+Build and inspect the archived package only when maintaining historical behavior:
 
 ```bash
-pi -e npm:@narumitw/pi-cbmem
+cd deprecated/pi-cbmem
+npm run build
+pi -e .
 ```
 
-Build and load a local checkout from the repository root:
-
-```bash
-npm --workspace @narumitw/pi-cbmem run build
-pi --no-extensions -e ./packages/pi-cbmem
-```
-
-The package declares `dist/index.ts`, so an unbuilt local checkout must run the build before Pi loads the package directory.
+The package declares `dist/index.ts`, so the build command must finish before Pi loads the archived package directory.
 
 Pi extensions run with your user permissions.
-Install only trusted packages, and review the source before loading this extension.
+Only load archived code from sources you trust.
 
 ## 🚀 Quick start
 
@@ -114,7 +112,7 @@ Run `/reload` to create a new verified MCP session after a binary, daemon, or st
 ## 🗂️ Package layout
 
 ```text
-packages/pi-cbmem/
+deprecated/pi-cbmem/
 ├── dist/                           # Generated source-mapped Jiti runtime
 ├── scripts/
 │   └── build-runtime.mjs           # Deterministic runtime builder and validator
