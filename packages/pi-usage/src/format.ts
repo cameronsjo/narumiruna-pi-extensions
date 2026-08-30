@@ -77,7 +77,7 @@ export function formatUsageStatusline(
 		return formatMoonshotStatusline(report);
 	}
 	if (report.providerId === "minimax" || report.providerId === "minimax-cn") {
-		return formatMiniMaxStatusline(report);
+		return formatMiniMaxStatusline(report, model);
 	}
 	if (report.providerId === "zai" || report.providerId === "zai-coding-cn") {
 		return formatZaiStatusline(report);
@@ -351,24 +351,70 @@ function formatMiniMaxReport(lines: string[], report: UsageReport): void {
 	}
 }
 
-function formatMiniMaxStatusline(report: UsageReport): string | undefined {
+function formatMiniMaxStatusline(report: UsageReport, model?: UsageModel): string | undefined {
 	const prefix = report.providerId === "minimax-cn" ? "minimax cn" : "minimax";
 	if (report.source === "minimax-account-balance") {
 		const available = report.metrics.find((metric) => metric.id === "available-balance");
 		return available ? `${prefix} ${available.currency} ${available.value}` : undefined;
 	}
-	const firstGroup = report.buckets[0]?.groupId;
-	const selected = report.buckets.filter((bucket) => bucket.groupId === firstGroup);
-	if (selected.some((bucket) => bucket.period === "unlimited")) return `${prefix} unlimited`;
+	const selectedGroup = selectMiniMaxGroup(report, model);
+	if (!selectedGroup) return undefined;
+	const selected = report.buckets.filter((bucket) => bucket.groupId === selectedGroup);
 	const parts = [prefix];
 	for (const bucket of selected) {
-		if (!bucket.limit || bucket.remaining === undefined) continue;
 		const fallback = bucket.id.endsWith(":weekly") ? "weekly" : "5h";
-		parts.push(
-			`${percentRemaining(bucket)}% ${formatWindowLabel(bucket.windowMinutes, fallback, true)}`,
-		);
+		const window = formatWindowLabel(bucket.windowMinutes, fallback, true);
+		if (bucket.period === "unlimited") {
+			parts.push(`unlimited ${window}`);
+			continue;
+		}
+		if (!bucket.limit || bucket.remaining === undefined) continue;
+		parts.push(`${percentRemaining(bucket)}% ${window}`);
 	}
 	return parts.length > 1 ? parts.join(" ") : undefined;
+}
+
+function selectMiniMaxGroup(report: UsageReport, model?: UsageModel): string | undefined {
+	const groups = [
+		...new Set(
+			report.buckets
+				.map((bucket) => bucket.groupId)
+				.filter((group): group is string => group !== undefined),
+		),
+	];
+	if (groups.length <= 1) return groups[0];
+	if (model?.provider !== report.providerId) return undefined;
+	const modelKeys = [model.id, model.name]
+		.map(normalizeMiniMaxModelKey)
+		.filter((key): key is string => key !== undefined);
+	for (const group of groups) {
+		const bucket = report.buckets.find((candidate) => candidate.groupId === group);
+		const patterns = [bucket?.groupLabel, ...(bucket?.modelKeys ?? []), group]
+			.map(normalizeMiniMaxModelKey)
+			.filter((key): key is string => key !== undefined);
+		if (patterns.some((pattern) => modelKeys.some((key) => wildcardKeyMatches(pattern, key)))) {
+			return group;
+		}
+	}
+	return undefined;
+}
+
+function normalizeMiniMaxModelKey(value: string | undefined): string | undefined {
+	const key = value?.toLowerCase().replace(/[^a-z0-9*]+/gu, "");
+	return key && /[a-z0-9]/u.test(key) ? key : undefined;
+}
+
+function wildcardKeyMatches(pattern: string, value: string): boolean {
+	if (!pattern.includes("*")) return pattern === value;
+	const segments = pattern.split("*").filter(Boolean);
+	let offset = 0;
+	for (const [index, segment] of segments.entries()) {
+		const found = value.indexOf(segment, offset);
+		if (found < 0 || (index === 0 && !pattern.startsWith("*") && found !== 0)) return false;
+		offset = found + segment.length;
+	}
+	const last = segments.at(-1);
+	return pattern.endsWith("*") || (last !== undefined && value.endsWith(last));
 }
 
 function formatZaiStatusline(report: UsageReport): string | undefined {

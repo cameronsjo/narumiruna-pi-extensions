@@ -139,7 +139,35 @@ test("MiniMax Token Plan preserves unlimited windows and sanitizes model labels"
 	assert.equal(report.buckets[0]?.groupLabel, "MiniMax Unlimited");
 	assert.equal(report.buckets[0]?.period, "unlimited");
 	assert.match(formatUsageReport(report, "configured"), /Rolling window:\s+unlimited/u);
-	assert.equal(formatUsageStatusline(report), "minimax cn unlimited");
+	assert.equal(formatUsageStatusline(report), "minimax cn unlimited 5h unlimited wk");
+});
+
+test("MiniMax statusline preserves mixed windows and selects the active model group", () => {
+	const mixedPayload = quotaPayload();
+	mixedPayload.model_remains[0] = {
+		...mixedPayload.model_remains[0],
+		current_interval_status: 3,
+	};
+	const mixed = normalizeMiniMaxUsagePayload("minimax", "token-plan", mixedPayload, 2_500);
+	assert.equal(formatUsageStatusline(mixed), "minimax unlimited 5h 80% wk");
+
+	const groupedPayload = quotaPayload();
+	groupedPayload.model_remains = [
+		{ ...groupedPayload.model_remains[0], model_name: "MiniMax-M2" },
+		{
+			...groupedPayload.model_remains[0],
+			model_name: "MiniMax-M*",
+			current_interval_usage_count: 1_200,
+			current_weekly_usage_count: 600,
+			current_weekly_remaining_percent: 60,
+		},
+	];
+	const grouped = normalizeMiniMaxUsagePayload("minimax", "token-plan", groupedPayload, 2_600);
+	assert.equal(formatUsageStatusline(grouped, MODELS.minimax), "minimax 80% 5h 60% wk");
+	assert.equal(
+		formatUsageStatusline(grouped, { ...MODELS.minimax, id: "Other-X", name: "Other X" }),
+		undefined,
+	);
 });
 
 test("MiniMax pay-as-you-go keeps exact regional balance strings and debt components", () => {
@@ -253,6 +281,39 @@ test("MiniMax runtime auth accepts only its matching official region", async () 
 		assert.equal(fetchMock.mock.calls.length, 0);
 	} finally {
 		fetchMock.mockRestore();
+	}
+});
+
+test("MiniMax endpoint selection follows the Bearer credential actually sent", async () => {
+	const requests: string[] = [];
+	vi.stubGlobal(
+		"fetch",
+		vi.fn(async (input: string | URL | Request) => {
+			const url = String(input);
+			requests.push(url);
+			const body = url.endsWith("/account/query_balance") ? balancePayload() : quotaPayload();
+			return new Response(JSON.stringify(body), { status: 200 });
+		}),
+	);
+	try {
+		for (const [apiKey, bearer, expectedPath] of [
+			["sk-api-stale", "token-plan-active", "/v1/token_plan/remains"],
+			["token-plan-stale", "sk-api-active", "/account/query_balance"],
+		] as const) {
+			const auth = miniMaxAuth("minimax", apiKey);
+			auth.headers.Authorization = `Bearer ${bearer}`;
+			await queryProviderUsage(
+				miniMaxAdapter("minimax"),
+				auth,
+				new AbortController().signal,
+				1_000,
+				async () => undefined,
+			);
+			assert.ok(requests.at(-1)?.endsWith(expectedPath));
+		}
+		assert.equal(requests.length, 2);
+	} finally {
+		vi.unstubAllGlobals();
 	}
 });
 

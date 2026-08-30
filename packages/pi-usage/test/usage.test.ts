@@ -58,6 +58,13 @@ const deepSeekModel = {
 	baseUrl: "https://api.deepseek.com",
 };
 
+const miniMaxModel = {
+	id: "MiniMax-M3",
+	name: "MiniMax M3",
+	provider: "minimax",
+	baseUrl: "https://api.minimax.io/anthropic",
+};
+
 const fireworksModel = {
 	id: "accounts/fireworks/models/kimi-k2p6",
 	name: "Kimi K2.6",
@@ -1154,6 +1161,69 @@ test("DeepSeek account rotation at the request boundary retries without querying
 	assert.ok(authLookups >= 5);
 	assert.deepEqual(fetchedKeys, ["Bearer deepseek-account-b"]);
 	assert.equal(statuses.get("usage"), "deepseek USD 7.25");
+	mock.events.get("session_shutdown")?.[0]?.({}, ctx);
+	assert.equal(statuses.get("usage"), undefined);
+});
+
+test("MiniMax account rotation at the request boundary retries without querying the stale key", async (t) => {
+	const originalFetch = globalThis.fetch;
+	t.onTestFinished(() => {
+		globalThis.fetch = originalFetch;
+	});
+	let authLookups = 0;
+	const fetchedKeys: string[] = [];
+	globalThis.fetch = async (_input, init) => {
+		fetchedKeys.push(new Headers(init?.headers).get("authorization") ?? "");
+		return new Response(
+			JSON.stringify({
+				base_resp: { status_code: 0, status_msg: "success" },
+				model_remains: [
+					{
+						model_name: "MiniMax-M3",
+						start_time: 1_800_000_000_000,
+						end_time: 1_800_018_000_000,
+						current_interval_total_count: 1_500,
+						current_interval_usage_count: 228,
+						current_interval_status: 1,
+						current_weekly_total_count: 1_000,
+						current_weekly_usage_count: 200,
+						current_weekly_remaining_percent: 80,
+						current_weekly_status: 1,
+						weekly_start_time: 1_799_971_200_000,
+						weekly_end_time: 1_800_576_000_000,
+					},
+				],
+			}),
+			{ status: 200 },
+		);
+	};
+	const mock = createMockPi();
+	usageExtension(mock.pi);
+	const { ctx, statuses } = createMockContext({
+		model: miniMaxModel,
+		modelRegistry: {
+			getApiKeyAndHeaders: async () => {
+				authLookups += 1;
+				return {
+					ok: true,
+					apiKey: authLookups === 1 ? "minimax-account-a" : "minimax-account-b",
+				};
+			},
+			getProviderAuth: async () => ({
+				auth: { apiKey: "minimax-account-b", baseUrl: miniMaxModel.baseUrl },
+			}),
+			getAvailable: () => [miniMaxModel],
+			getAll: () => [miniMaxModel],
+		},
+	});
+
+	await mock.events.get("session_start")?.[0]?.({}, ctx);
+	await settle();
+	await settle();
+
+	assert.ok(authLookups >= 5);
+	assert.deepEqual(fetchedKeys, ["Bearer minimax-account-b"]);
+	assert.equal(statuses.get("usage"), "minimax 15% 5h 80% wk");
 	mock.events.get("session_shutdown")?.[0]?.({}, ctx);
 	assert.equal(statuses.get("usage"), undefined);
 });

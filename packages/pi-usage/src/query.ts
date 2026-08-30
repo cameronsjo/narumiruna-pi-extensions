@@ -898,7 +898,7 @@ async function queryMiniMaxUsage(
 	guard: UsageRequestGuard | undefined,
 ): Promise<UsageReport> {
 	if (!guard) throw new Error("MiniMax usage requires request-boundary revalidation.");
-	const apiKey = auth.apiKey ?? bearerToken(headerValue(auth.headers, "Authorization"));
+	const apiKey = bearerToken(headerValue(auth.headers, "Authorization")) ?? auth.apiKey;
 	if (!apiKey) throw new Error("MiniMax runtime API key was unavailable.");
 	const kind = miniMaxUsageKind(apiKey);
 	const path = kind === "account-balance" ? "/account/query_balance" : "/v1/token_plan/remains";
