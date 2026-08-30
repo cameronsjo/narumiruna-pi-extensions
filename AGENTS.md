@@ -158,7 +158,6 @@ Run commands from the repository root unless a command says otherwise.
 - Use `just npm-public <package>` only to change the visibility of an existing package.
 - Use `npm publish --workspace <package> --access public` only for the explicitly approved first publication of a new scoped package that still returns 404.
 - Except for that initial-publication exception, let `publish.yml` manage the version pull request, package tags, publications, and GitHub releases.
-- Publish a new `pi-tui-kit` API before raising its first consumer's compatibility floor, and do not release the API with that consumer.
 
 ## Git and pull requests
 
