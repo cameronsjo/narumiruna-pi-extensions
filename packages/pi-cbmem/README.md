@@ -115,7 +115,6 @@ Run `/reload` to create a new verified MCP session after a binary, daemon, or st
 
 ```text
 packages/pi-cbmem/
-├── benchmark/                      # Repository-only retrieval benchmark
 ├── dist/                           # Generated source-mapped Jiti runtime
 ├── scripts/
 │   └── build-runtime.mjs           # Deterministic runtime builder and validator
