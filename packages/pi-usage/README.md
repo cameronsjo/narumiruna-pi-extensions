@@ -12,6 +12,7 @@ xAI OAuth subscription reporting follows the reviewed Grok Build contract and ru
 - Shows active-account usage and next actions through `/usage`.
 - Reports OpenAI Codex subscription windows, credits, resets, and model-specific buckets.
 - Reports Kimi For Coding plan windows, resets, and separately labeled booster-wallet currency.
+- Reports Moonshot AI Global and China API account balances in their native currencies.
 - Reports GitHub Copilot allowances and OpenRouter per-key limits and spending windows.
 - Reports exact DeepSeek API balances with separate CNY and USD values.
 - Reports OpenCode Go plan windows and Z.AI Coding Plan quotas.
@@ -190,6 +191,23 @@ It was also revalidated against [Kimi Code `676e4d82240855044fe809fea89ce1dbe8e5
 The pinned Pi source at `e86823096c5bad39e1ca282ec24bc5eb9bec745b` has no changes in either reviewed Kimi file at the selected revision.
 The pinned Kimi managed-usage source at `cd7c97b377a77f7ae1b9d541cafe314e986ec074` is an ancestor of that selected revision and has no changes in the reviewed source or tests.
 
+### Moonshot AI API balance
+
+- Provider IDs: `moonshotai` and `moonshotai-cn`
+- Semantics: current API account balance, not Kimi For Coding subscription usage
+- Global source: `GET https://api.moonshot.ai/v1/users/me/balance`
+- China source: `GET https://api.moonshot.cn/v1/users/me/balance`
+- Displayed data: available, voucher, and cash balance in USD for Global or CNY for China
+- Statusline examples: `moonshot USD 49.58894` or `moonshot CNY 49.58894`
+
+Each endpoint uses Pi's resolved inference Bearer key for the matching region.
+The extension rejects custom, proxy, and cross-region origins before network access and refuses redirects.
+Available and voucher balances must be nonnegative, while cash balance may be negative when the account owes money.
+The endpoint does not provide historical spend, token totals, quota windows, or reset times.
+These API-platform balances are independent from the `kimi-coding` subscription and booster wallet.
+
+The contracts were verified on 2026-08-30 against the official [Global balance reference](https://platform.kimi.ai/docs/api/balance), [China balance reference](https://platform.moonshot.cn/docs/api/balance), and first-party [`MoonshotAI-Cookbook` balance client and DTO](https://github.com/MoonshotAI/MoonshotAI-Cookbook/tree/25a9e46d2391dd4817d28ab980dac69eb59b582c/examples/golang_demo).
+
 ### GitHub Copilot
 
 - Provider ID: `github-copilot`
@@ -266,6 +284,7 @@ The credits endpoint does not provide reset times, request-rate counters, or dat
 Vercel's separate Custom Reporting API is limited to eligible paid plans and is intentionally outside this first integration.
 
 The contract was verified on 2026-08-30 against Vercel's [REST API Reference](https://vercel.com/docs/ai-gateway/sdks-and-apis/rest-api#check-credit-balance) and the first-party [`vercel/ai` Gateway implementation](https://github.com/vercel/ai/blob/69428b1f8b037e4d118fb4853428d5c4e620493c/packages/gateway/src/gateway-fetch-metadata.ts).
+
 ### Baseten Model APIs spend
 
 - Provider ID: `baseten`
@@ -367,6 +386,7 @@ The `usage` status item is active only for selected providers that publish statu
 It refreshes every five minutes while the session remains on such a provider and is cleared when the model changes to an unsupported or menu-only provider.
 DeepSeek publishes each returned currency as a separate exact balance segment and reports when the API is unavailable.
 Fireworks publishes exact per-currency rated spend totals and reports when no rated usage exists.
+Moonshot AI publishes the available balance with its region-native currency.
 Vercel AI Gateway publishes the exact current USD credit balance.
 Baseten publishes the exact trailing 30-day Model APIs net subtotal after credits.
 xAI is always menu-only and never starts a scheduled status refresh.
@@ -401,6 +421,7 @@ The protocol carries no account name or extension identity.
 Only the selected provider's exact runtime match is used, and secrets are sent only to its validated official origin.
 DeepSeek balance requests require Bearer authentication, send only that resolved credential from Pi's runtime auth to `https://api.deepseek.com/user/balance`, and refuse redirects.
 Fireworks spend requests send only that resolved credential to the official `https://api.fireworks.ai` account-listing and billing-summary endpoints and refuse redirects.
+Moonshot balance requests send only the resolved Bearer credential to the matching official Global or China balance origin and refuse redirects.
 Vercel AI Gateway credit requests send only the resolved Bearer credential to `https://ai-gateway.vercel.sh/v1/credits` and refuse redirects.
 Baseten billing requests send only the resolved Bearer credential to `https://api.baseten.co/v1/billing/usage_summary` for an official Baseten model and refuse redirects.
 Pi extensions run with the user's process privileges, so the shared event bus is not a security boundary between installed extensions.
@@ -418,6 +439,7 @@ An absent or incompatible peer preserves standalone fallback and fail-closed mis
 - Provider reports are snapshots and may themselves be delayed by the provider.
 - DeepSeek reports current API balance only; it does not expose historical usage, quota windows, reset times, or account-wide token totals through the balance endpoint.
 - Fireworks reports rated 30-day spend only; credit balance and spend caps are visible only in the Fireworks web console, and keys that can see several accounts must set `fireworksAccountId` in `pi-usage.json`.
+- Moonshot AI reports current API balance only; it does not expose historical spend, aggregate token usage, quota windows, or reset times through the balance endpoint.
 - Vercel AI Gateway reports current team credits and lifetime spend only; Custom Reporting and request-rate counters are not queried.
 - Baseten reports organization-wide Model APIs spend, not usage attributable only to Pi's current key; Dedicated and Training spend are excluded.
 - OpenRouter successful inference responses do not expose proactive request-rate counters; `/usage` reports the documented per-key credit/spend fields instead.
@@ -462,8 +484,7 @@ The generated runtime is built from the authoritative `src/index.ts` graph and d
 
 ## 🔎 Keywords
 
-Pi extension, Pi coding agent, usage, quota, DeepSeek API balance, DeepSeek balance, Fireworks API spend, Fireworks rated spend, Vercel AI Gateway credits, Vercel AI Gateway usage, OpenAI Codex usage, ChatGPT subscription limits, Kimi For Coding, Kimi Coding Plan usage, GitHub Copilot AI credits, GitHub Copilot premium requests, OpenRouter credits, xAI OAuth usage, Grok subscription allowance, API-key spend limits, TypeScript Pi package, npm Pi extension.
-Pi extension, Pi coding agent, usage, quota, DeepSeek API balance, DeepSeek balance, Fireworks API spend, Fireworks rated spend, Baseten Model APIs spend, Baseten usage, OpenAI Codex usage, ChatGPT subscription limits, Kimi For Coding, Kimi Coding Plan usage, GitHub Copilot AI credits, GitHub Copilot premium requests, OpenRouter credits, xAI OAuth usage, Grok subscription allowance, API-key spend limits, TypeScript Pi package, npm Pi extension.
+Pi extension, Pi coding agent, usage, quota, DeepSeek API balance, DeepSeek balance, Fireworks API spend, Fireworks rated spend, Vercel AI Gateway credits, Vercel AI Gateway usage, Baseten Model APIs spend, Baseten usage, OpenAI Codex usage, ChatGPT subscription limits, Kimi For Coding, Kimi Coding Plan usage, Moonshot AI balance, Moonshot API balance, GitHub Copilot AI credits, GitHub Copilot premium requests, OpenRouter credits, xAI OAuth usage, Grok subscription allowance, API-key spend limits, TypeScript Pi package, npm Pi extension.
 
 ## 📄 License
 

@@ -41,6 +41,8 @@ export {
 } from "./providers/fireworks.js";
 export { normalizeGitHubCopilotUsagePayload } from "./providers/github-copilot.js";
 export { normalizeKimiCodingUsagePayload } from "./providers/kimi-coding.js";
+export type { MoonshotProviderId } from "./providers/moonshot.js";
+export { normalizeMoonshotBalancePayload } from "./providers/moonshot.js";
 export { normalizeOpenCodeZenPayload } from "./providers/opencode-zen.js";
 export { normalizeOpenRouterKeyPayload } from "./providers/openrouter.js";
 export { normalizeVercelAIGatewayCreditsPayload } from "./providers/vercel-ai-gateway.js";
@@ -74,6 +76,7 @@ export type {
 	FireworksAccountsPayload,
 	FireworksBillingSummaryPayload,
 	KimiCodingUsagePayload,
+	MoonshotBalancePayload,
 	ProviderUsageState,
 	ResolvedUsageAuth,
 	UsageBucket,
