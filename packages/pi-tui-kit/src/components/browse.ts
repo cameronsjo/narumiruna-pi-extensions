@@ -153,7 +153,7 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 				lastDetailSoftWrapAfter = presentation.softWrapAfter;
 				lastDetailIgnoreLeadingWhitespace = presentation.ignoreLeadingWhitespace;
 				lastDetailSearchSources = presentation.searchSources;
-				detailSearch?.updateLines(
+				const searchRebuilt = detailSearch?.updateLines(
 					lastDetailLines,
 					lastDetailSoftWrapAfter,
 					lastDetailIgnoreLeadingWhitespace,
@@ -163,7 +163,7 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 				const layout = detailLayout(contentRows, content.length, detailSearch?.active ?? false);
 				detailViewportRows = layout.contentRows;
 				detailMaximumScroll = Math.max(0, content.length - layout.contentRows);
-				if (detailSearch?.active && detailSearch.currentRow !== undefined) {
+				if (searchRebuilt && detailSearch?.active && detailSearch.currentRow !== undefined) {
 					detailScrollOffset = keepRowVisible(
 						detailScrollOffset,
 						detailSearch.currentRow,

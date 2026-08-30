@@ -489,6 +489,36 @@ test("browse keeps the current detail match visible after rewrapping", () => {
 	assert.match(plainRender(harness.component, 12).join("\n"), /needle/u);
 });
 
+test("browse preserves manual detail scrolling while search is active", () => {
+	const screen: MenuScreen<ScreenId, ActionId> = {
+		kind: "browse",
+		title: "Documents",
+		enableDetailSearch: true,
+		items: [
+			{
+				id: "exact",
+				label: "Exact",
+				detailDocument: {
+					content: ["needle", ...Array.from({ length: 12 }, (_, index) => `row ${index + 1}`)].join(
+						"\n",
+					),
+				},
+			},
+		],
+	};
+	const harness = componentHarness(screen, { rows: 8 });
+	harness.component.render(30);
+	harness.component.handleInput("y");
+	harness.component.render(30);
+	harness.component.handleInput("s");
+	harness.component.handleInput("needle");
+	assert.match(plainRender(harness.component, 30).join("\n"), /needle/u);
+	harness.component.handleInput("d");
+	const scrolled = plainRender(harness.component, 30);
+	assert.equal(scrolled.includes("needle"), false);
+	assert.match(scrolled.join("\n"), /row 1/u);
+});
+
 test("browse searches exact detail documents and resets on exit", () => {
 	const screen: MenuScreen<ScreenId, ActionId> = {
 		kind: "browse",

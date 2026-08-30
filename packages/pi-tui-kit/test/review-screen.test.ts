@@ -879,6 +879,28 @@ test("review keeps the current search match visible after rewrapping", () => {
 	assert.match(plainRender(harness.component, 12), /needle/u);
 });
 
+test("review preserves manual scrolling while search is active", () => {
+	const harness = reviewComponentHarness(
+		{
+			...reviewScreen,
+			content: ["needle", ...Array.from({ length: 12 }, (_, index) => `row ${index + 1}`)].join(
+				"\n",
+			),
+			enableSearch: true,
+		},
+		false,
+		8,
+	);
+	harness.component.render(30);
+	harness.component.handleInput("s");
+	harness.component.handleInput("needle");
+	assert.match(plainRender(harness.component, 30), /needle/u);
+	harness.component.handleInput("d");
+	const scrolled = plainRender(harness.component, 30);
+	assert.equal(scrolled.split("\n").includes("needle"), false);
+	assert.match(scrolled, /row 1/u);
+});
+
 test("review omits compact search hints with empty effective bindings", () => {
 	const hiddenSearchKeybindings: ReviewKeybindings = {
 		matches: (data, binding) => data === "s" && binding === "tui.altScreen.search",

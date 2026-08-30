@@ -83,13 +83,13 @@ export function createReviewComponent<ScreenId extends string, ActionId extends 
 			lastSoftWrapAfter = allLines.length > 0 ? presentation.softWrapAfter : [];
 			lastIgnoreLeadingWhitespace = allLines.length > 0 ? presentation.ignoreLeadingWhitespace : [];
 			lastSearchSources = allLines.length > 0 ? presentation.searchSources : [];
-			search?.updateLines(
+			const searchRebuilt = search?.updateLines(
 				lastLines,
 				lastSoftWrapAfter,
 				lastIgnoreLeadingWhitespace,
 				lastSearchSources,
 			);
-			if (search?.active && search.currentRow !== undefined) {
+			if (searchRebuilt && search?.active && search.currentRow !== undefined) {
 				scrollOffset = keepRowVisible(
 					scrollOffset,
 					search.currentRow,

@@ -115,7 +115,7 @@ export class DocumentSearchController implements Focusable {
 			sameValues(this.ignoreLeadingWhitespace, ignoreLeadingWhitespace) &&
 			sameSearchSources(this.searchSources, searchSources)
 		) {
-			return;
+			return false;
 		}
 		this.lines = [...lines];
 		this.softWrapAfter = [...softWrapAfter];
@@ -125,6 +125,7 @@ export class DocumentSearchController implements Focusable {
 		this.corpus = corpus.text;
 		this.cells = corpus.cells;
 		this.rebuildMatches();
+		return true;
 	}
 
 	routeInput(data: string, handleOutsidePaste: (data: string) => boolean) {
