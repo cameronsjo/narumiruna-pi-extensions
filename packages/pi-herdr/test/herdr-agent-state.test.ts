@@ -73,6 +73,19 @@ function stateRequests(requests: HerdrRequest[]) {
 	return requests.filter(({ method }) => method === "pane.report_agent");
 }
 
+test("Windows socket endpoints preserve qualified pipes and qualify bare names", () => {
+	assert.equal(herdrModule.resolveSocketEndpoint("herdr", "win32"), "\\\\.\\pipe\\herdr");
+	assert.equal(
+		herdrModule.resolveSocketEndpoint("\\\\.\\pipe\\herdr", "win32"),
+		"\\\\.\\pipe\\herdr",
+	);
+	assert.equal(
+		herdrModule.resolveSocketEndpoint("\\\\?\\PIPE\\herdr", "win32"),
+		"\\\\?\\PIPE\\herdr",
+	);
+	assert.equal(herdrModule.resolveSocketEndpoint("/tmp/herdr.sock", "linux"), "/tmp/herdr.sock");
+});
+
 test("disabled factory registers no lifecycle work", () => {
 	const mock = createMockPi();
 	herdrModule.createHerdrAgentStateExtension({

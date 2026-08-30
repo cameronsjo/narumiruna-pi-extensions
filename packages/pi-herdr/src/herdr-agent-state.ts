@@ -39,16 +39,25 @@ function nextReportSeq(): number {
 	return reportSeq;
 }
 
+export function resolveSocketEndpoint(
+	socketPath: string | undefined,
+	platform: NodeJS.Platform = process.platform,
+): string {
+	if (!socketPath || platform !== "win32") return socketPath ?? "";
+	const normalized = socketPath.toLowerCase();
+	if (normalized.startsWith("\\\\.\\pipe\\") || normalized.startsWith("\\\\?\\pipe\\")) {
+		return socketPath;
+	}
+	return `\\\\.\\pipe\\${socketPath}`;
+}
+
 function readEnvironment(environment: NodeJS.ProcessEnv = process.env): HerdrEnvironment {
 	const socketPath = environment.HERDR_SOCKET_PATH;
 	const paneId = environment.HERDR_PANE_ID;
 	return {
 		enabled: environment.HERDR_ENV === "1" && !!socketPath && !!paneId,
 		paneId: paneId ?? "",
-		socketEndpoint:
-			process.platform === "win32" && socketPath
-				? `\\\\.\\pipe\\${socketPath}`
-				: (socketPath ?? ""),
+		socketEndpoint: resolveSocketEndpoint(socketPath),
 	};
 }
 
