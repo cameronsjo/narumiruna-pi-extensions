@@ -8,7 +8,7 @@ Connect Pi's interactive lifecycle to Herdr and bundle the operating guidance ne
 
 - Reports Pi session identity and `working`, `blocked`, and `idle` lifecycle states to the current Herdr pane.
 - Coalesces rapid state changes and retries short-lived local socket failures without interrupting Pi.
-- Listens for `herdr:blocked` events from approval or question integrations.
+- Derives blocked state from Pi's public `ui_prompt_start` and `ui_prompt_end` lifecycle events.
 - Bundles the `herdr` skill for explicit Herdr inspection and control requests.
 - Keeps extension and skill installation in one Pi package.
 
@@ -56,6 +56,7 @@ The extension reports only interactive TUI sessions because Herdr displays agent
 A session report contains the Herdr pane ID, the integration source, Pi's agent kind, a monotonic sequence, the session start reason, and an absolute Pi session path when available.
 It falls back to Pi's session ID when no absolute session path is available.
 Agent reports contain the same ownership fields plus the current lifecycle state and optional blocked label.
+Blocking extension prompts use their Pi-provided title as the label and fall back to the prompt kind.
 
 Local socket delivery is best-effort.
 A failed request is retried once with bounded timeouts, and reporting failures never stop Pi.

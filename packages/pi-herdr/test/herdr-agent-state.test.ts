@@ -117,17 +117,37 @@ test("blocked events override working state until every blocker clears", async (
 	await emit(mock, "session_start", { reason: "startup" }, started.ctx);
 	await flushReporting();
 
-	mock.eventBus.emit("herdr:blocked", { active: true, label: "Approval" });
+	await emit(
+		mock,
+		"ui_prompt_start",
+		{ reason: "ui_prompt", kind: "confirm", title: "Approval" },
+		started.ctx,
+	);
 	await flushReporting();
 	assert.equal(stateRequests(requests).at(-1)?.params.state, "blocked");
 	assert.equal(stateRequests(requests).at(-1)?.params.message, "Approval");
 
-	mock.eventBus.emit("herdr:blocked", { active: true, label: "Question" });
-	mock.eventBus.emit("herdr:blocked", { active: false });
+	await emit(
+		mock,
+		"ui_prompt_start",
+		{ reason: "ui_prompt", kind: "input", title: "Question" },
+		started.ctx,
+	);
+	await emit(
+		mock,
+		"ui_prompt_end",
+		{ reason: "ui_prompt", kind: "confirm", title: "Approval" },
+		started.ctx,
+	);
 	await flushReporting();
 	assert.equal(stateRequests(requests).at(-1)?.params.state, "blocked");
 
-	mock.eventBus.emit("herdr:blocked", { active: false });
+	await emit(
+		mock,
+		"ui_prompt_end",
+		{ reason: "ui_prompt", kind: "input", title: "Question" },
+		started.ctx,
+	);
 	await flushReporting();
 	assert.equal(stateRequests(requests).at(-1)?.params.state, "working");
 });
@@ -140,7 +160,12 @@ test("non-TUI sessions never report state", async () => {
 	await emit(mock, "session_start", { reason: "startup" }, started.ctx);
 	await emit(mock, "agent_start", {}, started.ctx);
 	await emit(mock, "agent_settled", {}, started.ctx);
-	mock.eventBus.emit("herdr:blocked", { active: true, label: "Hidden" });
+	await emit(
+		mock,
+		"ui_prompt_start",
+		{ reason: "ui_prompt", kind: "confirm", title: "Hidden" },
+		started.ctx,
+	);
 	await flushReporting();
 	assert.deepEqual(requests, []);
 });
@@ -224,7 +249,12 @@ test("shutdown aborts a delayed session report before it can publish state", asy
 	await flushReporting();
 	assert.equal(stateRequests(requests).length, 0);
 
-	mock.eventBus.emit("herdr:blocked", { active: true, label: "Stale" });
+	await emit(
+		mock,
+		"ui_prompt_start",
+		{ reason: "ui_prompt", kind: "confirm", title: "Stale" },
+		started.ctx,
+	);
 	await flushReporting();
 	assert.equal(requests.length, 1);
 });

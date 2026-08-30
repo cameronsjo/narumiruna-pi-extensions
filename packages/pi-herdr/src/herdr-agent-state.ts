@@ -25,11 +25,6 @@ interface QueuedState {
 	signal: AbortSignal;
 }
 
-interface HerdrBlockedEvent {
-	active: boolean;
-	label?: string;
-}
-
 export interface HerdrAgentStateOptions {
 	environment?: HerdrEnvironment;
 	now?: () => number;
@@ -96,15 +91,6 @@ function createSocketSender(socketEndpoint: string) {
 		if (signal.aborted) return;
 		await sendRequestAttempt(socketEndpoint, request, 1500, signal);
 	};
-}
-
-function isHerdrBlockedEvent(data: unknown): data is HerdrBlockedEvent {
-	if (!data || typeof data !== "object") return false;
-	const event = data as { active?: unknown; label?: unknown };
-	return (
-		typeof event.active === "boolean" &&
-		(event.label === undefined || typeof event.label === "string")
-	);
 }
 
 export function createHerdrAgentStateExtension(
@@ -242,17 +228,17 @@ export function createHerdrAgentStateExtension(
 			queueState(next.state, next.message);
 		}
 
-		const unsubscribeBlocked = pi.events.on("herdr:blocked", (data) => {
-			if (!rootSession || !isHerdrBlockedEvent(data)) return;
-			if (!data.active) {
-				blockedCount = Math.max(0, blockedCount - 1);
-				if (blockedCount === 0) blockedMessage = undefined;
-				publishState();
-				return;
-			}
-
+		pi.on("ui_prompt_start", (event) => {
+			if (!rootSession) return;
 			blockedCount += 1;
-			blockedMessage = data.label;
+			blockedMessage = event.title?.trim() || event.kind;
+			publishState();
+		});
+
+		pi.on("ui_prompt_end", () => {
+			if (!rootSession) return;
+			blockedCount = Math.max(0, blockedCount - 1);
+			if (blockedCount === 0) blockedMessage = undefined;
 			publishState();
 		});
 
@@ -296,7 +282,6 @@ export function createHerdrAgentStateExtension(
 			rootSession = false;
 			sessionController.abort(new DOMException("Herdr session shut down", "AbortError"));
 			queuedState = undefined;
-			unsubscribeBlocked();
 			await drainTask;
 			currentAgentSessionId = undefined;
 			currentAgentSessionPath = undefined;
