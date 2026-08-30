@@ -96,7 +96,7 @@ Terminal controls are removed at the TUI display boundary, while the validated r
 Extension factory loading starts no background work.
 Session startup runs bounded `daemon status` and, when needed, `daemon start` control processes in the active session directory.
 The permanent account-scoped daemon survives Pi session replacement and shutdown until the user runs `codebase-memory-mcp daemon stop`.
-Session shutdown cancels an in-flight daemon control process but does not stop the permanent daemon.
+Session replacement and shutdown cancel and await any in-flight daemon control process but do not stop the permanent daemon.
 Each tool call starts one local CLI child process in the active session directory.
 Cancelling the tool call terminates that child process.
 

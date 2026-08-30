@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { sanitizeTerminalText } from "@narumitw/pi-tui-kit/terminal-text";
 
 const COMMAND_TIMEOUT_MS = 15_000;
@@ -10,6 +10,12 @@ interface CommandResult {
 	code: number;
 	stdout: string;
 	stderr: string;
+}
+
+interface DaemonSessionLifecycle {
+	generation: number;
+	controller?: AbortController;
+	startup?: Promise<void>;
 }
 
 export interface DaemonEnsureResult {
@@ -43,37 +49,63 @@ export function registerDaemonLifecycle(
 	binary: string,
 	ensureDaemon: DaemonEnsurer = ensureCodebaseMemoryDaemon,
 ): void {
-	let generation = 0;
-	let startupController: AbortController | undefined;
+	const sessions = new WeakMap<ExtensionContext["sessionManager"], DaemonSessionLifecycle>();
 
 	pi.on("session_start", async (_event, ctx) => {
-		const currentGeneration = ++generation;
-		startupController?.abort(abortError("Codebase Memory session replaced"));
-		const controller = new AbortController();
-		startupController = controller;
-
-		try {
-			const result = await ensureDaemon(binary, ctx.cwd, controller.signal);
-			if (controller.signal.aborted || currentGeneration !== generation) return;
-			if (result.started && ctx.hasUI) {
-				ctx.ui.notify("Started the Codebase Memory daemon.", "info");
-			}
-		} catch (error) {
-			if (controller.signal.aborted || currentGeneration !== generation) return;
-			const failure = daemonStartupFailure(error);
-			if (!ctx.hasUI) throw failure;
-			ctx.ui.notify(failure.message, "warning");
-		} finally {
-			if (currentGeneration === generation && startupController === controller) {
-				startupController = undefined;
-			}
+		const sessionManager = ctx.sessionManager;
+		const lifecycle = sessions.get(sessionManager) ?? { generation: 0 };
+		sessions.set(sessionManager, lifecycle);
+		const currentGeneration = ++lifecycle.generation;
+		const previousStartup = lifecycle.startup;
+		lifecycle.controller?.abort(abortError("Codebase Memory session replaced"));
+		if (previousStartup) await previousStartup.catch(() => undefined);
+		if (sessions.get(sessionManager) !== lifecycle || currentGeneration !== lifecycle.generation) {
+			return;
 		}
+
+		const controller = new AbortController();
+		lifecycle.controller = controller;
+		let startup!: Promise<void>;
+		startup = (async () => {
+			try {
+				const result = await ensureDaemon(binary, ctx.cwd, controller.signal);
+				if (controller.signal.aborted || currentGeneration !== lifecycle.generation) return;
+				if (result.started && ctx.hasUI) {
+					ctx.ui.notify("Started the Codebase Memory daemon.", "info");
+				}
+			} catch (error) {
+				if (controller.signal.aborted || currentGeneration !== lifecycle.generation) return;
+				const failure = daemonStartupFailure(error);
+				if (!ctx.hasUI) throw failure;
+				ctx.ui.notify(failure.message, "warning");
+			} finally {
+				if (
+					currentGeneration === lifecycle.generation &&
+					lifecycle.controller === controller &&
+					lifecycle.startup === startup
+				) {
+					lifecycle.controller = undefined;
+					lifecycle.startup = undefined;
+				}
+			}
+		})();
+		lifecycle.startup = startup;
+		await startup;
 	});
 
-	pi.on("session_shutdown", () => {
-		generation += 1;
-		startupController?.abort(abortError("Codebase Memory session shut down"));
-		startupController = undefined;
+	pi.on("session_shutdown", async (_event, ctx) => {
+		const sessionManager = ctx.sessionManager;
+		const lifecycle = sessions.get(sessionManager);
+		if (!lifecycle) return;
+		const shutdownGeneration = ++lifecycle.generation;
+		const startup = lifecycle.startup;
+		lifecycle.controller?.abort(abortError("Codebase Memory session shut down"));
+		if (startup) await startup.catch(() => undefined);
+		if (sessions.get(sessionManager) === lifecycle && shutdownGeneration === lifecycle.generation) {
+			sessions.delete(sessionManager);
+			lifecycle.controller = undefined;
+			lifecycle.startup = undefined;
+		}
 	});
 }
 

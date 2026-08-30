@@ -240,17 +240,83 @@ test("daemon lifecycle notifies only when it starts the permanent daemon", async
 	assert.deepEqual(existingContext.notifications, []);
 });
 
-test("daemon lifecycle cancels stale startup work without stopping the daemon", async () => {
+test("daemon lifecycle waits for stale startup cleanup during replacement", async () => {
+	let callCount = 0;
+	let firstSignal: AbortSignal | undefined;
+	let releaseFirstCleanup: (() => void) | undefined;
+	let resolveFirstReady: (() => void) | undefined;
+	let resolveFirstAbort: (() => void) | undefined;
+	const firstReady = new Promise<void>((resolve) => {
+		resolveFirstReady = resolve;
+	});
+	const firstAbort = new Promise<void>((resolve) => {
+		resolveFirstAbort = resolve;
+	});
+	const ensureDaemon: DaemonEnsurer = async (_binary, _cwd, signal) => {
+		callCount += 1;
+		if (callCount > 1) return { started: false };
+		firstSignal = signal;
+		resolveFirstReady?.();
+		return await new Promise((_resolve, reject) => {
+			signal.addEventListener(
+				"abort",
+				() => {
+					resolveFirstAbort?.();
+					releaseFirstCleanup = () => reject(signal.reason);
+				},
+				{ once: true },
+			);
+		});
+	};
+	const harness = createLifecycleHarness(ensureDaemon);
+	const sessionManager = {};
+	const first = lifecycleContext("tui", sessionManager);
+	const replacementContext = lifecycleContext("tui", sessionManager);
+	const firstStartup = harness.emit("session_start", first.ctx);
+	await firstReady;
+
+	let replacementSettled = false;
+	const replacement = harness.emit("session_start", replacementContext.ctx).then(() => {
+		replacementSettled = true;
+	});
+	await firstAbort;
+	await Promise.resolve();
+	assert.equal(firstSignal?.aborted, true);
+	assert.equal(callCount, 1);
+	assert.equal(replacementSettled, false);
+
+	releaseFirstCleanup?.();
+	await firstStartup;
+	await replacement;
+
+	assert.equal(callCount, 2);
+	assert.deepEqual(first.notifications, []);
+	assert.deepEqual(replacementContext.notifications, []);
+});
+
+test("daemon lifecycle waits for startup cleanup during shutdown", async () => {
 	let startupSignal: AbortSignal | undefined;
-	let signalReady: (() => void) | undefined;
+	let releaseCleanup: (() => void) | undefined;
+	let resolveReady: (() => void) | undefined;
+	let resolveAbort: (() => void) | undefined;
 	const ready = new Promise<void>((resolve) => {
-		signalReady = resolve;
+		resolveReady = resolve;
+	});
+	const aborted = new Promise<void>((resolve) => {
+		resolveAbort = resolve;
 	});
 	const ensureDaemon: DaemonEnsurer = async (_binary, _cwd, signal) => {
 		startupSignal = signal;
-		signalReady?.();
+		resolveReady?.();
 		return await new Promise((_resolve, reject) => {
-			signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+			signal.addEventListener(
+				"abort",
+				() => {
+					resolveAbort?.();
+					releaseCleanup = () => reject(signal.reason);
+				},
+				{ once: true },
+			);
 		});
 	};
 	const harness = createLifecycleHarness(ensureDaemon);
@@ -258,11 +324,58 @@ test("daemon lifecycle cancels stale startup work without stopping the daemon", 
 	const startup = harness.emit("session_start", context.ctx);
 	await ready;
 
-	await harness.emit("session_shutdown", context.ctx);
+	let shutdownSettled = false;
+	const shutdown = harness.emit("session_shutdown", context.ctx).then(() => {
+		shutdownSettled = true;
+	});
+	await aborted;
+	await Promise.resolve();
+	assert.equal(startupSignal?.aborted, true);
+	assert.equal(shutdownSettled, false);
+
+	releaseCleanup?.();
+	await shutdown;
 	await startup;
 
-	assert.equal(startupSignal?.aborted, true);
+	assert.equal(shutdownSettled, true);
 	assert.deepEqual(context.notifications, []);
+});
+
+test("daemon lifecycle isolates startup work by session manager", async () => {
+	const signals: AbortSignal[] = [];
+	let resolveFirstReady: (() => void) | undefined;
+	let resolveSecondReady: (() => void) | undefined;
+	const firstReady = new Promise<void>((resolve) => {
+		resolveFirstReady = resolve;
+	});
+	const secondReady = new Promise<void>((resolve) => {
+		resolveSecondReady = resolve;
+	});
+	const ensureDaemon: DaemonEnsurer = async (_binary, _cwd, signal) => {
+		signals.push(signal);
+		if (signals.length === 1) resolveFirstReady?.();
+		if (signals.length === 2) resolveSecondReady?.();
+		return await new Promise((_resolve, reject) => {
+			signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+		});
+	};
+	const harness = createLifecycleHarness(ensureDaemon);
+	const first = lifecycleContext("print", {});
+	const second = lifecycleContext("print", {});
+	const firstStartup = harness.emit("session_start", first.ctx);
+	await firstReady;
+	const secondStartup = harness.emit("session_start", second.ctx);
+	await secondReady;
+
+	assert.equal(signals[0]?.aborted, false);
+	assert.equal(signals[1]?.aborted, false);
+	await harness.emit("session_shutdown", second.ctx);
+	await harness.emit("session_shutdown", second.ctx);
+	assert.equal(signals[0]?.aborted, false);
+	assert.equal(signals[1]?.aborted, true);
+	await harness.emit("session_shutdown", first.ctx);
+	await Promise.all([firstStartup, secondStartup]);
+	assert.equal(signals[0]?.aborted, true);
 });
 
 test("daemon lifecycle exposes startup failures safely in UI and non-UI modes", async () => {
@@ -741,12 +854,13 @@ function createLifecycleHarness(ensureDaemon: DaemonEnsurer) {
 	};
 }
 
-function lifecycleContext(mode: ExtensionContext["mode"]) {
+function lifecycleContext(mode: ExtensionContext["mode"], sessionManager: object = {}) {
 	const notifications: Array<[string, string | undefined]> = [];
 	const ctx = {
 		cwd: fixtureDirectory,
 		mode,
 		hasUI: mode === "tui" || mode === "rpc",
+		sessionManager,
 		ui: {
 			notify(message: string, level?: string) {
 				notifications.push([message, level]);
