@@ -436,12 +436,13 @@ async function runProcess(command, args, options) {
 			stdio: ["pipe", "pipe", "pipe"],
 		});
 		let settled = false;
+		let timeout;
 		let stdout = Buffer.alloc(0);
 		let stderr = Buffer.alloc(0);
 		const finish = (callback, value) => {
 			if (settled) return;
 			settled = true;
-			clearTimeout(timeout);
+			if (timeout) clearTimeout(timeout);
 			options.signal?.removeEventListener("abort", onAbort);
 			callback(value);
 		};
@@ -459,10 +460,13 @@ async function runProcess(command, args, options) {
 			child.kill("SIGKILL");
 			fail(abortReason(options.signal));
 		};
-		const timeout = setTimeout(() => {
-			child.kill("SIGKILL");
-			fail(new Error(`${command} exceeded ${options.timeoutMs}ms`));
-		}, options.timeoutMs);
+		child.once("spawn", () => {
+			if (settled) return;
+			timeout = setTimeout(() => {
+				child.kill("SIGKILL");
+				fail(new Error(`${command} exceeded ${options.timeoutMs}ms`));
+			}, options.timeoutMs);
+		});
 		options.signal?.addEventListener("abort", onAbort, { once: true });
 		if (options.signal?.aborted) onAbort();
 		child.stdout.on("data", (chunk) => {

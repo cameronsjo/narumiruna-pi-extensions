@@ -313,8 +313,8 @@ function validateExactTool(input, label) {
 	requireObject(input, `${label}.exactTool`);
 	rejectUnknown(input, new Set(["name", "args"]), `${label}.exactTool`);
 	requireString(input.name, `${label}.exactTool.name`);
-	if (!CBMEM_TOOLS.includes(input.name)) {
-		throw new Error(`${label}.exactTool.name is not a pi-cbmem tool`);
+	if (!CBMEM_READ_ONLY_TOOLS.includes(input.name)) {
+		throw new Error(`${label}.exactTool.name must be a read-only pi-cbmem tool`);
 	}
 	requireObject(input.args, `${label}.exactTool.args`);
 }

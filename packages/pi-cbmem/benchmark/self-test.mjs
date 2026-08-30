@@ -57,6 +57,11 @@ assert.throws(
 	() => validateSuite({ ...suiteInput, tasks: [suiteInput.tasks[1], suiteInput.tasks[1]] }),
 	/duplicate task id/,
 );
+for (const tool of ["index_repository", "delete_project", "manage_adr", "ingest_traces"]) {
+	const unsafeSuite = structuredClone(suiteInput);
+	unsafeSuite.tasks[0].exactTool.name = tool;
+	assert.throws(() => validateSuite(unsafeSuite), /must be a read-only pi-cbmem tool/);
+}
 const exact = materializeTask(suite.tasks[0], "project-name");
 assert.equal(exact.exactTool.args.project, "project-name");
 assert.equal(suite.tasks[0].exactTool.args.project, projectPlaceholder);
@@ -470,7 +475,9 @@ function response(command, data) {
 	send({ id: command.id, type: "response", command: command.type, success: true, ...(data ? { data } : {}) });
 }
 function handle(command) {
-	if (command.type === "get_commands") {
+	if (command.type === "set_auto_compaction" && process.argv.includes("slow-start")) {
+		setTimeout(() => response(command), 150);
+	} else if (command.type === "get_commands") {
 		response(command, { commands: [{ name: "skill:codebase-memory", sourceInfo: { path: ${JSON.stringify(skillPath)} } }] });
 	} else if (command.type === "prompt") {
 		response(command);
@@ -507,6 +514,23 @@ function handle(command) {
 	assert.equal(rpcTrial.metrics.requestUsage[0].providerTokens, 16);
 	assert.equal(rpcTrial.package.version, "9.9.9");
 	assert.equal(rpcTrial.method.toolResults[0].bytes, Buffer.byteLength(packet));
+	const slowStartupTrial = await runPiTrial({
+		arm: "cbmem",
+		evidencePacket: packet,
+		options: {
+			...options,
+			cacheMode: "warm",
+			model: "slow-start",
+			pi: fakePiPath,
+			repo: rpcRoot,
+			suite: { id: "test:v1" },
+			timeoutMs: 50,
+		},
+		repetition: 1,
+		task: exact,
+	});
+	assert.equal(slowStartupTrial.score.success, true);
+	assert.ok(slowStartupTrial.metrics.startupMs >= 100);
 	await assert.rejects(
 		runPiTrial({
 			arm: "baseline",
@@ -525,8 +549,42 @@ function handle(command) {
 		}),
 		/exceeded 100ms/,
 	);
+	await assert.rejects(
+		settleWithin(
+			runPiTrial({
+				arm: "baseline",
+				evidencePacket: packet,
+				options: {
+					...options,
+					cacheMode: "warm",
+					pi: path.join(rpcRoot, "missing-pi"),
+					repo: rpcRoot,
+					suite: { id: "test:v1" },
+					timeoutMs: 100,
+				},
+				repetition: 1,
+				task: exact,
+			}),
+			1_000,
+		),
+		/ENOENT/,
+	);
 } finally {
 	await rm(rpcRoot, { recursive: true, force: true });
 }
 
 process.stdout.write("pi-cbmem benchmark self-test passed\n");
+
+async function settleWithin(promise, timeoutMs) {
+	let timer;
+	try {
+		return await Promise.race([
+			promise,
+			new Promise((_resolve, reject) => {
+				timer = setTimeout(() => reject(new Error("operation did not settle")), timeoutMs);
+			}),
+		]);
+	} finally {
+		if (timer) clearTimeout(timer);
+	}
+}

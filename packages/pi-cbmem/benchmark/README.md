@@ -133,6 +133,7 @@ just benchmark-cbmem \
 ```
 
 Each task and arm runs once by default.
+The per-trial deadline starts after the first successful Pi RPC response, while `startupMs` and `processWallMs` still record process startup.
 Use at least five runs per arm for a useful diagnostic sample.
 The order alternates by repetition as baseline/treatment then treatment/baseline, producing ABBA across two repetitions.
 
@@ -198,7 +199,8 @@ The default suite is [`suites/pi-extensions.json`](./suites/pi-extensions.json).
 It targets facts in this repository's pi-cbmem implementation.
 
 A custom suite must provide a unique id, exact expected facts, and at least one task.
-Exact-payload tasks also provide one pi-cbmem tool name and argument object.
+Exact-payload tasks also provide one read-only pi-cbmem tool name and argument object.
+The validator rejects indexing, project deletion, ADR replacement, and trace ingestion before any setup command can run.
 Use `${project}` in tool arguments to substitute the live `--project` value.
 
 Expected facts are hidden from prompts but remain in the suite and result for deterministic grading.

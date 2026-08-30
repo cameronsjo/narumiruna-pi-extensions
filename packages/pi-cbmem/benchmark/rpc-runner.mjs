@@ -30,6 +30,7 @@ export async function runPiTrial({ arm, evidencePacket, options, repetition, sig
 	signal?.addEventListener("abort", onAbort, { once: true });
 	let timeout;
 	try {
+		await rpc.send({ type: "set_auto_compaction", enabled: false });
 		const execution = executeTrial({
 			arm,
 			evidencePacket,
@@ -88,7 +89,6 @@ export function buildPiArguments({ arm, cacheNonce, options, task }) {
 }
 
 async function executeTrial({ arm, evidencePacket, processStarted, project, rpc, task }) {
-	await rpc.send({ type: "set_auto_compaction", enabled: false });
 	await rpc.send({ type: "set_auto_retry", enabled: false });
 	const commandsResponse = await rpc.send({ type: "get_commands" });
 	const startupMs = performance.now() - processStarted;
@@ -206,8 +206,8 @@ class RpcProcess {
 		this.child.stderr.on("data", (chunk) => {
 			this.stderr = boundedTail(this.stderr + chunk.toString("utf8"), STDERR_LIMIT);
 		});
-		this.exitPromise = new Promise((resolve) => {
-			this.child.once("exit", (code, exitSignal) => {
+		this.closePromise = new Promise((resolve) => {
+			this.child.once("close", (code, exitSignal) => {
 				if (!this.closed && this.promptStarted !== undefined && !this.failed) {
 					this.fail(
 						new Error(
@@ -344,9 +344,9 @@ class RpcProcess {
 				resolve(undefined);
 			}, 5_000);
 		});
-		await Promise.race([this.exitPromise, cleanupDeadline]);
+		await Promise.race([this.closePromise, cleanupDeadline]);
 		if (cleanupTimer) clearTimeout(cleanupTimer);
-		const exit = await this.exitPromise;
+		const exit = await this.closePromise;
 		if (!this.failed && exit.code !== 0) {
 			throw new Error(
 				`Pi exited with code ${exit.code} (signal=${exit.signal ?? "none"}): ${this.stderr.trim()}`,
