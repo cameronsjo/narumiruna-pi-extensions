@@ -68,8 +68,12 @@ export function createDocumentLineCache(theme: DocumentTheme) {
 
 export interface DocumentPresentation {
 	lines: string[];
+	/** Unpadded rows used to build the search corpus while retaining display-cell coordinates. */
+	searchLines: string[];
 	/** True when a rendered row continues directly into the next row without source whitespace. */
 	softWrapAfter: boolean[];
+	/** Ignore renderer-added indentation at the start of a continued row. */
+	ignoreLeadingWhitespace: boolean[];
 }
 
 export function formatDocumentLines(
@@ -90,7 +94,14 @@ export function formatDocumentPresentation(
 	const resolvedFormat = format ?? { kind: "text" as const };
 	if (resolvedFormat.kind === "markdown") {
 		const lines = renderMarkdownDocument(content, resolvedFormat, width, theme);
-		return { lines, softWrapAfter: lines.map(() => false) };
+		const searchLines = lines.map((line) => PiTui.stripTerminalSequences(line).trimEnd());
+		const softWrapAfter = markdownSoftWrapAfter(content, searchLines);
+		return {
+			lines,
+			searchLines,
+			softWrapAfter,
+			ignoreLeadingWhitespace: searchLines.map((_, index) => softWrapAfter[index - 1] ?? false),
+		};
 	}
 	const segments = documentSegments(content, width);
 	let lines: string[];
@@ -113,7 +124,28 @@ export function formatDocumentPresentation(
 	} else {
 		lines = segments.map(({ text }) => theme.fg("text", text));
 	}
-	return { lines, softWrapAfter: segments.map(({ softWrapAfter }) => softWrapAfter) };
+	return {
+		lines,
+		searchLines: lines,
+		softWrapAfter: segments.map(({ softWrapAfter }) => softWrapAfter),
+		ignoreLeadingWhitespace: lines.map(() => false),
+	};
+}
+
+function markdownSoftWrapAfter(content: string, lines: readonly string[]) {
+	const source = sanitizeDocumentText(content);
+	let sourceOffset = 0;
+	return lines.map((line, index) => {
+		const next = lines[index + 1];
+		if (next === undefined) return false;
+		const left = Array.from(line.trim()).slice(-16).join("");
+		const right = Array.from(next.trim()).slice(0, 16).join("");
+		if (!left || !right) return false;
+		const leftIndex = source.indexOf(left, sourceOffset);
+		if (leftIndex < 0) return false;
+		sourceOffset = leftIndex + left.length;
+		return source.startsWith(right, sourceOffset);
+	});
 }
 
 export function plainDocumentLines(content: string, width: number): string[] {

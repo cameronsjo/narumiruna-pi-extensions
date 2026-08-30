@@ -14,6 +14,7 @@ import type { MenuBrowseItem } from "../types.js";
 import type { BrowseOptions, MenuKeybindings, MenuScreenComponent } from "./contracts.js";
 import {
 	createDocumentLineCache,
+	type DocumentPresentation,
 	documentDialogPages,
 	RPC_DOCUMENT_LINE_WIDTH,
 	RPC_DOCUMENT_PAGE_SIZE,
@@ -67,6 +68,7 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 	let detailMaximumScroll = 0;
 	let lastDetailLines: readonly string[] = [];
 	let lastDetailSoftWrapAfter: readonly boolean[] = [];
+	let lastDetailIgnoreLeadingWhitespace: readonly boolean[] = [];
 	let view: BrowseView = "list";
 	let focused = false;
 	let disposed = false;
@@ -141,11 +143,16 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 							selectedItem.detailDocument.format,
 							safeWidth,
 						)
-					: undefined;
-				const content = presentation?.lines ?? legacyDetailLines(selectedItem, safeWidth);
-				lastDetailLines = content;
-				lastDetailSoftWrapAfter = presentation?.softWrapAfter ?? [];
-				detailSearch?.updateLines(content, lastDetailSoftWrapAfter);
+					: legacyDetailPresentation(selectedItem, safeWidth);
+				const content = presentation.lines;
+				lastDetailLines = presentation.searchLines;
+				lastDetailSoftWrapAfter = presentation.softWrapAfter;
+				lastDetailIgnoreLeadingWhitespace = presentation.ignoreLeadingWhitespace;
+				detailSearch?.updateLines(
+					lastDetailLines,
+					lastDetailSoftWrapAfter,
+					lastDetailIgnoreLeadingWhitespace,
+				);
 				const displayedContent = detailSearch?.highlight(content, options.theme) ?? content;
 				const layout = detailLayout(contentRows, content.length, detailSearch?.active ?? false);
 				detailViewportRows = layout.contentRows;
@@ -237,44 +244,57 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 		},
 		handleInput(data) {
 			if (disposed) return;
-			if (
-				view === "detail" &&
-				detailSearch?.active &&
-				detailSearch.shouldHandleBeforeShortcuts(data)
-			) {
-				if (detailSearch.handleInput(data)) moveToDetailMatch(detailSearch.currentRow);
+			if (view === "detail" && detailSearch?.active) {
+				const routed = detailSearch.routeInput(data, (outsidePaste) => {
+					if (matchesKey(outsidePaste, Key.ctrl("c"))) {
+						options.onEvent({ kind: "close" });
+						return false;
+					}
+					if (options.keybindings.matches(outsidePaste, "tui.altScreen.searchClose")) {
+						detailSearch.close();
+						return false;
+					}
+					if (options.keybindings.matches(outsidePaste, "tui.altScreen.searchNext")) {
+						moveToDetailMatch(detailSearch.next());
+					} else if (options.keybindings.matches(outsidePaste, "tui.altScreen.searchPrevious")) {
+						moveToDetailMatch(detailSearch.previous());
+					} else if (options.keybindings.matches(outsidePaste, "tui.select.up")) {
+						detailScrollOffset = clamp(detailScrollOffset - 1, 0, detailMaximumScroll);
+					} else if (options.keybindings.matches(outsidePaste, "tui.select.down")) {
+						detailScrollOffset = clamp(detailScrollOffset + 1, 0, detailMaximumScroll);
+					} else if (options.keybindings.matches(outsidePaste, "tui.select.pageUp")) {
+						detailScrollOffset = clamp(
+							detailScrollOffset - detailViewportRows,
+							0,
+							detailMaximumScroll,
+						);
+					} else if (options.keybindings.matches(outsidePaste, "tui.select.pageDown")) {
+						detailScrollOffset = clamp(
+							detailScrollOffset + detailViewportRows,
+							0,
+							detailMaximumScroll,
+						);
+					} else if (matchesKey(outsidePaste, Key.home)) detailScrollOffset = 0;
+					else if (matchesKey(outsidePaste, Key.end)) {
+						detailScrollOffset = detailMaximumScroll;
+					} else if (detailSearch.handleInput(outsidePaste)) {
+						moveToDetailMatch(detailSearch.currentRow);
+					}
+					return true;
+				});
+				if (routed.changed && !routed.stopped) moveToDetailMatch(detailSearch.currentRow);
 				options.tui.requestRender();
 				return;
 			}
 			if (matchesKey(data, Key.ctrl("c"))) {
 				options.onEvent({ kind: "close" });
-			} else if (
-				view === "detail" &&
-				detailSearch?.active &&
-				options.keybindings.matches(data, "tui.altScreen.searchClose")
-			) {
-				detailSearch.close();
-			} else if (
-				view === "detail" &&
-				detailSearch?.active &&
-				options.keybindings.matches(data, "tui.altScreen.searchNext")
-			) {
-				moveToDetailMatch(detailSearch.next());
-			} else if (
-				view === "detail" &&
-				detailSearch?.active &&
-				options.keybindings.matches(data, "tui.altScreen.searchPrevious")
-			) {
-				moveToDetailMatch(detailSearch.previous());
-			} else if (
-				!(view === "detail" && detailSearch?.active) &&
-				options.keybindings.matches(data, "tui.select.cancel")
-			) {
+			} else if (options.keybindings.matches(data, "tui.select.cancel")) {
 				if (view === "detail") {
 					view = "list";
 					detailScrollOffset = 0;
 					lastDetailLines = [];
 					lastDetailSoftWrapAfter = [];
+					lastDetailIgnoreLeadingWhitespace = [];
 					detailSearch?.close();
 					syncFocus();
 				} else options.onEvent({ kind: options.screen.hint ?? "back" });
@@ -297,10 +317,12 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 					);
 				} else if (matchesKey(data, Key.home)) detailScrollOffset = 0;
 				else if (matchesKey(data, Key.end)) detailScrollOffset = detailMaximumScroll;
-				else if (detailSearch?.active) {
-					if (detailSearch.handleInput(data)) moveToDetailMatch(detailSearch.currentRow);
-				} else if (detailSearch && options.keybindings.matches(data, "tui.altScreen.search")) {
-					detailSearch.activate(lastDetailLines, lastDetailSoftWrapAfter);
+				else if (detailSearch && options.keybindings.matches(data, "tui.altScreen.search")) {
+					detailSearch.activate(
+						lastDetailLines,
+						lastDetailSoftWrapAfter,
+						lastDetailIgnoreLeadingWhitespace,
+					);
 				}
 			} else if (options.keybindings.matches(data, "tui.select.up")) move(-1);
 			else if (options.keybindings.matches(data, "tui.select.down")) move(1);
@@ -315,6 +337,7 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 					detailScrollOffset = 0;
 					lastDetailLines = [];
 					lastDetailSoftWrapAfter = [];
+					lastDetailIgnoreLeadingWhitespace = [];
 					detailSearch?.close();
 					syncFocus();
 				}
@@ -359,9 +382,34 @@ function listRows<ScreenId extends string, ActionId extends string>(
 	});
 }
 
-function legacyDetailLines(item: MenuBrowseItem | undefined, width: number): string[] {
-	if (!item) return ["No matching item."];
-	return browseDetailSource(item).flatMap((line) => (line ? wrapTextWithAnsi(line, width) : [""]));
+function legacyDetailPresentation(
+	item: MenuBrowseItem | undefined,
+	width: number,
+): DocumentPresentation {
+	const sourceLines = item ? browseDetailSource(item) : ["No matching item."];
+	const lines: string[] = [];
+	const softWrapAfter: boolean[] = [];
+	for (const source of sourceLines) {
+		const wrapped = source ? wrapTextWithAnsi(source, width) : [""];
+		let sourceOffset = 0;
+		for (const [index, line] of wrapped.entries()) {
+			lines.push(line);
+			const plain = stripVTControlCharacters(line).trimEnd();
+			const found = source.indexOf(plain, sourceOffset);
+			if (found >= 0) sourceOffset = found + plain.length;
+			softWrapAfter.push(
+				index < wrapped.length - 1 &&
+					sourceOffset < source.length &&
+					!/\s/u.test(source[sourceOffset] ?? ""),
+			);
+		}
+	}
+	return {
+		lines,
+		searchLines: lines,
+		softWrapAfter,
+		ignoreLeadingWhitespace: lines.map(() => false),
+	};
 }
 
 export function browseDialogLabel(item: MenuBrowseItem) {

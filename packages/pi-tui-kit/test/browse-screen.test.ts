@@ -422,7 +422,7 @@ test("browse detail search stays independent from list filtering", () => {
 				id: "legacy",
 				label: "Legacy",
 				searchText: "catalog-only",
-				details: ["first needle", "second needle"],
+				details: ["first needle", "second needle", "abcdefgh"],
 			},
 		],
 	} as MenuScreen<ScreenId, ActionId>;
@@ -442,6 +442,13 @@ test("browse detail search stays independent from list filtering", () => {
 	harness.component.handleInput("n");
 	harness.component.handleInput("x");
 	assert.doesNotMatch(plainRender(harness.component, 40).join("\n"), /Find:/u);
+	harness.component.render(4);
+	harness.component.handleInput("s");
+	harness.component.handleInput("def");
+	colors.length = 0;
+	harness.component.render(4);
+	assert.ok(colors.includes("searchMatchText"));
+	harness.component.handleInput("x");
 	harness.component.handleInput("s");
 	harness.component.handleInput("\u001b[200~");
 	harness.component.handleInput("\u0003");
@@ -451,6 +458,12 @@ test("browse detail search stays independent from list filtering", () => {
 	harness.component.handleInput("q");
 	assert.match(plainRender(harness.component, 40).join("\n"), /Legacy/u);
 	assert.doesNotMatch(plainRender(harness.component, 40).join("\n"), /No matching items/u);
+	harness.component.handleInput("y");
+	harness.component.render(40);
+	harness.component.handleInput("s");
+	harness.component.handleInput("\u001b[200~needle");
+	harness.component.handleInput("\u001b[201~\u0003");
+	assert.deepEqual(harness.events, [{ kind: "close" }]);
 });
 
 test("browse searches exact detail documents and resets on exit", () => {

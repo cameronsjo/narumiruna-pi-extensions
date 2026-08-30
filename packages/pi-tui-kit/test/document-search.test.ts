@@ -38,8 +38,8 @@ test("matches case-insensitive literals across rendered whitespace", () => {
 test("preserves literal matches across exact-document soft wraps", () => {
 	const wrapped = formatDocumentPresentation("abcdefgh", { kind: "text" }, 4, theme);
 	assert.deepEqual(wrapped.softWrapAfter, [true, false]);
-	const controller = search(wrapped.lines, "def");
-	controller.updateLines(wrapped.lines, wrapped.softWrapAfter);
+	const controller = search(wrapped.searchLines, "def");
+	controller.updateLines(wrapped.searchLines, wrapped.softWrapAfter);
 	assert.equal(controller.count, 1);
 	assert.deepEqual(controller.highlight(wrapped.lines, theme).map(stripVTControlCharacters), [
 		"abcd",
@@ -47,8 +47,46 @@ test("preserves literal matches across exact-document soft wraps", () => {
 	]);
 
 	const explicitLines = formatDocumentPresentation("abcd\nefgh", { kind: "text" }, 4, theme);
-	controller.updateLines(explicitLines.lines, explicitLines.softWrapAfter);
+	controller.updateLines(explicitLines.searchLines, explicitLines.softWrapAfter);
 	assert.equal(controller.count, 0);
+});
+
+test("preserves Markdown tokens across soft wraps without joining source lines", () => {
+	const wrapped = formatDocumentPresentation("abcdefgh", { kind: "markdown" }, 4, theme);
+	assert.deepEqual(wrapped.softWrapAfter, [true, false]);
+	const controller = search(wrapped.searchLines, "def");
+	controller.updateLines(
+		wrapped.searchLines,
+		wrapped.softWrapAfter,
+		wrapped.ignoreLeadingWhitespace,
+	);
+	assert.equal(controller.count, 1);
+
+	const list = formatDocumentPresentation("- abcdefgh", { kind: "markdown" }, 4, theme);
+	controller.updateLines(list.searchLines, list.softWrapAfter, list.ignoreLeadingWhitespace);
+	assert.equal(controller.count, 1);
+
+	const explicitLines = formatDocumentPresentation("abcd\nefgh", { kind: "markdown" }, 4, theme);
+	assert.deepEqual(explicitLines.softWrapAfter, [false, false]);
+	controller.updateLines(
+		explicitLines.searchLines,
+		explicitLines.softWrapAfter,
+		explicitLines.ignoreLeadingWhitespace,
+	);
+	assert.equal(controller.count, 0);
+
+	const repeated = formatDocumentPresentation(
+		"abcd\nefgh\n\nabcdefgh",
+		{ kind: "markdown" },
+		4,
+		theme,
+	);
+	controller.updateLines(
+		repeated.searchLines,
+		repeated.softWrapAfter,
+		repeated.ignoreLeadingWhitespace,
+	);
+	assert.equal(controller.count, 1);
 });
 
 test("maps combining and wide graphemes to ANSI-safe cell ranges", () => {
@@ -105,6 +143,23 @@ test("handles empty, absent, repeated, resized, invalidated, and sanitized queri
 	controller.close();
 	controller.activate(["same"]);
 	assert.equal(controller.count, 0);
+});
+
+test("routes only pasted bytes ahead of surrounding shortcuts", () => {
+	const controller = new DocumentSearchController();
+	const outsidePaste: string[] = [];
+	controller.activate(["needle"]);
+	controller.routeInput("before\u001b[200~nee", (data) => {
+		outsidePaste.push(data);
+		return true;
+	});
+	const routed = controller.routeInput("dle\u001b[201~\u0003", (data) => {
+		outsidePaste.push(data);
+		return false;
+	});
+	assert.equal(controller.input.getValue(), "needle");
+	assert.deepEqual(outsidePaste, ["before", "\u0003"]);
+	assert.deepEqual(routed, { changed: true, stopped: true });
 });
 
 test("reuses unchanged line content and bounds its compact input", () => {

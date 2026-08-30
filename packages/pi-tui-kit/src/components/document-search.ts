@@ -38,6 +38,7 @@ export class DocumentSearchController implements Focusable {
 	private parentFocused = false;
 	private lines: readonly string[] = [];
 	private softWrapAfter: readonly boolean[] = [];
+	private ignoreLeadingWhitespace: readonly boolean[] = [];
 	private corpus = "";
 	private cells: Array<CorpusCell | undefined> = [];
 	private matches: DocumentMatch[] = [];
@@ -65,9 +66,13 @@ export class DocumentSearchController implements Focusable {
 		return this.matches[this.currentIndex]?.ranges[0]?.row;
 	}
 
-	activate(lines: readonly string[], softWrapAfter: readonly boolean[] = []) {
+	activate(
+		lines: readonly string[],
+		softWrapAfter: readonly boolean[] = [],
+		ignoreLeadingWhitespace: readonly boolean[] = [],
+	) {
 		this.active = true;
-		this.updateLines(lines, softWrapAfter);
+		this.updateLines(lines, softWrapAfter, ignoreLeadingWhitespace);
 		this.syncFocus();
 	}
 
@@ -80,18 +85,55 @@ export class DocumentSearchController implements Focusable {
 		this.syncFocus();
 	}
 
-	updateLines(lines: readonly string[], softWrapAfter: readonly boolean[] = []) {
-		if (sameLines(this.lines, lines) && sameValues(this.softWrapAfter, softWrapAfter)) return;
+	updateLines(
+		lines: readonly string[],
+		softWrapAfter: readonly boolean[] = [],
+		ignoreLeadingWhitespace: readonly boolean[] = [],
+	) {
+		if (
+			sameLines(this.lines, lines) &&
+			sameValues(this.softWrapAfter, softWrapAfter) &&
+			sameValues(this.ignoreLeadingWhitespace, ignoreLeadingWhitespace)
+		) {
+			return;
+		}
 		this.lines = [...lines];
 		this.softWrapAfter = [...softWrapAfter];
-		const corpus = buildCorpus(lines, softWrapAfter);
+		this.ignoreLeadingWhitespace = [...ignoreLeadingWhitespace];
+		const corpus = buildCorpus(lines, softWrapAfter, ignoreLeadingWhitespace);
 		this.corpus = corpus.text;
 		this.cells = corpus.cells;
 		this.rebuildMatches();
 	}
 
-	shouldHandleBeforeShortcuts(data: string) {
-		return this.pasting || data.includes(PASTE_START);
+	routeInput(data: string, handleOutsidePaste: (data: string) => boolean) {
+		let changed = false;
+		let offset = 0;
+		while (offset < data.length) {
+			if (this.pasting) {
+				const end = data.indexOf(PASTE_END, offset);
+				const nextOffset = end < 0 ? data.length : end + PASTE_END.length;
+				changed = this.handleInput(data.slice(offset, nextOffset)) || changed;
+				offset = nextOffset;
+				continue;
+			}
+			const start = data.indexOf(PASTE_START, offset);
+			if (start < 0) {
+				return {
+					changed,
+					stopped: !handleOutsidePaste(data.slice(offset)),
+				};
+			}
+			if (start > offset && !handleOutsidePaste(data.slice(offset, start))) {
+				return { changed, stopped: true };
+			}
+			if (!this.active) return { changed, stopped: true };
+			const end = data.indexOf(PASTE_END, start + PASTE_START.length);
+			const nextOffset = end < 0 ? data.length : end + PASTE_END.length;
+			changed = this.handleInput(data.slice(start, nextOffset)) || changed;
+			offset = nextOffset;
+		}
+		return { changed, stopped: false };
 	}
 
 	handleInput(data: string) {
@@ -143,6 +185,7 @@ export class DocumentSearchController implements Focusable {
 		this.input.invalidate();
 		this.lines = [];
 		this.softWrapAfter = [];
+		this.ignoreLeadingWhitespace = [];
 		this.corpus = "";
 		this.cells = [];
 		this.matches = [];
@@ -166,7 +209,11 @@ export class DocumentSearchController implements Focusable {
 	}
 }
 
-function buildCorpus(lines: readonly string[], softWrapAfter: readonly boolean[]) {
+function buildCorpus(
+	lines: readonly string[],
+	softWrapAfter: readonly boolean[],
+	ignoreLeadingWhitespace: readonly boolean[],
+) {
 	let text = "";
 	const cells: Array<CorpusCell | undefined> = [];
 	let pendingWhitespace: CorpusCell | undefined;
@@ -177,14 +224,16 @@ function buildCorpus(lines: readonly string[], softWrapAfter: readonly boolean[]
 	};
 	for (const [row, line] of lines.entries()) {
 		let column = 0;
+		let hasContent = false;
 		for (const { segment } of graphemeSegmenter.segment(stripTerminalSequences(line))) {
 			const width = visibleWidth(segment);
 			const cell = { row, start: column, end: column + width };
 			if (/^\s+$/u.test(segment)) {
-				pendingWhitespace ??= cell;
+				if (hasContent || !ignoreLeadingWhitespace[row]) pendingWhitespace ??= cell;
 			} else {
 				appendWhitespace();
 				pendingWhitespace = undefined;
+				hasContent = true;
 				text += segment;
 				for (let index = 0; index < segment.length; index += 1) cells.push(cell);
 			}

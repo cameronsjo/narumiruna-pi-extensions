@@ -41,7 +41,7 @@ function testMenu(): MenuDefinition<State, ScreenId, ActionId> {
 	});
 }
 
-test("package exposes API version 14 and Markdown document types", () => {
+test("package exposes API version 15 and Markdown document types", () => {
 	const markdown: ReviewFormat = {
 		kind: "markdown",
 		renderLatex: false,

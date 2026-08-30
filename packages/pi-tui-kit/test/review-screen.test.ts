@@ -857,7 +857,8 @@ test("review search is opt-in, focus-aware, navigable, and separately dismissibl
 	harness.component.handleInput("q");
 	assert.deepEqual(harness.events, [{ kind: "back" }]);
 	harness.component.handleInput("s");
-	harness.component.handleInput("\u0003");
+	harness.component.handleInput("\u001b[200~needle");
+	harness.component.handleInput("\u001b[201~\u0003");
 	assert.deepEqual(harness.events.at(-1), { kind: "close" });
 });
 

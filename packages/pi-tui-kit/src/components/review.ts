@@ -47,6 +47,7 @@ export function createReviewComponent<ScreenId extends string, ActionId extends 
 	let focused = false;
 	let lastLines: readonly string[] = [];
 	let lastSoftWrapAfter: readonly boolean[] = [];
+	let lastIgnoreLeadingWhitespace: readonly boolean[] = [];
 	const documentLineCache = createDocumentLineCache(options.theme);
 	const search = options.screen.enableSearch ? new DocumentSearchController() : undefined;
 
@@ -73,9 +74,10 @@ export function createReviewComponent<ScreenId extends string, ActionId extends 
 			)
 				? presentation.lines
 				: [];
-			lastLines = allLines;
+			lastLines = allLines.length > 0 ? presentation.searchLines : [];
 			lastSoftWrapAfter = allLines.length > 0 ? presentation.softWrapAfter : [];
-			search?.updateLines(allLines, lastSoftWrapAfter);
+			lastIgnoreLeadingWhitespace = allLines.length > 0 ? presentation.ignoreLeadingWhitespace : [];
+			search?.updateLines(lastLines, lastSoftWrapAfter, lastIgnoreLeadingWhitespace);
 			const frame = renderAdaptiveReviewFrame({
 				screen: options.screen,
 				allLines: search?.highlight(allLines, options.theme) ?? allLines,
@@ -103,23 +105,47 @@ export function createReviewComponent<ScreenId extends string, ActionId extends 
 		},
 		handleInput(data) {
 			if (disposed) return;
-			if (search?.active && search.shouldHandleBeforeShortcuts(data)) {
-				if (search.handleInput(data)) moveToMatch(search.currentRow);
-				options.tui.requestRender();
+			if (search?.active) {
+				const routed = search.routeInput(data, (outsidePaste) => {
+					if (matchesKey(outsidePaste, Key.ctrl("c"))) {
+						options.onEvent({ kind: "close" });
+						return false;
+					}
+					if (options.keybindings.matches(outsidePaste, "tui.altScreen.searchClose")) {
+						search.close();
+						options.tui.requestRender();
+						return false;
+					}
+					if (options.keybindings.matches(outsidePaste, "tui.altScreen.searchNext")) {
+						moveToMatch(search.next());
+						options.tui.requestRender();
+					} else if (options.keybindings.matches(outsidePaste, "tui.altScreen.searchPrevious")) {
+						moveToMatch(search.previous());
+						options.tui.requestRender();
+					} else if (options.keybindings.matches(outsidePaste, "tui.select.up")) {
+						moveTo(scrollOffset - 1);
+					} else if (options.keybindings.matches(outsidePaste, "tui.select.down")) {
+						moveTo(scrollOffset + 1);
+					} else if (options.keybindings.matches(outsidePaste, "tui.select.pageUp")) {
+						moveTo(scrollOffset - lastViewportSize);
+					} else if (options.keybindings.matches(outsidePaste, "tui.select.pageDown")) {
+						moveTo(scrollOffset + lastViewportSize);
+					} else if (matchesKey(outsidePaste, Key.home)) moveTo(0);
+					else if (matchesKey(outsidePaste, Key.end)) moveTo(lastMaximumScroll);
+					else {
+						if (search.handleInput(outsidePaste)) moveToMatch(search.currentRow);
+						options.tui.requestRender();
+					}
+					return true;
+				});
+				if (routed.changed && !routed.stopped) {
+					moveToMatch(search.currentRow);
+					options.tui.requestRender();
+				}
 				return;
 			}
 			if (matchesKey(data, Key.ctrl("c"))) options.onEvent({ kind: "close" });
-			else if (search?.active && options.keybindings.matches(data, "tui.altScreen.searchClose")) {
-				search.close();
-				options.tui.requestRender();
-			} else if (search?.active && options.keybindings.matches(data, "tui.altScreen.searchNext")) {
-				moveToMatch(search.next());
-			} else if (
-				search?.active &&
-				options.keybindings.matches(data, "tui.altScreen.searchPrevious")
-			) {
-				moveToMatch(search.previous());
-			} else if (!search?.active && options.keybindings.matches(data, "tui.select.cancel")) {
+			else if (options.keybindings.matches(data, "tui.select.cancel")) {
 				options.onEvent({ kind: options.screen.hint ?? "back" });
 			} else if (options.keybindings.matches(data, "tui.select.up")) {
 				moveTo(scrollOffset - 1);
@@ -131,17 +157,10 @@ export function createReviewComponent<ScreenId extends string, ActionId extends 
 				moveTo(scrollOffset + lastViewportSize);
 			} else if (matchesKey(data, Key.home)) moveTo(0);
 			else if (matchesKey(data, Key.end)) moveTo(lastMaximumScroll);
-			else if (
-				!search?.active &&
-				options.screen.confirm &&
-				options.keybindings.matches(data, "tui.select.confirm")
-			) {
+			else if (options.screen.confirm && options.keybindings.matches(data, "tui.select.confirm")) {
 				options.onEvent({ kind: "activate", itemId: options.screen.confirm.id });
-			} else if (search?.active) {
-				if (search.handleInput(data)) moveToMatch(search.currentRow);
-				options.tui.requestRender();
 			} else if (search && options.keybindings.matches(data, "tui.altScreen.search")) {
-				search.activate(lastLines, lastSoftWrapAfter);
+				search.activate(lastLines, lastSoftWrapAfter, lastIgnoreLeadingWhitespace);
 				options.tui.requestRender();
 			}
 		},
