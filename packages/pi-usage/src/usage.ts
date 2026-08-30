@@ -281,7 +281,12 @@ export default function usageExtension(
 				},
 			};
 		}
-		const requiresRequestBoundaryGuard = ["deepseek", "fireworks", "xai"].includes(adapter.id);
+		const requiresRequestBoundaryGuard = [
+			"deepseek",
+			"fireworks",
+			"vercel-ai-gateway",
+			"xai",
+		].includes(adapter.id);
 		const requestContextChanged = () =>
 			expectedSessionGeneration !== sessionGeneration ||
 			ctx.sessionManager.getSessionId() !== expectedSessionId ||

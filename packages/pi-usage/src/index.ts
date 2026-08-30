@@ -42,6 +42,7 @@ export { normalizeGitHubCopilotUsagePayload } from "./providers/github-copilot.j
 export { normalizeKimiCodingUsagePayload } from "./providers/kimi-coding.js";
 export { normalizeOpenCodeZenPayload } from "./providers/opencode-zen.js";
 export { normalizeOpenRouterKeyPayload } from "./providers/openrouter.js";
+export { normalizeVercelAIGatewayCreditsPayload } from "./providers/vercel-ai-gateway.js";
 export { normalizeXaiBillingPayload } from "./providers/xai.js";
 export { normalizeZaiQuotaPayload } from "./providers/zai.js";
 export {
@@ -83,6 +84,7 @@ export type {
 	UsageSemantics,
 	UsageSemanticsKind,
 	UsageUnit,
+	VercelAIGatewayCreditsPayload,
 	XaiBillingPayload,
 	XaiUserPayload,
 } from "./types.js";

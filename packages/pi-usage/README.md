@@ -16,6 +16,7 @@ xAI OAuth subscription reporting follows the reviewed Grok Build contract and ru
 - Reports exact DeepSeek API balances with separate CNY and USD values.
 - Reports OpenCode Go plan windows and Z.AI Coding Plan quotas.
 - Reports Fireworks rated API spend for the last 30 days with per-series subtotals.
+- Reports Vercel AI Gateway credit balance and lifetime spend.
 - Reports xAI OAuth subscription allowances and credits.
 - Toggles persistent Codex Fast routing through `/fast` or the usage menu.
 - Redeems eligible Codex resets only after fresh account matching and explicit confirmation.
@@ -250,6 +251,21 @@ Rated line items may differ from the final invoice once credits or adjustments a
 
 The contract was verified on 2026-07-31 against Fireworks' [Usage & Cost Breakdown](https://docs.fireworks.ai/accounts/exporting-usage-and-costs), [Get billing summary](https://docs.fireworks.ai/api-reference/get-billing-summary), and [List Accounts](https://docs.fireworks.ai/api-reference/list-accounts) API references.
 
+### Vercel AI Gateway credits
+
+- Provider ID: `vercel-ai-gateway`
+- Semantics: current team credit balance and lifetime spend, not rate-limit quota
+- Source: documented `GET https://ai-gateway.vercel.sh/v1/credits` using Pi's resolved AI Gateway API key
+- Displayed data: exact decimal-string credit balance and lifetime spend in USD
+- Statusline example: `vercel USD 95.50 left`
+
+The extension queries the fixed endpoint only when the selected model origin and any resolved-auth origin are `https://ai-gateway.vercel.sh`.
+Custom and proxy origins fail before network access, redirects are rejected, and only the resolved Bearer credential is forwarded.
+The credits endpoint does not provide reset times, request-rate counters, or date-window usage, so `pi-usage` does not claim those capabilities.
+Vercel's separate Custom Reporting API is limited to eligible paid plans and is intentionally outside this first integration.
+
+The contract was verified on 2026-08-30 against Vercel's [REST API Reference](https://vercel.com/docs/ai-gateway/sdks-and-apis/rest-api#check-credit-balance) and the first-party [`vercel/ai` Gateway implementation](https://github.com/vercel/ai/blob/69428b1f8b037e4d118fb4853428d5c4e620493c/packages/gateway/src/gateway-fetch-metadata.ts).
+
 ### OpenCode Go (Zen)
 
 - Provider ID: `opencode-go`
@@ -335,6 +351,7 @@ The `usage` status item is active only for selected providers that publish statu
 It refreshes every five minutes while the session remains on such a provider and is cleared when the model changes to an unsupported or menu-only provider.
 DeepSeek publishes each returned currency as a separate exact balance segment and reports when the API is unavailable.
 Fireworks publishes exact per-currency rated spend totals and reports when no rated usage exists.
+Vercel AI Gateway publishes the exact current USD credit balance.
 xAI is always menu-only and never starts a scheduled status refresh.
 Z.AI statusline usage refreshes every five minutes while the selected model remains on Z.AI.
 
@@ -367,6 +384,7 @@ The protocol carries no account name or extension identity.
 Only the selected provider's exact runtime match is used, and secrets are sent only to its validated official origin.
 DeepSeek balance requests require Bearer authentication, send only that resolved credential from Pi's runtime auth to `https://api.deepseek.com/user/balance`, and refuse redirects.
 Fireworks spend requests send only that resolved credential to the official `https://api.fireworks.ai` account-listing and billing-summary endpoints and refuse redirects.
+Vercel AI Gateway credit requests send only the resolved Bearer credential to `https://ai-gateway.vercel.sh/v1/credits` and refuse redirects.
 Pi extensions run with the user's process privileges, so the shared event bus is not a security boundary between installed extensions.
 Install only trusted extensions because they can read user files and process memory.
 Protocol v1 interoperability is characterized for the repository's supported Pi runtime.
@@ -382,6 +400,7 @@ An absent or incompatible peer preserves standalone fallback and fail-closed mis
 - Provider reports are snapshots and may themselves be delayed by the provider.
 - DeepSeek reports current API balance only; it does not expose historical usage, quota windows, reset times, or account-wide token totals through the balance endpoint.
 - Fireworks reports rated 30-day spend only; credit balance and spend caps are visible only in the Fireworks web console, and keys that can see several accounts must set `fireworksAccountId` in `pi-usage.json`.
+- Vercel AI Gateway reports current team credits and lifetime spend only; Custom Reporting and request-rate counters are not queried.
 - OpenRouter successful inference responses do not expose proactive request-rate counters; `/usage` reports the documented per-key credit/spend fields instead.
 - A provider may not return a safe human-readable account identity.
   In that case the provider and runtime credential state remain visible without exposing secrets.
@@ -424,7 +443,7 @@ The generated runtime is built from the authoritative `src/index.ts` graph and d
 
 ## 🔎 Keywords
 
-Pi extension, Pi coding agent, usage, quota, DeepSeek API balance, DeepSeek balance, Fireworks API spend, Fireworks rated spend, OpenAI Codex usage, ChatGPT subscription limits, Kimi For Coding, Kimi Coding Plan usage, GitHub Copilot AI credits, GitHub Copilot premium requests, OpenRouter credits, xAI OAuth usage, Grok subscription allowance, API-key spend limits, TypeScript Pi package, npm Pi extension.
+Pi extension, Pi coding agent, usage, quota, DeepSeek API balance, DeepSeek balance, Fireworks API spend, Fireworks rated spend, Vercel AI Gateway credits, Vercel AI Gateway usage, OpenAI Codex usage, ChatGPT subscription limits, Kimi For Coding, Kimi Coding Plan usage, GitHub Copilot AI credits, GitHub Copilot premium requests, OpenRouter credits, xAI OAuth usage, Grok subscription allowance, API-key spend limits, TypeScript Pi package, npm Pi extension.
 
 ## 📄 License
 
