@@ -2,9 +2,11 @@ import type { EntryRenderer, ExtensionAPI } from "@earendil-works/pi-coding-agen
 import { type Component, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import {
 	DEFAULT_STAMP_SETTINGS,
+	formatExactTimelineLine,
 	formatMessageStampLabel,
 	formatStampLabel,
 	type StampSettings,
+	type StampTimelineBoundary,
 } from "./format.js";
 import {
 	type AssistantMetadataData,
@@ -12,6 +14,8 @@ import {
 	formatAssistantMetadataLines,
 	formatToolStampLabel,
 	isAssistantMetadataData,
+	isStampThinkingLevel,
+	type StampThinkingLevel,
 	sanitizeMetadataText,
 	sanitizeTerminalText,
 	type ToolStampOutcome,
@@ -53,6 +57,17 @@ export interface AssistantMessageStampDataV4 {
 	metadata: AssistantMetadataData;
 }
 
+export interface AssistantMessageStampDataV5 {
+	version: 5;
+	role: "assistant";
+	timestamp: number;
+	previousTimestamp?: number;
+	completedAt?: number;
+	firstContentAt?: number;
+	metadata: AssistantMetadataData;
+	thinkingLevel: StampThinkingLevel;
+}
+
 export interface ToolStampDataV1 {
 	version: 1;
 	kind: "tool";
@@ -67,7 +82,8 @@ export type MessageStampData =
 	| MessageStampDataV1
 	| MessageStampDataV2
 	| AssistantMessageStampDataV3
-	| AssistantMessageStampDataV4;
+	| AssistantMessageStampDataV4
+	| AssistantMessageStampDataV5;
 export type StampEntryData = MessageStampData | ToolStampDataV1;
 
 export interface StampExtensionOptions {
@@ -132,19 +148,22 @@ export function isMessageStampData(value: unknown): value is MessageStampData {
 					value.firstContentAt <= value.completedAt))
 		);
 	}
-	if (value.version !== 4 || value.role !== "assistant") return false;
+	if ((value.version !== 4 && value.version !== 5) || value.role !== "assistant") return false;
+	const allowedKeys = [
+		"version",
+		"role",
+		"timestamp",
+		"previousTimestamp",
+		"completedAt",
+		"firstContentAt",
+		"metadata",
+		...(value.version === 5 ? ["thinkingLevel"] : []),
+	];
 	if (
-		!hasOnlyKeys(value, [
-			"version",
-			"role",
-			"timestamp",
-			"previousTimestamp",
-			"completedAt",
-			"firstContentAt",
-			"metadata",
-		]) ||
+		!hasOnlyKeys(value, allowedKeys) ||
 		(Object.hasOwn(value, "previousTimestamp") && !isValidTimestamp(value.previousTimestamp)) ||
-		!isAssistantMetadataData(value.metadata)
+		!isAssistantMetadataData(value.metadata) ||
+		(value.version === 5 && !isStampThinkingLevel(value.thinkingLevel))
 	) {
 		return false;
 	}
@@ -182,6 +201,11 @@ export function isToolStampData(value: unknown): value is ToolStampDataV1 {
 	);
 }
 
+interface RightAlignedLine {
+	text: string;
+	exact: boolean;
+}
+
 export function createStampEntryRenderer(
 	getSettings: () => Readonly<StampSettings>,
 ): EntryRenderer<StampEntryData> {
@@ -189,63 +213,128 @@ export function createStampEntryRenderer(
 		if (isToolStampData(entry.data)) {
 			if (!getSettings().toolStamps) return undefined;
 			const data = entry.data;
-			return dynamicRightAlignedText(() => {
-				const settings = getSettings();
-				if (!settings.toolStamps) return [];
-				const label = formatToolStampLabel(
-					data.toolName,
-					data.completedAt - data.startedAt,
-					data.outcome,
-				);
-				return label ? [theme.fg("dim", label)] : [];
-			});
+			return dynamicRightAlignedText(
+				() => {
+					const settings = getSettings();
+					if (!settings.toolStamps) return [];
+					const label = formatToolStampLabel(
+						data.toolName,
+						data.completedAt - data.startedAt,
+						data.outcome,
+					);
+					if (!label) return [];
+					return [
+						regularLine(label),
+						...(options.expanded
+							? exactTimelineLines([
+									["started", data.startedAt],
+									["completed", data.completedAt],
+								])
+							: []),
+					];
+				},
+				(line) => theme.fg("dim", line),
+			);
 		}
 		if (!isMessageStampData(entry.data)) return undefined;
 		const data = entry.data;
-		return dynamicRightAlignedText(() => {
-			const settings = getSettings();
-			const label = formatMessageStampLabel(
-				{
-					timestamp: data.timestamp,
-					...(data.version === 1 ? {} : { previousTimestamp: data.previousTimestamp }),
-					...(data.version === 3 || data.version === 4
-						? {
-								completedAt: data.completedAt,
-								firstContentAt: data.firstContentAt,
-							}
-						: {}),
-				},
-				settings,
-			);
-			if (!label) return [];
-			const metadataLines =
-				data.version === 4
-					? formatAssistantMetadataLines(
-							data.metadata,
-							settings.assistantMetadata,
-							options.expanded,
-						)
-					: [];
-			return [label, ...metadataLines].map((line) => theme.fg("dim", line));
-		});
+		return dynamicRightAlignedText(
+			() => {
+				const settings = getSettings();
+				const hasAssistantTiming = data.version === 3 || data.version === 4 || data.version === 5;
+				const label = formatMessageStampLabel(
+					{
+						timestamp: data.timestamp,
+						...(data.version === 1 ? {} : { previousTimestamp: data.previousTimestamp }),
+						...(hasAssistantTiming
+							? {
+									completedAt: data.completedAt,
+									firstContentAt: data.firstContentAt,
+								}
+							: {}),
+					},
+					settings,
+				);
+				if (!label) return [];
+				const timelineObservations: Array<readonly [StampTimelineBoundary, number]> = [
+					["created", data.timestamp],
+				];
+				if (hasAssistantTiming && data.firstContentAt !== undefined) {
+					timelineObservations.push(["first content", data.firstContentAt]);
+				}
+				if (hasAssistantTiming && data.completedAt !== undefined) {
+					timelineObservations.push(["completed", data.completedAt]);
+				}
+				const timelineLines = options.expanded ? exactTimelineLines(timelineObservations) : [];
+				const metadataLines =
+					data.version === 4 || data.version === 5
+						? formatAssistantMetadataLines(
+								data.metadata,
+								settings.assistantMetadata,
+								options.expanded,
+								data.version === 5 ? data.thinkingLevel : undefined,
+							)
+						: [];
+				return [regularLine(label), ...timelineLines, ...metadataLines.map(regularLine)];
+			},
+			(line) => theme.fg("dim", line),
+		);
 	};
 }
 
 export const renderStampEntry = createStampEntryRenderer(() => DEFAULT_STAMP_SETTINGS);
 
-function dynamicRightAlignedText(getLines: () => readonly string[]): Component {
+function regularLine(text: string): RightAlignedLine {
+	return { text, exact: false };
+}
+
+function exactTimelineLines(
+	observations: ReadonlyArray<readonly [StampTimelineBoundary, number]>,
+): RightAlignedLine[] {
+	return observations.flatMap(([boundary, timestamp]) => {
+		const text = formatExactTimelineLine(boundary, timestamp);
+		return text ? [{ text, exact: true }] : [];
+	});
+}
+
+function dynamicRightAlignedText(
+	getLines: () => readonly RightAlignedLine[],
+	style: (text: string) => string,
+): Component {
 	return {
 		render(width) {
 			if (width < 1) return [];
-			return getLines().flatMap((text) =>
-				wrapTextWithAnsi(text, width).map((line) => {
+			return getLines().flatMap((source) => {
+				const lines = source.exact
+					? hardWrapExactText(source.text, width).map(style)
+					: wrapTextWithAnsi(style(source.text), width);
+				return lines.map((line) => {
 					const leftPadding = " ".repeat(Math.max(0, width - visibleWidth(line)));
 					return `${leftPadding}${line}`;
-				}),
-			);
+				});
+			});
 		},
 		invalidate() {},
 	};
+}
+
+function hardWrapExactText(text: string, width: number): string[] {
+	const lines: string[] = [];
+	let line = "";
+	let lineWidth = 0;
+	for (const character of text) {
+		const characterWidth = visibleWidth(character);
+		if (line && lineWidth + characterWidth > width) {
+			lines.push(line);
+			line = "";
+			lineWidth = 0;
+		}
+		if (characterWidth > width) continue;
+		line += character;
+		lineWidth += characterWidth;
+	}
+	if (line) lines.push(line);
+	return lines;
 }
 
 export default function stampExtension(
@@ -265,6 +354,7 @@ export default function stampExtension(
 	let lastStampTimestamp: number | undefined;
 	let activeAssistantTiming: AssistantTimingObservation | undefined;
 	let finalizedAssistantTiming: FinalizedAssistantTiming | undefined;
+	let activeThinkingLevel: StampThinkingLevel | undefined;
 	const activeToolTimings = new Map<string, ToolTimingObservation>();
 	const pendingUserStamps: Array<{ role: "user"; timestamp: number }> = [];
 
@@ -311,12 +401,36 @@ export default function stampExtension(
 		timestamp: number,
 		timing: FinalizedAssistantTiming | undefined,
 		message: unknown,
+		thinkingLevel: StampThinkingLevel | undefined,
 	): void => {
 		const matchingTiming = timing?.timestamp === timestamp ? timing : undefined;
 		const metadata =
 			settingsRuntime.get().settings.assistantMetadata === "off"
 				? undefined
 				: captureAssistantMetadata(message);
+		if (metadata && thinkingLevel !== undefined) {
+			const stamp: AssistantMessageStampDataV5 = {
+				version: 5,
+				role: "assistant",
+				timestamp,
+				...(lastStampTimestamp === undefined ? {} : { previousTimestamp: lastStampTimestamp }),
+				...(matchingTiming
+					? {
+							completedAt: matchingTiming.completedAt,
+							...(matchingTiming.firstContentAt === undefined
+								? {}
+								: { firstContentAt: matchingTiming.firstContentAt }),
+						}
+					: {}),
+				metadata,
+				thinkingLevel,
+			};
+			if (isMessageStampData(stamp)) {
+				pi.appendEntry<AssistantMessageStampDataV5>(STAMP_ENTRY_TYPE, stamp);
+				lastStampTimestamp = timestamp;
+				return;
+			}
+		}
 		if (metadata) {
 			const stamp: AssistantMessageStampDataV4 = {
 				version: 4,
@@ -408,6 +522,7 @@ export default function stampExtension(
 		pendingUserStamps.length = 0;
 		activeAssistantTiming = undefined;
 		finalizedAssistantTiming = undefined;
+		activeThinkingLevel = undefined;
 		activeToolTimings.clear();
 		tuiSessionActive = ctx.mode === "tui";
 		lastStampTimestamp = lastStampTimestampFromBranch(ctx.sessionManager.getBranch());
@@ -434,9 +549,15 @@ export default function stampExtension(
 		}
 	});
 
-	pi.on("turn_start", () => {
+	pi.on("turn_start", (_event, ctx) => {
 		activeAssistantTiming = undefined;
 		finalizedAssistantTiming = undefined;
+		activeThinkingLevel =
+			tuiSessionActive &&
+			settingsRuntime.get().settings.assistantMetadata !== "off" &&
+			isStampThinkingLevel(ctx.thinkingLevel)
+				? ctx.thinkingLevel
+				: undefined;
 		activeToolTimings.clear();
 	});
 
@@ -531,10 +652,12 @@ export default function stampExtension(
 
 	pi.on("turn_end", (event) => {
 		const timing = finalizedAssistantTiming;
+		const thinkingLevel = activeThinkingLevel;
 		activeAssistantTiming = undefined;
 		finalizedAssistantTiming = undefined;
+		activeThinkingLevel = undefined;
 		if (tuiSessionActive && event.message.role === "assistant") {
-			appendAssistantStamp(event.message.timestamp, timing, event.message);
+			appendAssistantStamp(event.message.timestamp, timing, event.message, thinkingLevel);
 		}
 		flushToolStamps(event.toolResults);
 	});
@@ -543,6 +666,7 @@ export default function stampExtension(
 		flushPendingUsers();
 		activeAssistantTiming = undefined;
 		finalizedAssistantTiming = undefined;
+		activeThinkingLevel = undefined;
 		activeToolTimings.clear();
 	});
 
@@ -553,6 +677,7 @@ export default function stampExtension(
 		pendingUserStamps.length = 0;
 		activeAssistantTiming = undefined;
 		finalizedAssistantTiming = undefined;
+		activeThinkingLevel = undefined;
 		activeToolTimings.clear();
 		tuiSessionActive = false;
 		lastStampTimestamp = undefined;

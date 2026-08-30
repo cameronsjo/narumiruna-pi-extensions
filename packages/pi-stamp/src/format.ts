@@ -6,10 +6,12 @@ export { ASSISTANT_METADATA_MODES } from "./metadata.js";
 export const HOUR_CYCLES = ["24h", "12h"] as const;
 export const DATE_CONTEXTS = ["day-change", "always", "never"] as const;
 export const RESPONSE_TIMING_MODES = ["off", "duration", "detailed"] as const;
+export const TIMELINE_BOUNDARIES = ["created", "first content", "started", "completed"] as const;
 
 export type StampHourCycle = (typeof HOUR_CYCLES)[number];
 export type StampDateContext = (typeof DATE_CONTEXTS)[number];
 export type StampResponseTimingMode = (typeof RESPONSE_TIMING_MODES)[number];
+export type StampTimelineBoundary = (typeof TIMELINE_BOUNDARIES)[number];
 export type StampLocale = "invariant" | "system" | string;
 export type StampTimeZone = "local" | string;
 
@@ -117,6 +119,14 @@ export function formatMessageStampLabel(
 
 export function formatResponseElapsed(elapsedMilliseconds: number): string | undefined {
 	return formatElapsedSeconds(elapsedMilliseconds);
+}
+
+export function formatExactTimelineLine(
+	boundary: StampTimelineBoundary,
+	timestamp: number,
+): string | undefined {
+	if (!TIMELINE_BOUNDARIES.includes(boundary) || !isValidTimestamp(timestamp)) return undefined;
+	return `timeline · ${boundary} ${new Date(timestamp).toISOString()} · unix-ms ${timestamp}`;
 }
 
 function formatInvariant(

@@ -9,8 +9,9 @@ Optionally show response timing, assistant provenance and usage, or tool duratio
 
 - Shows each message's recorded creation time on a dim, right-aligned row.
 - Supports 12/24-hour clocks, seconds, automatic date context, locales, and time zones.
-- Optionally shows response latency, model and provider identity, stop reason, tokens, and estimated cost.
+- Optionally shows response latency, model and provider identity, effective Pi Thinking level, stop reason, tokens, and estimated cost.
 - Optionally records tool duration and success or error after each complete tool block.
+- Shows exact UTC ISO 8601 and Unix millisecond observation times only during transcript expansion.
 - Keeps sensitive response IDs and bounded diagnostics behind explicit opt-in and transcript expansion.
 - Persists exact session entries across reload and resume while keeping every stamp outside model context.
 - Remains width-safe and owns no timer, process, watcher, network request, model tool, or persistent status.
@@ -84,7 +85,7 @@ The `/stamp` Settings screen provides these controls:
 | `locale` | `"invariant"`, `"system"`, or one BCP 47 tag | `"invariant"` | Controls localized date/time presentation. |
 | `timeZone` | `"local"` or one supported IANA zone | `"local"` | Controls time and day-boundary interpretation; `UTC` is accepted. |
 | `responseTiming` | `"off"`, `"duration"`, `"detailed"` | `"off"` | Keeps timestamps minimal, adds total assistant duration, or labels first-content and total timing. |
-| `assistantMetadata` | `"off"`, `"compact"`, `"expanded"` | `"off"` | Captures and shows no assistant metadata, a compact model/total/cost summary, or all supported reported fields. |
+| `assistantMetadata` | `"off"`, `"compact"`, `"expanded"` | `"off"` | Captures and shows no assistant metadata, a compact model/Thinking-level/total/cost summary, or all supported provenance and usage fields. |
 | `toolStamps` | boolean | `false` | Records and shows duration plus success/error for newly observed tools. |
 
 The compatibility defaults produce local `HH:mm:ss` for ordinary same-day messages.
@@ -156,6 +157,11 @@ It is not a provider-server timestamp or guaranteed time to first token.
   The first known stamp stays time-only.
 - Changing presentation settings re-renders compatible recorded stamps without rewriting session files.
 
+Use Pi's transcript expansion action (`app.tools.expand`, `Ctrl+O` by default) to show an exact timeline after each compatible stamp.
+Each available creation, first-content, completion, tool-start, or tool-completion observation appears as UTC ISO 8601 plus its original Unix millisecond value.
+Legacy entries show only boundaries that their persisted version retained.
+These rows are hidden in the collapsed transcript and require no new session data.
+
 Timing labels are local Pi lifecycle observations, not provider latency telemetry.
 They require no network request or refresh task.
 Relative labels such as `3m ago` remain unavailable because they would require periodic background refresh and lifecycle cleanup.
@@ -163,11 +169,12 @@ Relative labels such as `3m ago` remain unavailable because they would require p
 ## 🧾 Assistant provenance and usage
 
 Assistant metadata is captured when the stamp is finalized and only when `assistantMetadata` is `"compact"` or `"expanded"`.
+When Pi exposes an effective Thinking level for that turn, the stamp records it as Pi provenance rather than provider-reported reasoning behavior.
 A compact stamp can look like:
 
 ```text
 14:32:08 · 3.2s
-claude-sonnet-4-6 · 842 tok · est $0.018
+claude-sonnet-4-6 · thinking high · 842 tok · est $0.018
 ```
 
 When Pi reports a response model different from the requested model, compact mode keeps both:
@@ -176,8 +183,9 @@ When Pi reports a response model different from the requested model, compact mod
 requested-alias → provider-response-model · 842 tok
 ```
 
-Expanded mode adds labeled rows for API, provider, requested model, provider-reported response model, stop reason, and each individually reported input/output/reasoning/cache-read/cache-write/total token or estimated-cost field.
-Missing values stay absent; `pi-stamp` never derives a token total, response model, cost, or diagnostic message.
+Compact mode adds `stop length`, `stop error`, or `stop aborted` for abnormal outcomes while keeping normal `stop` and `toolUse` outcomes quiet.
+Expanded mode adds labeled rows for API, provider, requested model, provider-reported response model, effective Pi Thinking level, stop reason, and each individually reported input/output/reasoning/cache-read/cache-write/total token or estimated-cost field.
+Missing values stay absent; `pi-stamp` never derives a Thinking level, token total, response model, cost, or diagnostic message.
 
 Use Pi's transcript expansion action (`app.tools.expand`, `Ctrl+O` by default) to open the debug view.
 With assistant metadata enabled, it may additionally show the sanitized response ID and at most five diagnostic summaries.
@@ -222,6 +230,7 @@ Message entry compatibility is cumulative:
 - Version 3 assistant entries add completion and optional first-content observations.
 - Version 4 assistant entries add a sanitized metadata snapshot when metadata capture is enabled.
   Timing remains optional so a valid metadata stamp survives a backwards timing clock.
+- Version 5 assistant entries add Pi's validated effective turn Thinking level when metadata capture is enabled and the runtime exposes it.
 - Version 1 tool entries store only bounded association/timing/outcome data.
 
 Existing versions remain readable.
@@ -234,6 +243,7 @@ Messages and tools created before `pi-stamp` observed them are not backfilled be
 - Pi does not currently expose a public decorator for built-in message or tool rows, so stamps appear as separate transcript rows rather than inside the original bubble/block.
 - Another extension can append transcript entries at the same lifecycle boundary, so strict visual adjacency between independently loaded extensions is not guaranteed.
 - There are no arbitrary format strings, relative labels, provider-server latency, aggregates, raw diagnostics, or analytics dashboard.
+- Thinking level is Pi's effective turn setting and does not claim that a provider honored or reported the same reasoning behavior.
 - Token and cost values come only from Pi's message fields.
 
 ## 🗂️ Package layout
@@ -256,6 +266,7 @@ packages/pi-stamp/
 │   ├── metadata.test.ts
 │   ├── menu.test.ts
 │   ├── settings.test.ts
+│   ├── stamp-renderer.test.ts
 │   ├── stamp-tool.test.ts
 │   └── stamp.test.ts
 ├── README.md
