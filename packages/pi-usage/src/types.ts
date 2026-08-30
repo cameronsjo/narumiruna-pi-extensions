@@ -119,6 +119,18 @@ export type OpenRouterKeyPayload = {
 	data?: unknown;
 };
 
+export type MiniMaxUsagePayload = {
+	available_amount?: unknown;
+	balance_alert_switch?: unknown;
+	balance_alert_threshold?: unknown;
+	base_resp?: unknown;
+	cash_balance?: unknown;
+	credit_balance?: unknown;
+	model_remains?: unknown;
+	owed_amount?: unknown;
+	voucher_balance?: unknown;
+};
+
 export type MoonshotBalancePayload = {
 	code?: unknown;
 	data?: unknown;

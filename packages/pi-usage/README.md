@@ -13,6 +13,7 @@ xAI OAuth subscription reporting follows the reviewed Grok Build contract and ru
 - Reports OpenAI Codex subscription windows, credits, resets, and model-specific buckets.
 - Reports Kimi For Coding plan windows, resets, and separately labeled booster-wallet currency.
 - Reports Moonshot AI Global and China API account balances in their native currencies.
+- Reports MiniMax Global and China Token Plan windows or pay-as-you-go API balance.
 - Reports GitHub Copilot allowances and OpenRouter per-key limits and spending windows.
 - Reports exact DeepSeek API balances with separate CNY and USD values.
 - Reports OpenCode Go plan windows and Z.AI Coding Plan quotas.
@@ -206,6 +207,22 @@ The endpoint does not provide historical spend, token totals, quota windows, or 
 These API-platform balances are independent from the `kimi-coding` subscription and booster wallet.
 
 The contracts were verified on 2026-08-30 against the official [Global balance reference](https://platform.kimi.ai/docs/api/balance), [China balance reference](https://platform.moonshot.cn/docs/api/balance), and first-party [`MoonshotAI-Cookbook` balance client and DTO](https://github.com/MoonshotAI/MoonshotAI-Cookbook/tree/25a9e46d2391dd4817d28ab980dac69eb59b582c/examples/golang_demo).
+### MiniMax Token Plan and API balance
+
+- Provider IDs: `minimax` and `minimax-cn`
+- Token Plan source: `GET {region-api-root}/v1/token_plan/remains`
+- Pay-as-you-go source: `GET {region-api-root}/account/query_balance`
+- Region API roots: `https://api.minimax.io` and `https://api.minimaxi.com`
+- Statusline examples: `minimax 15% 5h 80% wk` or `minimax USD 98.00001`
+
+Pi's resolved MiniMax API key selects exactly one endpoint before network access.
+Keys with the first-party `sk-api-` prefix query pay-as-you-go balance; other MiniMax API keys query Token Plan quota.
+The extension never probes both endpoints with one credential.
+Token Plan reports preserve provider rows, rolling and weekly windows, counts, reset times, unlimited status, and first-party handling for legacy versus current `*_usage_count` semantics.
+Pay-as-you-go reports keep available, cash, voucher, credit, and owed amounts separate in USD for Global or CNY for China.
+Custom, proxy, and cross-region origins fail before network access, and redirects are rejected.
+
+The contract was verified on 2026-08-30 against MiniMax's [Token Plan FAQ](https://platform.minimax.io/docs/token-plan/faq#how-to-check-token-plan-usage) and the first-party [`MiniMax-AI/cli`](https://github.com/MiniMax-AI/cli/tree/b78eccea80a0f9692e186d98906cff26931464f3), including endpoint selection, response types, quota normalization, and SDK tests.
 
 ### GitHub Copilot
 
@@ -371,6 +388,7 @@ DeepSeek publishes each returned currency as a separate exact balance segment an
 Fireworks publishes exact per-currency rated spend totals and reports when no rated usage exists.
 Moonshot AI publishes the available balance with its region-native currency.
 Vercel AI Gateway publishes the exact current USD credit balance.
+MiniMax publishes Token Plan window percentages or the regional pay-as-you-go available balance.
 xAI is always menu-only and never starts a scheduled status refresh.
 Z.AI statusline usage refreshes every five minutes while the selected model remains on Z.AI.
 
@@ -405,6 +423,7 @@ DeepSeek balance requests require Bearer authentication, send only that resolved
 Fireworks spend requests send only that resolved credential to the official `https://api.fireworks.ai` account-listing and billing-summary endpoints and refuse redirects.
 Moonshot balance requests send only the resolved Bearer credential to the matching official Global or China balance origin and refuse redirects.
 Vercel AI Gateway credit requests send only the resolved Bearer credential to `https://ai-gateway.vercel.sh/v1/credits` and refuse redirects.
+MiniMax usage requests send only the resolved API key to one deterministic endpoint on the matching official Global or China API root and refuse redirects.
 Pi extensions run with the user's process privileges, so the shared event bus is not a security boundary between installed extensions.
 Install only trusted extensions because they can read user files and process memory.
 Protocol v1 interoperability is characterized for the repository's supported Pi runtime.
@@ -422,6 +441,7 @@ An absent or incompatible peer preserves standalone fallback and fail-closed mis
 - Fireworks reports rated 30-day spend only; credit balance and spend caps are visible only in the Fireworks web console, and keys that can see several accounts must set `fireworksAccountId` in `pi-usage.json`.
 - Moonshot AI reports current API balance only; it does not expose historical spend, aggregate token usage, quota windows, or reset times through the balance endpoint.
 - Vercel AI Gateway reports current team credits and lifetime spend only; Custom Reporting and request-rate counters are not queried.
+- MiniMax Token Plan field semantics have changed over time; contradictory counts and percentages are reported as unavailable rather than guessed.
 - OpenRouter successful inference responses do not expose proactive request-rate counters; `/usage` reports the documented per-key credit/spend fields instead.
 - A provider may not return a safe human-readable account identity.
   In that case the provider and runtime credential state remain visible without exposing secrets.
@@ -464,7 +484,7 @@ The generated runtime is built from the authoritative `src/index.ts` graph and d
 
 ## 🔎 Keywords
 
-Pi extension, Pi coding agent, usage, quota, DeepSeek API balance, DeepSeek balance, Fireworks API spend, Fireworks rated spend, Vercel AI Gateway credits, Vercel AI Gateway usage, OpenAI Codex usage, ChatGPT subscription limits, Kimi For Coding, Kimi Coding Plan usage, Moonshot AI balance, Moonshot API balance, GitHub Copilot AI credits, GitHub Copilot premium requests, OpenRouter credits, xAI OAuth usage, Grok subscription allowance, API-key spend limits, TypeScript Pi package, npm Pi extension.
+Pi extension, Pi coding agent, usage, quota, DeepSeek API balance, DeepSeek balance, Fireworks API spend, Fireworks rated spend, Vercel AI Gateway credits, Vercel AI Gateway usage, OpenAI Codex usage, ChatGPT subscription limits, Kimi For Coding, Kimi Coding Plan usage, Moonshot AI balance, Moonshot API balance, MiniMax Token Plan, MiniMax API balance, GitHub Copilot AI credits, GitHub Copilot premium requests, OpenRouter credits, xAI OAuth usage, Grok subscription allowance, API-key spend limits, TypeScript Pi package, npm Pi extension.
 
 ## 📄 License
 

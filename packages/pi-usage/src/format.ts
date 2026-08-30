@@ -20,7 +20,11 @@ export function formatUsageReport(report: UsageReport, displayState: UsageDispla
 					? "Vercel AI Gateway Credits"
 					: report.providerId === "moonshotai" || report.providerId === "moonshotai-cn"
 						? `${report.providerName} Balance`
-						: `${report.providerName} Usage`;
+						: report.providerId === "minimax" || report.providerId === "minimax-cn"
+							? report.source === "minimax-account-balance"
+								? `${report.providerName} API Balance`
+								: `${report.providerName} Token Plan`
+							: `${report.providerName} Usage`;
 	const lines = [`${title} · ${stateLabel}`];
 	if (report.accountLabel) lines.push(`Account: ${report.accountLabel}`);
 	lines.push(`Semantics: ${report.semantics.label}`, "");
@@ -35,6 +39,8 @@ export function formatUsageReport(report: UsageReport, displayState: UsageDispla
 	else if (report.providerId === "kimi-coding") formatKimiCodingReport(lines, report);
 	else if (report.providerId === "moonshotai" || report.providerId === "moonshotai-cn") {
 		formatMoonshotReport(lines, report);
+	} else if (report.providerId === "minimax" || report.providerId === "minimax-cn") {
+		formatMiniMaxReport(lines, report);
 	} else if (report.providerId === "xai") formatXaiReport(lines, report);
 	else if (report.providerId === "zai" || report.providerId === "zai-coding-cn") {
 		formatZaiReport(lines, report);
@@ -69,6 +75,9 @@ export function formatUsageStatusline(
 	if (report.providerId === "kimi-coding") return formatKimiCodingStatusline(report);
 	if (report.providerId === "moonshotai" || report.providerId === "moonshotai-cn") {
 		return formatMoonshotStatusline(report);
+	}
+	if (report.providerId === "minimax" || report.providerId === "minimax-cn") {
+		return formatMiniMaxStatusline(report);
 	}
 	if (report.providerId === "zai" || report.providerId === "zai-coding-cn") {
 		return formatZaiStatusline(report);
@@ -318,6 +327,48 @@ function formatMoonshotStatusline(report: UsageReport): string {
 	const available = report.metrics.find((metric) => metric.id === "available-balance");
 	if (!available) return "moonshot balance unavailable";
 	return `moonshot ${available.currency ?? ""} ${available.value}`.replace(/\s+/gu, " ");
+}
+
+function formatMiniMaxReport(lines: string[], report: UsageReport): void {
+	if (report.source === "minimax-account-balance") {
+		for (const metric of report.metrics) {
+			lines.push(`${`${metric.label}:`.padEnd(VALUE_COLUMN)}${metric.currency} ${metric.value}`);
+		}
+		return;
+	}
+	let previousGroup: string | undefined;
+	for (const bucket of report.buckets) {
+		if (bucket.groupId !== previousGroup) lines.push(`${bucket.groupLabel ?? "Token Plan"}:`);
+		previousGroup = bucket.groupId;
+		const reset = bucket.resetsAt ? ` (resets ${formatReset(bucket.resetsAt)})` : "";
+		const value =
+			bucket.period === "unlimited"
+				? "unlimited"
+				: bucket.limit && bucket.remaining !== undefined
+					? `${bucket.remaining} of ${bucket.limit} left · ${percentRemaining(bucket)}%${reset}`
+					: "unavailable";
+		lines.push(`${`${bucket.label}:`.padEnd(VALUE_COLUMN)}${value}`);
+	}
+}
+
+function formatMiniMaxStatusline(report: UsageReport): string | undefined {
+	const prefix = report.providerId === "minimax-cn" ? "minimax cn" : "minimax";
+	if (report.source === "minimax-account-balance") {
+		const available = report.metrics.find((metric) => metric.id === "available-balance");
+		return available ? `${prefix} ${available.currency} ${available.value}` : undefined;
+	}
+	const firstGroup = report.buckets[0]?.groupId;
+	const selected = report.buckets.filter((bucket) => bucket.groupId === firstGroup);
+	if (selected.some((bucket) => bucket.period === "unlimited")) return `${prefix} unlimited`;
+	const parts = [prefix];
+	for (const bucket of selected) {
+		if (!bucket.limit || bucket.remaining === undefined) continue;
+		const fallback = bucket.id.endsWith(":weekly") ? "weekly" : "5h";
+		parts.push(
+			`${percentRemaining(bucket)}% ${formatWindowLabel(bucket.windowMinutes, fallback, true)}`,
+		);
+	}
+	return parts.length > 1 ? parts.join(" ") : undefined;
 }
 
 function formatZaiStatusline(report: UsageReport): string | undefined {

@@ -284,6 +284,8 @@ export default function usageExtension(
 		const requiresRequestBoundaryGuard = [
 			"deepseek",
 			"fireworks",
+			"minimax",
+			"minimax-cn",
 			"moonshotai",
 			"moonshotai-cn",
 			"vercel-ai-gateway",
