@@ -65,8 +65,7 @@ concepts and failure boundaries are separate.
 `storageConnections` is the only reusable access catalog. Every own-property key names one strict
 discriminated connection:
 
-- `s3`: endpoint, region, and access-key credentials; Cloudflare R2 is an S3 setup preset, not a
-  persisted fourth type;
+- `s3`: endpoint, region, access-key credentials, and an optional temporary session token; Cloudflare R2 is an S3 setup preset, not a persisted fourth type;
 - `git`: credential-free SSH/HTTPS remote, relying on user Git/SSH authentication; or
 - `webdav`: HTTPS URL plus username/password credentials.
 
