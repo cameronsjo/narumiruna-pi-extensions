@@ -5,6 +5,7 @@ import {
 	fallbackOAuthCredentialCandidates,
 	type OAuthCredentialCandidateReader,
 } from "./oauth-credential-source.js";
+import { normalizeBasetenBillingUsagePayload } from "./providers/baseten.js";
 import { normalizeCodexBackendPayload } from "./providers/codex.js";
 import { normalizeDeepSeekBalancePayload } from "./providers/deepseek.js";
 import {
@@ -21,6 +22,7 @@ import { normalizeVercelAIGatewayCreditsPayload } from "./providers/vercel-ai-ga
 import { normalizeXaiBillingPayload } from "./providers/xai.js";
 import { normalizeZaiQuotaPayload } from "./providers/zai.js";
 import type {
+	BasetenBillingUsagePayload,
 	CodexBackendPayload,
 	DeepSeekBalancePayload,
 	FireworksAccountsPayload,
@@ -41,6 +43,8 @@ import type {
 	ZaiQuotaPayload,
 } from "./types.js";
 
+const BASETEN_BILLING_USAGE_URL = "https://api.baseten.co/v1/billing/usage_summary";
+const BASETEN_USAGE_WINDOW_DAYS = 30;
 const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 const DEEPSEEK_BALANCE_URL = "https://api.deepseek.com/user/balance";
 const FIREWORKS_BILLING_SUMMARY_ORIGIN = "https://api.fireworks.ai";
@@ -70,6 +74,27 @@ export const AUTH_FINGERPRINT_SALT = randomBytes(32);
 export type UsageRequestGuard = () => Promise<void>;
 
 export const SUPPORTED_ADAPTERS: readonly UsageProviderAdapter[] = [
+	{
+		id: "baseten",
+		displayName: "Baseten",
+		semantics: { kind: "api-key", label: "Organization Model APIs spend" },
+		async query(auth, signal, timeoutMs, guard) {
+			if (!guard) throw new Error("Baseten billing usage requires request-boundary revalidation.");
+			const startedAt = Date.now();
+			await guard();
+			const windowAt = Date.now();
+			const payload = (await fetchProviderJson(
+				basetenBillingUsageUrl(windowAt),
+				auth,
+				signal,
+				remainingTimeout(timeoutMs, startedAt, "fetching Baseten billing usage"),
+				"Baseten billing usage endpoint",
+				{ redirect: "error" },
+			)) as BasetenBillingUsagePayload;
+			await guard();
+			return normalizeBasetenBillingUsagePayload(payload, Date.now());
+		},
+	},
 	{
 		id: "openai-codex",
 		displayName: "OpenAI Codex",
@@ -818,6 +843,9 @@ function hasOfficialOrigin(model: PiModel, providerId: string): boolean {
 function hasOfficialUrlOrigin(value: string, providerId: string): boolean {
 	try {
 		const url = new URL(value);
+		if (providerId === "baseten") {
+			return ["https://inference.baseten.co", "https://api.baseten.co"].includes(url.origin);
+		}
 		if (providerId === "openai-codex") return url.origin === "https://chatgpt.com";
 		if (providerId === "deepseek") return url.origin === "https://api.deepseek.com";
 		if (providerId === "fireworks") return url.origin === FIREWORKS_BILLING_SUMMARY_ORIGIN;
@@ -860,6 +888,16 @@ function validatedXaiUserId(value: unknown): string {
 		throw new Error("xAI consumer identity returned an unsafe canonical user ID.");
 	}
 	return value;
+}
+
+function basetenBillingUsageUrl(windowAt: number): string {
+	const url = new URL(BASETEN_BILLING_USAGE_URL);
+	url.searchParams.set(
+		"start_date",
+		new Date(windowAt - BASETEN_USAGE_WINDOW_DAYS * 24 * 60 * 60 * 1_000).toISOString(),
+	);
+	url.searchParams.set("end_date", new Date(windowAt).toISOString());
+	return url.toString();
 }
 
 async function queryMoonshotBalance(
