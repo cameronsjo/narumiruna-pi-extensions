@@ -69,6 +69,10 @@ Pi TUI Kit and its consumers version independently through Changesets.
 Publish a new Kit API before raising a consumer's compatibility floor.
 Declare Kit in that consumer so local hoisting cannot hide an incompatible or missing published dependency.
 
+Searchable review and browse-detail screens use an explicit pre-adoption API-admission exception.
+Review behavior converges in `pi-starship` configuration documents and `pi-recall` saved-message previews, while browse-detail behavior converges in `pi-tool` exact tool documents and `pi-analytics` detail catalogs.
+Those consumers cannot adopt the fields until this Kit minor is published, so this release keeps their compatibility floors unchanged and defers consumer migration.
+
 ## ⚡ Runtime performance
 
 The production JavaScript imports Pi TUI at runtime and keeps Pi Coding Agent imports type-only.

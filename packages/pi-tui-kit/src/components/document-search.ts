@@ -11,6 +11,8 @@ import { sanitizeTerminalDocument } from "../terminal-document.js";
 import { handleSearchInput } from "./rendering.js";
 
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+const PASTE_START = "\u001b[200~";
+const PASTE_END = "\u001b[201~";
 
 type SearchTheme = Pick<Theme, "fg"> & Partial<Pick<Theme, "bg" | "underline">>;
 
@@ -35,10 +37,12 @@ export class DocumentSearchController implements Focusable {
 	active = false;
 	private parentFocused = false;
 	private lines: readonly string[] = [];
+	private softWrapAfter: readonly boolean[] = [];
 	private corpus = "";
 	private cells: Array<CorpusCell | undefined> = [];
 	private matches: DocumentMatch[] = [];
 	private currentIndex = 0;
+	private pasting = false;
 
 	get focused() {
 		return this.parentFocused;
@@ -61,9 +65,9 @@ export class DocumentSearchController implements Focusable {
 		return this.matches[this.currentIndex]?.ranges[0]?.row;
 	}
 
-	activate(lines: readonly string[]) {
+	activate(lines: readonly string[], softWrapAfter: readonly boolean[] = []) {
 		this.active = true;
-		this.updateLines(lines);
+		this.updateLines(lines, softWrapAfter);
 		this.syncFocus();
 	}
 
@@ -72,21 +76,29 @@ export class DocumentSearchController implements Focusable {
 		this.input.setValue("");
 		this.matches = [];
 		this.currentIndex = 0;
+		this.pasting = false;
 		this.syncFocus();
 	}
 
-	updateLines(lines: readonly string[]) {
-		if (sameLines(this.lines, lines)) return;
+	updateLines(lines: readonly string[], softWrapAfter: readonly boolean[] = []) {
+		if (sameLines(this.lines, lines) && sameValues(this.softWrapAfter, softWrapAfter)) return;
 		this.lines = [...lines];
-		const corpus = buildCorpus(lines);
+		this.softWrapAfter = [...softWrapAfter];
+		const corpus = buildCorpus(lines, softWrapAfter);
 		this.corpus = corpus.text;
 		this.cells = corpus.cells;
 		this.rebuildMatches();
 	}
 
+	shouldHandleBeforeShortcuts(data: string) {
+		return this.pasting || data.includes(PASTE_START);
+	}
+
 	handleInput(data: string) {
 		const previous = this.input.getValue();
-		handleSearchInput(this.input, sanitizePastedSearchData(data));
+		const pasted = sanitizePastedSearchData(data, this.pasting);
+		this.pasting = pasted.pasting;
+		handleSearchInput(this.input, pasted.data);
 		const sanitized = sanitizeTerminalDocument(this.input.getValue()).replace(/\s+/gu, " ");
 		if (sanitized !== this.input.getValue()) this.input.setValue(sanitized);
 		if (this.input.getValue() === previous) return false;
@@ -130,6 +142,7 @@ export class DocumentSearchController implements Focusable {
 	invalidate() {
 		this.input.invalidate();
 		this.lines = [];
+		this.softWrapAfter = [];
 		this.corpus = "";
 		this.cells = [];
 		this.matches = [];
@@ -153,7 +166,7 @@ export class DocumentSearchController implements Focusable {
 	}
 }
 
-function buildCorpus(lines: readonly string[]) {
+function buildCorpus(lines: readonly string[], softWrapAfter: readonly boolean[]) {
 	let text = "";
 	const cells: Array<CorpusCell | undefined> = [];
 	let pendingWhitespace: CorpusCell | undefined;
@@ -177,32 +190,31 @@ function buildCorpus(lines: readonly string[]) {
 			}
 			column += width;
 		}
-		pendingWhitespace ??= { row, start: column, end: column };
+		if (!softWrapAfter[row]) pendingWhitespace ??= { row, start: column, end: column };
 	}
 	return { text, cells };
 }
 
-function sanitizePastedSearchData(data: string) {
-	const startMarker = "\u001b[200~";
-	const endMarker = "\u001b[201~";
+function sanitizePastedSearchData(data: string, initiallyPasting: boolean) {
 	let result = "";
 	let offset = 0;
+	let pasting = initiallyPasting;
 	while (offset < data.length) {
-		const start = data.indexOf(startMarker, offset);
-		if (start < 0) {
-			const end = data.indexOf(endMarker, offset);
-			if (end < 0) return result + data.slice(offset);
-			result += sanitizeSearchQuery(data.slice(offset, end)) + endMarker;
-			offset = end + endMarker.length;
+		if (pasting) {
+			const end = data.indexOf(PASTE_END, offset);
+			if (end < 0) return { data: result + sanitizeSearchQuery(data.slice(offset)), pasting };
+			result += sanitizeSearchQuery(data.slice(offset, end)) + PASTE_END;
+			offset = end + PASTE_END.length;
+			pasting = false;
 			continue;
 		}
-		const end = data.indexOf(endMarker, start + startMarker.length);
-		result += data.slice(offset, start) + startMarker;
-		if (end < 0) return result + sanitizeSearchQuery(data.slice(start + startMarker.length));
-		result += sanitizeSearchQuery(data.slice(start + startMarker.length, end)) + endMarker;
-		offset = end + endMarker.length;
+		const start = data.indexOf(PASTE_START, offset);
+		if (start < 0) return { data: result + data.slice(offset), pasting };
+		result += data.slice(offset, start) + PASTE_START;
+		offset = start + PASTE_START.length;
+		pasting = true;
 	}
-	return result;
+	return { data: result, pasting };
 }
 
 function sanitizeSearchQuery(value: string) {
@@ -259,6 +271,10 @@ function styleLine(
 
 function sameLines(left: readonly string[], right: readonly string[]) {
 	return left.length === right.length && left.every((line, index) => line === right[index]);
+}
+
+function sameValues<T>(left: readonly T[], right: readonly T[]) {
+	return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function escapeRegExp(value: string) {

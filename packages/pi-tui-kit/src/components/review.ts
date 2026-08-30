@@ -46,6 +46,7 @@ export function createReviewComponent<ScreenId extends string, ActionId extends 
 	let disposed = false;
 	let focused = false;
 	let lastLines: readonly string[] = [];
+	let lastSoftWrapAfter: readonly boolean[] = [];
 	const documentLineCache = createDocumentLineCache(options.theme);
 	const search = options.screen.enableSearch ? new DocumentSearchController() : undefined;
 
@@ -62,18 +63,19 @@ export function createReviewComponent<ScreenId extends string, ActionId extends 
 	const component: MenuScreenComponent & Partial<Focusable> = {
 		render(width) {
 			const safeWidth = Math.max(1, width);
-			const formattedLines = documentLineCache.lines(
+			const presentation = documentLineCache.presentation(
 				options.screen.content,
 				options.screen.format,
 				safeWidth,
 			);
-			const allLines = formattedLines.some(
+			const allLines = presentation.lines.some(
 				(line) => stripVTControlCharacters(line).trim().length > 0,
 			)
-				? formattedLines
+				? presentation.lines
 				: [];
 			lastLines = allLines;
-			search?.updateLines(allLines);
+			lastSoftWrapAfter = allLines.length > 0 ? presentation.softWrapAfter : [];
+			search?.updateLines(allLines, lastSoftWrapAfter);
 			const frame = renderAdaptiveReviewFrame({
 				screen: options.screen,
 				allLines: search?.highlight(allLines, options.theme) ?? allLines,
@@ -101,6 +103,11 @@ export function createReviewComponent<ScreenId extends string, ActionId extends 
 		},
 		handleInput(data) {
 			if (disposed) return;
+			if (search?.active && search.shouldHandleBeforeShortcuts(data)) {
+				if (search.handleInput(data)) moveToMatch(search.currentRow);
+				options.tui.requestRender();
+				return;
+			}
 			if (matchesKey(data, Key.ctrl("c"))) options.onEvent({ kind: "close" });
 			else if (search?.active && options.keybindings.matches(data, "tui.altScreen.searchClose")) {
 				search.close();
@@ -134,7 +141,7 @@ export function createReviewComponent<ScreenId extends string, ActionId extends 
 				if (search.handleInput(data)) moveToMatch(search.currentRow);
 				options.tui.requestRender();
 			} else if (search && options.keybindings.matches(data, "tui.altScreen.search")) {
-				search.activate(lastLines);
+				search.activate(lastLines, lastSoftWrapAfter);
 				options.tui.requestRender();
 			}
 		},
@@ -387,10 +394,12 @@ function compactReviewHint(
 	searchActive: boolean,
 ) {
 	if (searchActive) {
+		const close = reviewBindingText(keybindings, "tui.altScreen.searchClose");
+		const next = reviewBindingText(keybindings, "tui.altScreen.searchNext");
 		return fitCompactHintSegments(
 			[
-				`${reviewBindingText(keybindings, "tui.altScreen.searchClose")} close search`,
-				`${reviewBindingText(keybindings, "tui.altScreen.searchNext")} next`,
+				...(close ? [`${close} close search`] : []),
+				...(next ? [`${next} next`] : []),
 				"ctrl+c close",
 			],
 			width,
@@ -400,15 +409,14 @@ function compactReviewHint(
 	const cancel = reviewBindingText(keybindings, "tui.select.cancel", "ctrl+c");
 	const up = reviewBindingText(keybindings, "tui.select.up");
 	const down = reviewBindingText(keybindings, "tui.select.down");
+	const search = searchEnabled ? reviewBindingText(keybindings, "tui.altScreen.search") : "";
 	return fitCompactHintSegments(
 		[
 			...(cancel ? [`${cancel} ${destination}`] : []),
 			...(destination === "back" || !cancel ? ["ctrl+c close"] : []),
 			...(confirm && confirmAction ? [`${confirm} ${confirmAction}`] : []),
 			...(up || down ? [`${[up, down].filter(Boolean).join("/")} navigate`] : []),
-			...(searchEnabled
-				? [`${reviewBindingText(keybindings, "tui.altScreen.search")} search`]
-				: []),
+			...(search ? [`${search} search`] : []),
 		],
 		width,
 	);

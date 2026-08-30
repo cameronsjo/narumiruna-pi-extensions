@@ -65,6 +65,8 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 	let detailScrollOffset = 0;
 	let detailViewportRows = 1;
 	let detailMaximumScroll = 0;
+	let lastDetailLines: readonly string[] = [];
+	let lastDetailSoftWrapAfter: readonly boolean[] = [];
 	let view: BrowseView = "list";
 	let focused = false;
 	let disposed = false;
@@ -133,14 +135,17 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 			const contentRows = framedContentRows(availableRows);
 			if (view === "detail") {
 				const selectedItem = selected()?.item;
-				const content = selectedItem?.detailDocument
-					? detailLineCache.lines(
+				const presentation = selectedItem?.detailDocument
+					? detailLineCache.presentation(
 							selectedItem.detailDocument.content,
 							selectedItem.detailDocument.format,
 							safeWidth,
 						)
-					: legacyDetailLines(selectedItem, safeWidth);
-				detailSearch?.updateLines(content);
+					: undefined;
+				const content = presentation?.lines ?? legacyDetailLines(selectedItem, safeWidth);
+				lastDetailLines = content;
+				lastDetailSoftWrapAfter = presentation?.softWrapAfter ?? [];
+				detailSearch?.updateLines(content, lastDetailSoftWrapAfter);
 				const displayedContent = detailSearch?.highlight(content, options.theme) ?? content;
 				const layout = detailLayout(contentRows, content.length, detailSearch?.active ?? false);
 				detailViewportRows = layout.contentRows;
@@ -232,6 +237,15 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 		},
 		handleInput(data) {
 			if (disposed) return;
+			if (
+				view === "detail" &&
+				detailSearch?.active &&
+				detailSearch.shouldHandleBeforeShortcuts(data)
+			) {
+				if (detailSearch.handleInput(data)) moveToDetailMatch(detailSearch.currentRow);
+				options.tui.requestRender();
+				return;
+			}
 			if (matchesKey(data, Key.ctrl("c"))) {
 				options.onEvent({ kind: "close" });
 			} else if (
@@ -259,6 +273,8 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 				if (view === "detail") {
 					view = "list";
 					detailScrollOffset = 0;
+					lastDetailLines = [];
+					lastDetailSoftWrapAfter = [];
 					detailSearch?.close();
 					syncFocus();
 				} else options.onEvent({ kind: options.screen.hint ?? "back" });
@@ -284,7 +300,7 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 				else if (detailSearch?.active) {
 					if (detailSearch.handleInput(data)) moveToDetailMatch(detailSearch.currentRow);
 				} else if (detailSearch && options.keybindings.matches(data, "tui.altScreen.search")) {
-					detailSearch.activate([]);
+					detailSearch.activate(lastDetailLines, lastDetailSoftWrapAfter);
 				}
 			} else if (options.keybindings.matches(data, "tui.select.up")) move(-1);
 			else if (options.keybindings.matches(data, "tui.select.down")) move(1);
@@ -297,6 +313,8 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 				if (selected()) {
 					view = "detail";
 					detailScrollOffset = 0;
+					lastDetailLines = [];
+					lastDetailSoftWrapAfter = [];
 					detailSearch?.close();
 					syncFocus();
 				}

@@ -24,42 +24,52 @@ export function createDocumentLineCache(theme: DocumentTheme) {
 				renderMermaid: boolean | undefined;
 				richMarkdown: boolean;
 				width: number;
-				lines: string[];
+				presentation: DocumentPresentation;
 		  }
 		| undefined;
+	const presentation = (content: string, format: ReviewFormat | undefined, width: number) => {
+		const identity = documentFormatIdentity(format);
+		if (
+			cached?.content === content &&
+			cached.formatKind === identity.kind &&
+			cached.language === identity.language &&
+			cached.filePath === identity.filePath &&
+			cached.renderLatex === identity.renderLatex &&
+			cached.renderMermaid === identity.renderMermaid &&
+			cached.richMarkdown === identity.richMarkdown &&
+			cached.width === width
+		) {
+			return cached.presentation;
+		}
+		const next = formatDocumentPresentation(content, format, width, theme);
+		cached = {
+			content,
+			formatKind: identity.kind,
+			language: identity.language,
+			filePath: identity.filePath,
+			renderLatex: identity.renderLatex,
+			renderMermaid: identity.renderMermaid,
+			richMarkdown: identity.richMarkdown,
+			width,
+			presentation: next,
+		};
+		return next;
+	};
 	return {
+		presentation,
 		lines(content: string, format: ReviewFormat | undefined, width: number) {
-			const identity = documentFormatIdentity(format);
-			if (
-				cached?.content === content &&
-				cached.formatKind === identity.kind &&
-				cached.language === identity.language &&
-				cached.filePath === identity.filePath &&
-				cached.renderLatex === identity.renderLatex &&
-				cached.renderMermaid === identity.renderMermaid &&
-				cached.richMarkdown === identity.richMarkdown &&
-				cached.width === width
-			) {
-				return cached.lines;
-			}
-			const lines = formatDocumentLines(content, format, width, theme);
-			cached = {
-				content,
-				formatKind: identity.kind,
-				language: identity.language,
-				filePath: identity.filePath,
-				renderLatex: identity.renderLatex,
-				renderMermaid: identity.renderMermaid,
-				richMarkdown: identity.richMarkdown,
-				width,
-				lines,
-			};
-			return lines;
+			return presentation(content, format, width).lines;
 		},
 		invalidate() {
 			cached = undefined;
 		},
 	};
+}
+
+export interface DocumentPresentation {
+	lines: string[];
+	/** True when a rendered row continues directly into the next row without source whitespace. */
+	softWrapAfter: boolean[];
 }
 
 export function formatDocumentLines(
@@ -68,19 +78,29 @@ export function formatDocumentLines(
 	width: number,
 	theme: DocumentTheme,
 ): string[] {
+	return formatDocumentPresentation(content, format, width, theme).lines;
+}
+
+export function formatDocumentPresentation(
+	content: string,
+	format: ReviewFormat | undefined,
+	width: number,
+	theme: DocumentTheme,
+): DocumentPresentation {
 	const resolvedFormat = format ?? { kind: "text" as const };
 	if (resolvedFormat.kind === "markdown") {
-		return renderMarkdownDocument(content, resolvedFormat, width, theme);
+		const lines = renderMarkdownDocument(content, resolvedFormat, width, theme);
+		return { lines, softWrapAfter: lines.map(() => false) };
 	}
 	const segments = documentSegments(content, width);
+	let lines: string[];
 	if (resolvedFormat.kind === "code") {
 		const language =
 			resolvedFormat.language ??
 			(resolvedFormat.filePath ? getLanguageFromPath(resolvedFormat.filePath) : undefined);
-		return segments.map(({ text }) => highlightCode(text, language, theme));
-	}
-	if (resolvedFormat.kind === "diff") {
-		return segments.map(({ source, text }) => {
+		lines = segments.map(({ text }) => highlightCode(text, language, theme));
+	} else if (resolvedFormat.kind === "diff") {
+		lines = segments.map(({ source, text }) => {
 			if (source.startsWith("@@")) return theme.fg("accent", text);
 			if (source.startsWith("+") && !source.startsWith("+++")) {
 				return theme.fg("toolDiffAdded", text);
@@ -90,8 +110,10 @@ export function formatDocumentLines(
 			}
 			return theme.fg("toolDiffContext", text);
 		});
+	} else {
+		lines = segments.map(({ text }) => theme.fg("text", text));
 	}
-	return segments.map(({ text }) => theme.fg("text", text));
+	return { lines, softWrapAfter: segments.map(({ softWrapAfter }) => softWrapAfter) };
 }
 
 export function plainDocumentLines(content: string, width: number): string[] {
@@ -177,5 +199,12 @@ function documentFormatIdentity(format: ReviewFormat | undefined) {
 function documentSegments(content: string, width: number) {
 	return sanitizeDocumentText(content)
 		.split("\n")
-		.flatMap((source) => hardWrapTerminalDocument(source, width).map((text) => ({ source, text })));
+		.flatMap((source) => {
+			const wrapped = hardWrapTerminalDocument(source, width);
+			return wrapped.map((text, index) => ({
+				source,
+				text,
+				softWrapAfter: index < wrapped.length - 1,
+			}));
+		});
 }

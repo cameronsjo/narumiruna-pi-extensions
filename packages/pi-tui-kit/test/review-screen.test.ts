@@ -838,7 +838,9 @@ test("review search is opt-in, focus-aware, navigable, and separately dismissibl
 	focusable.focused = true;
 	harness.component.render(40);
 	harness.component.handleInput("s");
-	harness.component.handleInput("needle");
+	harness.component.handleInput("\u001b[200~");
+	harness.component.handleInput("n");
+	harness.component.handleInput("eedle\u001b[201~");
 	assert.match(plainRender(harness.component, 40), /Find:/u);
 	assert.ok(colors.includes("searchMatchText"));
 	harness.component.handleInput("n");
@@ -846,11 +848,36 @@ test("review search is opt-in, focus-aware, navigable, and separately dismissibl
 	harness.component.handleInput("x");
 	assert.doesNotMatch(plainRender(harness.component, 40), /Find:/u);
 	assert.deepEqual(harness.events, []);
+	harness.component.handleInput("s");
+	harness.component.handleInput("\u001b[200~");
+	harness.component.handleInput("\u0003");
+	harness.component.handleInput("\u001b[201~");
+	assert.deepEqual(harness.events, []);
+	harness.component.handleInput("x");
 	harness.component.handleInput("q");
 	assert.deepEqual(harness.events, [{ kind: "back" }]);
 	harness.component.handleInput("s");
 	harness.component.handleInput("\u0003");
 	assert.deepEqual(harness.events.at(-1), { kind: "close" });
+});
+
+test("review omits compact search hints with empty effective bindings", () => {
+	const hiddenSearchKeybindings: ReviewKeybindings = {
+		matches: (data, binding) => data === "s" && binding === "tui.altScreen.search",
+		getKeys: () => [],
+	};
+	const harness = reviewComponentHarness(
+		{ ...reviewScreen, enableSearch: true },
+		false,
+		8,
+		undefined,
+		hiddenSearchKeybindings,
+	);
+	assert.doesNotMatch(plainRender(harness.component, 40), /\bsearch\b/u);
+	harness.component.handleInput("s");
+	const active = plainRender(harness.component, 40);
+	assert.doesNotMatch(active, /close search|\bnext\b/u);
+	assert.match(active, /ctrl\+c close/u);
 });
 
 test("search-disabled review keeps its prior component and disposal behavior", () => {

@@ -3,7 +3,10 @@ import { stripVTControlCharacters } from "node:util";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { test } from "vitest";
-import { formatDocumentLines } from "../src/components/document-formatting.js";
+import {
+	formatDocumentLines,
+	formatDocumentPresentation,
+} from "../src/components/document-formatting.js";
 import { DocumentSearchController } from "../src/components/document-search.js";
 
 initTheme("dark", false);
@@ -30,6 +33,22 @@ test("matches case-insensitive literals across rendered whitespace", () => {
 	assert.equal(controller.currentRow, 0);
 	assert.equal(controller.next(), 2);
 	assert.equal(controller.previous(), 0);
+});
+
+test("preserves literal matches across exact-document soft wraps", () => {
+	const wrapped = formatDocumentPresentation("abcdefgh", { kind: "text" }, 4, theme);
+	assert.deepEqual(wrapped.softWrapAfter, [true, false]);
+	const controller = search(wrapped.lines, "def");
+	controller.updateLines(wrapped.lines, wrapped.softWrapAfter);
+	assert.equal(controller.count, 1);
+	assert.deepEqual(controller.highlight(wrapped.lines, theme).map(stripVTControlCharacters), [
+		"abcd",
+		"efgh",
+	]);
+
+	const explicitLines = formatDocumentPresentation("abcd\nefgh", { kind: "text" }, 4, theme);
+	controller.updateLines(explicitLines.lines, explicitLines.softWrapAfter);
+	assert.equal(controller.count, 0);
 });
 
 test("maps combining and wide graphemes to ANSI-safe cell ranges", () => {
