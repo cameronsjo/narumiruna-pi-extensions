@@ -15,8 +15,10 @@ const PASTE_START = "\u001b[200~";
 const PASTE_END = "\u001b[201~";
 const MAX_HIGHLIGHTED_MATCHES = 1_000;
 const MAX_SEARCH_QUERY_LENGTH = 4_096;
+const MAX_PASTE_BUFFER_LENGTH = MAX_SEARCH_QUERY_LENGTH * 16;
 
-type SearchTheme = Pick<Theme, "fg"> & Partial<Pick<Theme, "bg" | "underline">>;
+type SearchTheme = Pick<Theme, "bold" | "fg"> &
+	Partial<Pick<Theme, "bg" | "inverse" | "underline">>;
 
 interface CellRange {
 	row: number;
@@ -28,10 +30,91 @@ interface DocumentMatch {
 	ranges: CellRange[];
 }
 
-interface CorpusCell {
-	row: number;
-	start: number;
-	end: number;
+interface CorpusCells {
+	rows: Uint32Array;
+	starts: Uint32Array;
+	ends: Uint32Array;
+}
+
+const INVALID_CELL = 0xffffffff;
+
+class CorpusCellBuilder {
+	private rows: Uint32Array;
+	private starts: Uint32Array;
+	private ends: Uint32Array;
+	private length = 0;
+
+	constructor(initialCapacity = 1_024) {
+		const capacity = Math.max(1, initialCapacity);
+		this.rows = new Uint32Array(capacity);
+		this.starts = new Uint32Array(capacity);
+		this.ends = new Uint32Array(capacity);
+	}
+
+	push(row: number, start: number, end: number) {
+		this.ensureCapacity();
+		this.rows[this.length] = row;
+		this.starts[this.length] = start;
+		this.ends[this.length] = end;
+		this.length += 1;
+	}
+
+	finish(): CorpusCells {
+		if (this.length === this.rows.length) {
+			return { rows: this.rows, starts: this.starts, ends: this.ends };
+		}
+		return {
+			rows: this.rows.slice(0, this.length),
+			starts: this.starts.slice(0, this.length),
+			ends: this.ends.slice(0, this.length),
+		};
+	}
+
+	private ensureCapacity() {
+		if (this.length < this.rows.length) return;
+		const capacity = this.rows.length * 2;
+		const rows = new Uint32Array(capacity);
+		const starts = new Uint32Array(capacity);
+		const ends = new Uint32Array(capacity);
+		rows.set(this.rows);
+		starts.set(this.starts);
+		ends.set(this.ends);
+		this.rows = rows;
+		this.starts = starts;
+		this.ends = ends;
+	}
+}
+
+class MatchOffsetBuilder {
+	private offsets: Uint32Array;
+	private length = 0;
+
+	constructor(initialCapacity = 1_024) {
+		this.offsets = new Uint32Array(Math.max(2, initialCapacity));
+	}
+
+	push(start: number, end: number) {
+		if (this.length + 2 > this.offsets.length) {
+			const offsets = new Uint32Array(this.offsets.length * 2);
+			offsets.set(this.offsets);
+			this.offsets = offsets;
+		}
+		this.offsets[this.length] = start;
+		this.offsets[this.length + 1] = end;
+		this.length += 2;
+	}
+
+	finish() {
+		return this.length === this.offsets.length ? this.offsets : this.offsets.slice(0, this.length);
+	}
+}
+
+function emptyCorpusCells(): CorpusCells {
+	return {
+		rows: new Uint32Array(),
+		starts: new Uint32Array(),
+		ends: new Uint32Array(),
+	};
 }
 
 export interface DocumentSearchSegment {
@@ -52,7 +135,7 @@ export class DocumentSearchController implements Focusable {
 	private ignoreLeadingWhitespace: readonly boolean[] = [];
 	private searchSources: readonly DocumentSearchSource[] = [];
 	private corpus = "";
-	private cells: Array<CorpusCell | undefined> = [];
+	private cells = emptyCorpusCells();
 	private matches: DocumentMatch[] = [];
 	private compactMatchOffsets: Uint32Array | undefined;
 	private alternateGlobalIndexes: number[] = [];
@@ -134,8 +217,14 @@ export class DocumentSearchController implements Focusable {
 		let offset = 0;
 		while (offset < data.length) {
 			if (this.pasting) {
-				const end = data.indexOf(PASTE_END, offset);
-				const nextOffset = end < 0 ? data.length : end + PASTE_END.length;
+				const markerPrefix = this.pasteBuffer.slice(-(PASTE_END.length - 1));
+				const combined = markerPrefix + data.slice(offset);
+				const end = combined.indexOf(PASTE_END);
+				const consumed =
+					end < 0
+						? data.length - offset
+						: Math.max(0, end + PASTE_END.length - markerPrefix.length);
+				const nextOffset = offset + consumed;
 				changed = this.handleInput(data.slice(offset, nextOffset)) || changed;
 				offset = nextOffset;
 				continue;
@@ -210,7 +299,7 @@ export class DocumentSearchController implements Focusable {
 		this.ignoreLeadingWhitespace = [];
 		this.searchSources = [];
 		this.corpus = "";
-		this.cells = [];
+		this.cells = emptyCorpusCells();
 		this.matches = [];
 		this.compactMatchOffsets = undefined;
 		this.alternateGlobalIndexes = [];
@@ -236,10 +325,9 @@ export class DocumentSearchController implements Focusable {
 			this.compactMatchOffsets = findMatchOffsets(this.corpus, query);
 			const alternates = sortMatches(
 				uniqueMatches(
-					this.searchSources.flatMap((source) => {
-						const corpus = buildSearchSourceCorpus(source);
-						return findMatches(corpus.text, corpus.cells, query);
-					}),
+					this.searchSources.flatMap((source) =>
+						findAlternateMatches(buildSearchSourceCorpus(source), query),
+					),
 				),
 			);
 			this.matches = alternates.filter((match) => !this.hasPrimaryMatch(match));
@@ -313,63 +401,121 @@ function buildCorpus(
 	ignoreLeadingWhitespace: readonly boolean[],
 ) {
 	let text = "";
-	const cells: Array<CorpusCell | undefined> = [];
-	let pendingWhitespace: CorpusCell | undefined;
+	const estimatedCells =
+		lines.reduce((total, line) => total + line.length, 0) + Math.max(0, lines.length - 1);
+	const cells = new CorpusCellBuilder(estimatedCells);
+	let pendingRow = INVALID_CELL;
+	let pendingStart = 0;
+	let pendingEnd = 0;
+	const setPendingWhitespace = (row: number, start: number, end: number) => {
+		if (pendingRow !== INVALID_CELL) return;
+		pendingRow = row;
+		pendingStart = start;
+		pendingEnd = end;
+	};
 	const appendWhitespace = () => {
-		if (!pendingWhitespace || text.endsWith(" ") || text.length === 0) return;
+		if (pendingRow === INVALID_CELL || text.endsWith(" ") || text.length === 0) return;
 		text += " ";
-		cells.push(pendingWhitespace);
+		cells.push(pendingRow, pendingStart, pendingEnd);
+	};
+	const clearPendingWhitespace = () => {
+		pendingRow = INVALID_CELL;
 	};
 	for (const [row, line] of lines.entries()) {
 		let column = 0;
 		let hasContent = false;
-		for (const { segment } of graphemeSegmenter.segment(stripTerminalSequences(line))) {
-			const width = visibleWidth(segment);
-			const cell = { row, start: column, end: column + width };
+		const appendSegment = (segment: string, width: number) => {
+			const start = column;
+			const end = column + width;
 			if (/^\s+$/u.test(segment)) {
-				if (hasContent || !ignoreLeadingWhitespace[row]) pendingWhitespace ??= cell;
+				if (hasContent || !ignoreLeadingWhitespace[row]) setPendingWhitespace(row, start, end);
 			} else {
 				appendWhitespace();
-				pendingWhitespace = undefined;
+				clearPendingWhitespace();
 				hasContent = true;
 				text += segment;
-				for (let index = 0; index < segment.length; index += 1) cells.push(cell);
+				for (let index = 0; index < segment.length; index += 1) cells.push(row, start, end);
 			}
-			column += width;
+			column = end;
+		};
+		const plain = stripTerminalSequences(line);
+		if (/^[\x20-\x7e]*$/u.test(plain)) {
+			let index = 0;
+			while (index < plain.length) {
+				if (plain[index] === " ") {
+					if (hasContent || !ignoreLeadingWhitespace[row]) {
+						setPendingWhitespace(row, column, column + 1);
+					}
+					while (plain[index] === " ") {
+						index += 1;
+						column += 1;
+					}
+					continue;
+				}
+				const start = index;
+				while (index < plain.length && plain[index] !== " ") index += 1;
+				appendWhitespace();
+				clearPendingWhitespace();
+				hasContent = true;
+				const run = plain.slice(start, index);
+				text += run;
+				for (let offset = 0; offset < run.length; offset += 1) {
+					cells.push(row, column + offset, column + offset + 1);
+				}
+				column += run.length;
+			}
+		} else {
+			for (const { segment } of graphemeSegmenter.segment(plain)) {
+				appendSegment(segment, visibleWidth(segment));
+			}
 		}
-		if (!softWrapAfter[row]) pendingWhitespace ??= { row, start: column, end: column };
+		if (!softWrapAfter[row]) setPendingWhitespace(row, column, column);
 	}
-	return { text, cells };
+	return { text, cells: cells.finish() };
 }
 
 function buildSearchSourceCorpus(source: DocumentSearchSource) {
 	let text = "";
-	const cells: Array<CorpusCell | undefined> = [];
-	let pendingWhitespace: CorpusCell | undefined;
-	const appendWhitespace = () => {
-		if (!pendingWhitespace || text.endsWith(" ") || text.length === 0) return;
-		text += " ";
-		cells.push(pendingWhitespace);
+	const estimatedCells =
+		source.reduce((total, segment) => total + segment.text.length, 0) +
+		Math.max(0, source.length - 1);
+	const cells = new CorpusCellBuilder(estimatedCells);
+	const boundaries: number[] = [];
+	let pendingRow = INVALID_CELL;
+	let pendingStart = 0;
+	let pendingEnd = 0;
+	const setPendingWhitespace = (row: number, start: number, end: number) => {
+		if (pendingRow !== INVALID_CELL) return;
+		pendingRow = row;
+		pendingStart = start;
+		pendingEnd = end;
 	};
-	for (const segment of source) {
+	const appendWhitespace = () => {
+		if (pendingRow === INVALID_CELL || text.endsWith(" ") || text.length === 0) return;
+		text += " ";
+		cells.push(pendingRow, pendingStart, pendingEnd);
+	};
+	for (const [segmentIndex, segment] of source.entries()) {
+		if (segmentIndex > 0) boundaries.push(text.length);
 		let column = segment.column;
-		if (segment.separatorBefore) {
-			pendingWhitespace ??= { row: segment.row, start: column, end: column };
-		}
+		if (segment.separatorBefore) setPendingWhitespace(segment.row, column, column);
 		for (const { segment: grapheme } of graphemeSegmenter.segment(segment.text)) {
 			const width = visibleWidth(grapheme);
-			const cell = { row: segment.row, start: column, end: column + width };
-			if (/^\s+$/u.test(grapheme)) pendingWhitespace ??= cell;
+			const start = column;
+			const end = column + width;
+			if (/^\s+$/u.test(grapheme)) setPendingWhitespace(segment.row, start, end);
 			else {
 				appendWhitespace();
-				pendingWhitespace = undefined;
+				pendingRow = INVALID_CELL;
 				text += grapheme;
-				for (let index = 0; index < grapheme.length; index += 1) cells.push(cell);
+				for (let index = 0; index < grapheme.length; index += 1) {
+					cells.push(segment.row, start, end);
+				}
 			}
-			column += width;
+			column = end;
 		}
 	}
-	return { text, cells };
+	return { text, cells: cells.finish(), boundaries };
 }
 
 function sanitizePastedSearchData(data: string, initiallyPasting: boolean, initialBuffer: string) {
@@ -379,11 +525,15 @@ function sanitizePastedSearchData(data: string, initiallyPasting: boolean, initi
 	let buffer = initialBuffer;
 	while (offset < data.length) {
 		if (pasting) {
-			const end = data.indexOf(PASTE_END, offset);
-			if (end < 0) return { data: result, pasting, buffer: buffer + data.slice(offset) };
-			result += sanitizeSearchQuery(buffer + data.slice(offset, end)) + PASTE_END;
+			const combined = buffer + data.slice(offset);
+			const end = combined.indexOf(PASTE_END);
+			if (end < 0) {
+				return { data: result, pasting, buffer: appendPasteBuffer(buffer, data.slice(offset)) };
+			}
+			result += sanitizeSearchQuery(combined.slice(0, end)) + PASTE_END;
+			const consumed = Math.max(0, end + PASTE_END.length - buffer.length);
 			buffer = "";
-			offset = end + PASTE_END.length;
+			offset += consumed;
 			pasting = false;
 			continue;
 		}
@@ -396,6 +546,13 @@ function sanitizePastedSearchData(data: string, initiallyPasting: boolean, initi
 	return { data: result, pasting, buffer };
 }
 
+function appendPasteBuffer(buffer: string, value: string) {
+	const combined = buffer + value;
+	if (combined.length <= MAX_PASTE_BUFFER_LENGTH) return combined;
+	const tailLength = PASTE_END.length - 1;
+	return combined.slice(0, MAX_PASTE_BUFFER_LENGTH - tailLength) + combined.slice(-tailLength);
+}
+
 function sanitizeSearchQuery(value: string) {
 	return sanitizeTerminalDocument(value).replace(/\s+/gu, " ").slice(0, MAX_SEARCH_QUERY_LENGTH);
 }
@@ -406,41 +563,55 @@ function normalizeQuery(value: string) {
 
 function findMatchOffsets(corpus: string, query: string) {
 	if (query.length > corpus.length) return new Uint32Array();
+	const maximumOffsetCount = Math.floor(corpus.length / query.length) * 2;
+	const offsets = new MatchOffsetBuilder(maximumOffsetCount);
+	if (/^[\x20-\x7e]+$/u.test(query) && /^[\x20-\x7e]*$/u.test(corpus)) {
+		const haystack = corpus.toLowerCase();
+		const needle = query.toLowerCase();
+		let offset = 0;
+		while (offset <= haystack.length - needle.length) {
+			const match = haystack.indexOf(needle, offset);
+			if (match < 0) break;
+			offsets.push(match, match + needle.length);
+			offset = match + needle.length;
+		}
+		return offsets.finish();
+	}
 	const expression = new RegExp(escapeRegExp(query), "giu");
-	const offsets: number[] = [];
 	for (const match of corpus.matchAll(expression)) {
 		offsets.push(match.index, match.index + match[0].length);
 	}
-	return Uint32Array.from(offsets);
+	return offsets.finish();
 }
 
-function findMatches(
-	corpus: string,
-	cells: readonly (CorpusCell | undefined)[],
+function findAlternateMatches(
+	corpus: ReturnType<typeof buildSearchSourceCorpus>,
 	query: string,
 ): DocumentMatch[] {
-	const offsets = findMatchOffsets(corpus, query);
+	const offsets = findMatchOffsets(corpus.text, query);
 	const matches: DocumentMatch[] = [];
 	for (let index = 0; index < offsets.length; index += 2) {
-		matches.push(materializeMatch(cells, offsets[index] ?? 0, offsets[index + 1] ?? 0));
+		const start = offsets[index] ?? 0;
+		const end = offsets[index + 1] ?? 0;
+		const boundaryIndex = lowerBound(corpus.boundaries, start + 1);
+		if ((corpus.boundaries[boundaryIndex] ?? Number.POSITIVE_INFINITY) >= end) continue;
+		matches.push(materializeMatch(corpus.cells, start, end));
 	}
 	return matches;
 }
 
-function materializeMatch(
-	cells: readonly (CorpusCell | undefined)[],
-	start: number,
-	end: number,
-): DocumentMatch {
+function materializeMatch(cells: CorpusCells, start: number, end: number): DocumentMatch {
 	const byRow = new Map<number, CellRange>();
 	for (let index = start; index < end; index += 1) {
-		const cell = cells[index];
-		if (!cell || cell.end <= cell.start) continue;
-		const range = byRow.get(cell.row);
+		const row = cells.rows[index] ?? INVALID_CELL;
+		const cellStart = cells.starts[index] ?? 0;
+		const cellEnd = cells.ends[index] ?? 0;
+		if (row === INVALID_CELL || cellEnd <= cellStart) continue;
+		const range = byRow.get(row);
 		if (range) {
-			range.start = Math.min(range.start, cell.start);
-			range.end = Math.max(range.end, cell.end);
-		} else byRow.set(cell.row, { ...cell });
+			range.start = Math.min(range.start, cellStart);
+			range.end = Math.max(range.end, cellEnd);
+		} else byRow.set(row, { row, start: cellStart, end: cellEnd });
 	}
 	return { ranges: [...byRow.values()] };
 }
@@ -459,7 +630,8 @@ function styleLine(
 		let target = sliceByColumn(line, range.start, range.end - range.start, true);
 		target = theme.fg("searchMatchText", target);
 		target = theme.bg?.("searchMatchBg", target) ?? target;
-		if (range.current) target = theme.underline?.(target) ?? target;
+		if (range.current) target = theme.bold(theme.inverse?.(target) ?? target);
+		else target = theme.underline?.(target) ?? target;
 		result += target;
 		column = range.end;
 	}

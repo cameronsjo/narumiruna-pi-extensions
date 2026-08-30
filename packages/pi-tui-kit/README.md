@@ -534,6 +534,7 @@ Omitted or `"adaptive"` viewport size uses the live terminal row budget; a posit
 RPC intentionally keeps one deterministic unfiltered list, then presents bounded detail pages; `searchText` is never rendered.
 Set `enableDetailSearch: true` to add literal, case-insensitive search over the displayed legacy or exact detail text in TUI mode.
 The detail search uses Pi's effective alternate-screen search bindings, keeps list filtering independent, and clears when search closes or the detail view exits.
+Document search caps each query at 4,096 code units and highlights only the current result above 1,000 matches while preserving exact count and navigation.
 `Ctrl+C` always closes the whole menu, while the configured search-close binding closes only search first.
 RPC ignores `enableDetailSearch` and retains its existing pages.
 
@@ -614,6 +615,7 @@ RPC sends bounded pages instead of one unbounded dialog title.
 Treat `content` as untrusted display input; the Kit strips terminal and bidirectional display controls before formatting it.
 Set `enableSearch: true` to search displayed TUI text with case-insensitive literal matching across normalized rendered whitespace.
 The search bar uses Pi's effective search, next, previous, and search-close bindings while preserving document scrolling.
+Document search caps each query at 4,096 code units and highlights only the current result above 1,000 matches while preserving exact count and navigation.
 Closing search clears its query and highlights, a later Back or Close keeps the screen's existing meaning, and `Ctrl+C` always closes the menu.
 RPC ignores `enableSearch` and retains deterministic bounded pages.
 

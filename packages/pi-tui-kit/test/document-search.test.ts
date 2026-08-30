@@ -15,7 +15,8 @@ initTheme("dark", false);
 const theme = {
 	fg: (_role: string, text: string) => `\u001b[31m${text}\u001b[39m`,
 	bg: (_role: string, text: string) => `\u001b[43m${text}\u001b[49m`,
-	bold: (text: string) => text,
+	bold: (text: string) => `\u001b[1m${text}\u001b[22m`,
+	inverse: (text: string) => `\u001b[7m${text}\u001b[27m`,
 	underline: (text: string) => `\u001b[4m${text}\u001b[24m`,
 };
 
@@ -34,6 +35,10 @@ test("matches case-insensitive literals across rendered whitespace", () => {
 	assert.equal(controller.currentRow, 0);
 	assert.equal(controller.next(), 2);
 	assert.equal(controller.previous(), 0);
+	const highlighted = controller.highlight(["Alpha", "  beta", "ALPHA beta"], theme);
+	assert.equal(highlighted[0]?.includes("\u001b[1m"), true);
+	assert.equal(highlighted[0]?.includes("\u001b[7m"), true);
+	assert.equal(highlighted[2]?.includes("\u001b[4m"), true);
 });
 
 test("preserves literal matches across exact-document soft wraps", () => {
@@ -124,6 +129,21 @@ test("preserves Markdown tokens across soft wraps without joining source lines",
 	spacedSearch.handleInput("hab");
 	assert.equal(spacedSearch.count, 0);
 
+	const decoratedTable = formatDocumentPresentation(
+		"| a | b |\n|---|---|\n| abc│defgh | xyz |",
+		{ kind: "markdown" },
+		10,
+		theme,
+	);
+	const decoratedSearch = search(decoratedTable.searchLines, "c│d");
+	decoratedSearch.updateLines(
+		decoratedTable.searchLines,
+		decoratedTable.softWrapAfter,
+		decoratedTable.ignoreLeadingWhitespace,
+		decoratedTable.searchSources,
+	);
+	assert.equal(decoratedSearch.count, 1);
+
 	const explicitLines = formatDocumentPresentation("abcd\nefgh", { kind: "markdown" }, 4, theme);
 	assert.deepEqual(explicitLines.softWrapAfter, [false, false]);
 	controller.updateLines(
@@ -175,6 +195,47 @@ test("bounds Markdown reference rendering without losing capped-wrap matches", (
 		presentation.ignoreLeadingWhitespace,
 	);
 	assert.equal(controller.count, 1);
+
+	const explicitContent = [
+		"a".repeat(499),
+		"b",
+		...Array.from({ length: 1_999 }, () => "short"),
+	].join("\n");
+	const explicitPresentation = formatDocumentPresentation(
+		explicitContent,
+		{ kind: "markdown" },
+		20,
+		theme,
+	);
+	const explicitSearch = search(explicitPresentation.searchLines, "ab");
+	explicitSearch.updateLines(
+		explicitPresentation.searchLines,
+		explicitPresentation.softWrapAfter,
+		explicitPresentation.ignoreLeadingWhitespace,
+	);
+	assert.equal(explicitSearch.count, 0);
+
+	const tableToken = `${"a".repeat(493)}XYZb`;
+	const tableContent = [
+		"| value |",
+		"|---|",
+		`| ${tableToken} |`,
+		...Array.from({ length: 1_998 }, () => "short"),
+	].join("\n");
+	const tablePresentation = formatDocumentPresentation(
+		tableContent,
+		{ kind: "markdown" },
+		20,
+		theme,
+	);
+	const tableSearch = search(tablePresentation.searchLines, "XYZb");
+	tableSearch.updateLines(
+		tablePresentation.searchLines,
+		tablePresentation.softWrapAfter,
+		tablePresentation.ignoreLeadingWhitespace,
+		tablePresentation.searchSources,
+	);
+	assert.equal(tableSearch.count, 1);
 });
 
 test("maps combining and wide graphemes to ANSI-safe cell ranges", () => {
@@ -185,7 +246,9 @@ test("maps combining and wide graphemes to ANSI-safe cell ranges", () => {
 	assert.equal(stripVTControlCharacters(highlighted[0] ?? ""), lines[0]);
 	assert.equal(visibleWidth(highlighted[0] ?? ""), visibleWidth(lines[0] ?? ""));
 	assert.equal(highlighted[0]?.includes("\u001b[43m"), true);
-	assert.equal(highlighted[0]?.includes("\u001b[4m"), true);
+	assert.equal(highlighted[0]?.includes("\u001b[1m"), true);
+	assert.equal(highlighted[0]?.includes("\u001b[7m"), true);
+	assert.equal(highlighted[0]?.includes("\u001b[4m"), false);
 });
 
 test("searches ANSI-formatted text, code, diff, and rendered Markdown", () => {
@@ -245,7 +308,7 @@ test("normalizes whitespace for matching without moving the input cursor", () =>
 });
 
 test("indexes repetitive documents compactly while retaining count and navigation", () => {
-	const line = "a".repeat(100_000);
+	const line = "a".repeat(1_000_000);
 	const controller = new DocumentSearchController();
 	controller.activate(
 		[line],
@@ -259,19 +322,38 @@ test("indexes repetitive documents compactly while retaining count and navigatio
 		],
 	);
 	controller.handleInput("a");
-	assert.equal(controller.count, 100_000);
+	assert.equal(controller.count, 1_000_000);
 	assert.equal(controller.current, 1);
 	controller.previous();
-	assert.equal(controller.current, 100_000);
+	assert.equal(controller.current, 1_000_000);
 	controller.next();
 	assert.equal(controller.current, 1);
 	assert.equal(controller.highlight([line], theme).length, 1);
+
+	const tableLine = "a".repeat(50_000);
+	const tablePresentation = formatDocumentPresentation(
+		`| token |\n|---|\n| ${tableLine} |`,
+		{ kind: "markdown" },
+		20,
+		theme,
+	);
+	const tableController = search(tablePresentation.searchLines, "a");
+	tableController.updateLines(
+		tablePresentation.searchLines,
+		tablePresentation.softWrapAfter,
+		tablePresentation.ignoreLeadingWhitespace,
+		tablePresentation.searchSources,
+	);
+	assert.equal(tableController.count, 50_000);
+	assert.equal((tableController as unknown as { matches: unknown[] }).matches.length, 0);
 });
 
 test("bounds pasted search queries before compiling matchers", () => {
 	const controller = new DocumentSearchController();
 	controller.activate(["short"]);
-	controller.handleInput(`\u001b[200~${"x".repeat(10_000)}\u001b[201~`);
+	controller.handleInput(`\u001b[200~${"x".repeat(100_000)}`);
+	assert.equal(controller.input.getValue(), "");
+	controller.handleInput("\u001b[201~");
 	assert.equal(controller.input.getValue().length, 4_096);
 	assert.equal(controller.count, 0);
 });
@@ -284,7 +366,11 @@ test("routes only pasted bytes ahead of surrounding shortcuts", () => {
 		outsidePaste.push(data);
 		return true;
 	});
-	const routed = controller.routeInput("dle\u001b[201~\u0003", (data) => {
+	controller.routeInput("dle\u001b[20", (data) => {
+		outsidePaste.push(data);
+		return true;
+	});
+	const routed = controller.routeInput("1~\u0003", (data) => {
 		outsidePaste.push(data);
 		return false;
 	});

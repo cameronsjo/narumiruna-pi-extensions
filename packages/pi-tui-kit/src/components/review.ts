@@ -114,7 +114,11 @@ export function createReviewComponent<ScreenId extends string, ActionId extends 
 				keybindings: options.keybindings,
 			};
 			let frame = renderAdaptiveReviewFrame(frameOptions);
-			if (layoutChanged && searchActive && search?.currentRow !== undefined) {
+			if (
+				(layoutChanged || frame.viewportSize !== lastViewportSize) &&
+				searchActive &&
+				search?.currentRow !== undefined
+			) {
 				const correctedOffset = keepRowVisible(
 					frame.scrollOffset,
 					search.currentRow,

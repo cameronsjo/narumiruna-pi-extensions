@@ -64,7 +64,7 @@ export interface MenuScreenComponentOptions<ScreenId extends string, ActionId ex
 	selectedItemId?: string;
 	tui: RenderHost;
 	theme: Pick<Theme, "fg" | "bold"> &
-		Partial<Pick<Theme, "bg" | "italic" | "underline" | "strikethrough">>;
+		Partial<Pick<Theme, "bg" | "inverse" | "italic" | "underline" | "strikethrough">>;
 	keybindings: MenuKeybindings;
 	onEvent(event: MenuScreenEvent): void;
 	onSelectionChange?(itemId: string): void;

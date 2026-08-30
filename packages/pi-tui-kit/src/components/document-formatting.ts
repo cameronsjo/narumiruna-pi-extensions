@@ -113,13 +113,28 @@ export function formatDocumentPresentation(
 		const referenceWidth = markdownReferenceWidth(prepared, width);
 		const referenceLines = renderMarkdownDocument(prepared, resolvedFormat, referenceWidth, theme);
 		const referenceSearchLines = markdownSearchLines(referenceLines);
-		const softWrapAfter = markdownSoftWrapAfter(searchLines, referenceSearchLines, referenceWidth);
+		const boundaryLines = renderMarkdownDocument(
+			prepared,
+			resolvedFormat,
+			referenceWidth + 1,
+			theme,
+		);
+		const boundarySearchLines = markdownSearchLines(boundaryLines);
+		const referenceSoftWrapAfter = markdownSoftWrapAfter(
+			referenceSearchLines,
+			markdownReferenceText(boundarySearchLines, []),
+			1,
+		);
+		const softWrapAfter = markdownSoftWrapAfter(
+			searchLines,
+			markdownReferenceText(referenceSearchLines, referenceSoftWrapAfter),
+		);
 		return {
 			lines,
 			searchLines,
 			softWrapAfter,
 			ignoreLeadingWhitespace: searchLines.map((_, index) => softWrapAfter[index - 1] ?? false),
-			searchSources: markdownTableSearchSources(lines, referenceLines),
+			searchSources: markdownTableSearchSources(lines, referenceLines, boundaryLines),
 		};
 	}
 	const segments = documentSegments(content, width);
@@ -174,12 +189,20 @@ function isMarkdownTableRow(lines: readonly string[], index: number) {
 function markdownTableSearchSources(
 	lines: readonly string[],
 	referenceLines: readonly string[],
+	boundaryLines: readonly string[],
 ): DocumentSearchSource[] {
 	const sources = markdownTableCellSources(lines);
 	const referenceSources = markdownTableCellSources(referenceLines);
+	const boundarySources = markdownTableCellSources(boundaryLines);
 	return sources.flatMap((source, index) => {
 		if (source.length < 2) return [];
-		return [markTableCellSeparators(source, referenceSources[index] ?? [])];
+		const markedReference = markTableCellSeparators(
+			referenceSources[index] ?? [],
+			boundarySources[index] ?? [],
+			false,
+			1,
+		);
+		return [markTableCellSeparators(source, markedReference, true)];
 	});
 }
 
@@ -191,9 +214,10 @@ function markdownTableCellSources(lines: readonly string[]) {
 			index += 1;
 			continue;
 		}
+		const boundaries = markdownTableBoundaries(plainLines, index);
 		const rows: Array<ReturnType<typeof markdownTableCells>> = [];
 		while (index < plainLines.length && isMarkdownTableRow(plainLines, index)) {
-			rows.push(markdownTableCells(plainLines[index] ?? "", index));
+			rows.push(markdownTableCells(plainLines[index] ?? "", index, boundaries));
 			index += 1;
 		}
 		const columnCount = Math.max(0, ...rows.map((row) => row.length));
@@ -212,8 +236,16 @@ function markdownTableCellSources(lines: readonly string[]) {
 function markTableCellSeparators(
 	source: DocumentSearchSource,
 	referenceSource: DocumentSearchSource,
+	referenceHasMetadata: boolean,
+	rightLimit = 16,
 ): DocumentSearchSource {
-	const reference = referenceSource.map((segment) => segment.text).join("\n");
+	const reference = referenceSource
+		.map((segment, index) => {
+			const separator =
+				index === 0 || (referenceHasMetadata && !segment.separatorBefore) ? "" : "\n";
+			return `${separator}${segment.text}`;
+		})
+		.join("");
 	let referenceOffset = 0;
 	return source.map((segment, index) => {
 		if (index === 0) return segment;
@@ -221,7 +253,7 @@ function markTableCellSeparators(
 		const left = Array.from(previous?.text ?? "")
 			.slice(-16)
 			.join("");
-		const right = Array.from(segment.text).slice(0, 16).join("");
+		const right = Array.from(segment.text).slice(0, rightLimit).join("");
 		const leftIndex = reference.indexOf(left, referenceOffset);
 		if (leftIndex >= 0) referenceOffset = leftIndex + left.length;
 		return {
@@ -231,23 +263,34 @@ function markTableCellSeparators(
 	});
 }
 
-function markdownTableCells(line: string, row: number) {
+function markdownTableBoundaries(lines: readonly string[], rowIndex: number) {
+	let borderIndex = rowIndex - 1;
+	while (borderIndex >= 0 && isMarkdownTableRow(lines, borderIndex)) borderIndex -= 1;
+	const border = lines[borderIndex] ?? "";
+	const boundaries: number[] = [];
+	let column = 0;
+	for (const character of border) {
+		if (/^[┌├└┬┼┴┐┤┘]$/u.test(character)) boundaries.push(column);
+		column += PiTui.visibleWidth(character);
+	}
+	return boundaries;
+}
+
+function markdownTableCells(line: string, row: number, boundaries: readonly number[]) {
 	const cells: Array<DocumentSearchSegment | undefined> = [];
-	let start = line.indexOf("│") + 1;
-	while (start > 0) {
-		const end = line.indexOf("│", start);
-		if (end < 0) break;
-		const raw = line.slice(start, end);
+	for (let index = 0; index < boundaries.length - 1; index += 1) {
+		const start = (boundaries[index] ?? 0) + 1;
+		const end = boundaries[index + 1] ?? start;
+		const raw = PiTui.sliceByColumn(line, start, Math.max(0, end - start), true);
 		const leading = /^\s*/u.exec(raw)?.[0] ?? "";
 		const text = raw.trim();
 		if (text) {
 			cells.push({
 				row,
-				column: PiTui.visibleWidth(line.slice(0, start) + leading),
+				column: start + PiTui.visibleWidth(leading),
 				text,
 			});
 		} else cells.push(undefined);
-		start = end + 1;
 	}
 	return cells;
 }
@@ -265,25 +308,13 @@ function markdownReferenceWidth(content: string, width: number) {
 	return Math.max(1, width, Math.min(widestSourceLine + 32, budgetedWidth));
 }
 
-function markdownSoftWrapAfter(
-	lines: readonly string[],
-	referenceLines: readonly string[],
-	referenceWidth: number,
-) {
-	const reference = referenceLines
-		.map((line, index) => {
-			const separator = markdownReferenceLineWraps(referenceLines, index, referenceWidth)
-				? ""
-				: "\n";
-			return `${line.trim()}${separator}`;
-		})
-		.join("");
+function markdownSoftWrapAfter(lines: readonly string[], reference: string, rightLimit = 16) {
 	let referenceOffset = 0;
 	return lines.map((line, index) => {
 		const next = lines[index + 1];
 		if (next === undefined) return false;
 		const left = Array.from(line.trim()).slice(-16).join("");
-		const right = Array.from(next.trim()).slice(0, 16).join("");
+		const right = Array.from(next.trim()).slice(0, rightLimit).join("");
 		if (!left || !right) return false;
 		const leftIndex = reference.indexOf(left, referenceOffset);
 		if (leftIndex < 0) return false;
@@ -292,18 +323,8 @@ function markdownSoftWrapAfter(
 	});
 }
 
-function markdownReferenceLineWraps(
-	lines: readonly string[],
-	index: number,
-	referenceWidth: number,
-) {
-	const line = lines[index] ?? "";
-	return (
-		index < lines.length - 1 &&
-		PiTui.visibleWidth(line) >= referenceWidth &&
-		!isMarkdownTableRow(lines, index) &&
-		!/^[─┌├└]/u.test(line.trimStart())
-	);
+function markdownReferenceText(lines: readonly string[], softWrapAfter: readonly boolean[]) {
+	return lines.map((line, index) => `${line.trim()}${softWrapAfter[index] ? "" : "\n"}`).join("");
 }
 
 export function plainDocumentLines(content: string, width: number): string[] {

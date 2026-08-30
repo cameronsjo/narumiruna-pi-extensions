@@ -881,6 +881,28 @@ test("review keeps the current search match visible after rewrapping", () => {
 	assert.equal(plainLines(harness.component, 12).includes("needle"), true);
 });
 
+test("review keeps the current match visible when width only changes chrome layout", () => {
+	const harness = reviewComponentHarness(
+		{
+			...reviewScreen,
+			title: "Very long review title ".repeat(6),
+			content: [
+				...Array.from({ length: 5 }, (_, index) => `row ${index + 1}`),
+				"needle",
+				...Array.from({ length: 5 }, (_, index) => `tail ${index + 1}`),
+			].join("\n"),
+			enableSearch: true,
+		},
+		false,
+		16,
+	);
+	harness.component.render(100);
+	harness.component.handleInput("s");
+	harness.component.handleInput("needle");
+	assert.equal(plainLines(harness.component, 100).includes("needle"), true);
+	assert.equal(plainLines(harness.component, 20).includes("needle"), true);
+});
+
 test("review preserves manual scrolling while search is active", () => {
 	const harness = reviewComponentHarness(
 		{
