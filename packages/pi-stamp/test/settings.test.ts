@@ -42,6 +42,9 @@ test("normalization accepts partial settings, canonicalizes locale and zone, and
 			timeZone: "utc",
 			responseTiming: "detailed",
 			assistantMetadata: "expanded",
+			showExactTimeline: false,
+			showThinkingLevel: false,
+			showCompactAbnormalOutcome: false,
 			toolStamps: true,
 			future: { retained: true },
 		}),
@@ -53,6 +56,9 @@ test("normalization accepts partial settings, canonicalizes locale and zone, and
 				timeZone: "UTC",
 				responseTiming: "detailed",
 				assistantMetadata: "expanded",
+				showExactTimeline: false,
+				showThinkingLevel: false,
+				showCompactAbnormalOutcome: false,
 				toolStamps: true,
 			},
 			sources: {
@@ -63,6 +69,9 @@ test("normalization accepts partial settings, canonicalizes locale and zone, and
 				timeZone: "user",
 				responseTiming: "user",
 				assistantMetadata: "user",
+				showExactTimeline: "user",
+				showThinkingLevel: "user",
+				showCompactAbnormalOutcome: "user",
 				toolStamps: "user",
 			},
 		},
@@ -79,6 +88,9 @@ test("normalization accepts partial settings, canonicalizes locale and zone, and
 		{ responseTiming: false },
 		{ assistantMetadata: "verbose" },
 		{ assistantMetadata: true },
+		{ showExactTimeline: "yes" },
+		{ showThinkingLevel: "yes" },
+		{ showCompactAbnormalOutcome: "yes" },
 		{ toolStamps: "yes" },
 	]) {
 		assert.equal(normalizeStampSettingsDocument(value), undefined);
@@ -95,8 +107,15 @@ test("normalization accepts partial settings, canonicalizes locale and zone, and
 			assistantMetadata,
 		);
 	}
-	for (const toolStamps of [false, true]) {
-		assert.equal(normalizeStampSettingsDocument({ toolStamps })?.settings.toolStamps, toolStamps);
+	for (const field of [
+		"showExactTimeline",
+		"showThinkingLevel",
+		"showCompactAbnormalOutcome",
+		"toolStamps",
+	] as const) {
+		for (const value of [false, true]) {
+			assert.equal(normalizeStampSettingsDocument({ [field]: value })?.settings[field], value);
+		}
 	}
 });
 
@@ -112,6 +131,9 @@ test("updates preserve unknown and omitted fields and publish private JSON atomi
 	await runtime.update({ hourCycle: "12h" });
 	await runtime.update({ responseTiming: "duration" });
 	await runtime.update({ assistantMetadata: "compact" });
+	await runtime.update({ showExactTimeline: false });
+	await runtime.update({ showThinkingLevel: false });
+	await runtime.update({ showCompactAbnormalOutcome: false });
 	await runtime.update({ toolStamps: true });
 
 	assert.deepEqual(JSON.parse(readFileSync(settingsPath, "utf8")), {
@@ -120,6 +142,9 @@ test("updates preserve unknown and omitted fields and publish private JSON atomi
 		hourCycle: "12h",
 		responseTiming: "duration",
 		assistantMetadata: "compact",
+		showExactTimeline: false,
+		showThinkingLevel: false,
+		showCompactAbnormalOutcome: false,
 		toolStamps: true,
 	});
 	assert.deepEqual(runtime.get().settings, {
@@ -128,10 +153,16 @@ test("updates preserve unknown and omitted fields and publish private JSON atomi
 		hourCycle: "12h",
 		responseTiming: "duration",
 		assistantMetadata: "compact",
+		showExactTimeline: false,
+		showThinkingLevel: false,
+		showCompactAbnormalOutcome: false,
 		toolStamps: true,
 	});
 	assert.equal(runtime.get().sources.responseTiming, "user");
 	assert.equal(runtime.get().sources.assistantMetadata, "user");
+	assert.equal(runtime.get().sources.showExactTimeline, "user");
+	assert.equal(runtime.get().sources.showThinkingLevel, "user");
+	assert.equal(runtime.get().sources.showCompactAbnormalOutcome, "user");
 	assert.equal(runtime.get().sources.toolStamps, "user");
 	if (process.platform !== "win32") {
 		assert.equal(statSync(settingsPath).mode & 0o777, 0o600);

@@ -326,6 +326,60 @@ test("entry renderer expands exact timelines from only the observations each ver
 	}
 });
 
+test("diagnostic settings independently control timeline, Thinking, and compact outcomes", () => {
+	let settings: StampSettings = {
+		...DEFAULT_STAMP_SETTINGS,
+		timeZone: "UTC",
+		assistantMetadata: "compact",
+	};
+	const renderer = createStampEntryRenderer(() => settings);
+	const assistant = assistantMessage(Date.UTC(2026, 6, 30, 0, 1, 2), "error");
+	const metadata = captureAssistantMetadata(assistant);
+	assert.ok(metadata);
+	const component = renderer(
+		{
+			data: {
+				version: 5,
+				role: "assistant",
+				timestamp: assistant.timestamp,
+				completedAt: assistant.timestamp + 1_000,
+				metadata,
+				thinkingLevel: "high",
+			},
+		} as never,
+		{ expanded: true },
+		{ fg: (_color: string, text: string) => text } as never,
+	);
+	assert.ok(component);
+	const render = () =>
+		component
+			.render(120)
+			.map((line) => line.trim())
+			.join("\n");
+	assert.match(render(), /timeline · created/u);
+	assert.match(render(), /thinking high/u);
+	assert.match(render(), /stop error/u);
+
+	settings = { ...settings, showExactTimeline: false };
+	assert.doesNotMatch(render(), /timeline ·/u);
+	assert.match(render(), /thinking high/u);
+	assert.match(render(), /stop error/u);
+
+	settings = { ...settings, showExactTimeline: true, showThinkingLevel: false };
+	assert.match(render(), /timeline · created/u);
+	assert.doesNotMatch(render(), /thinking high/u);
+	assert.match(render(), /stop error/u);
+
+	settings = {
+		...settings,
+		showThinkingLevel: true,
+		showCompactAbnormalOutcome: false,
+	};
+	assert.match(render(), /timeline · created/u);
+	assert.match(render(), /thinking high/u);
+	assert.doesNotMatch(render(), /stop error/u);
+});
+
 test("entry renderer composes opt-in assistant metadata, explicit debug details, and tool stamps", () => {
 	let settings: StampSettings = {
 		...DEFAULT_STAMP_SETTINGS,
@@ -413,7 +467,12 @@ test("entry renderer composes opt-in assistant metadata, explicit debug details,
 			"timeline · completed 2026-07-30T00:01:03.250Z · unix-ms 1785369663250",
 		],
 	);
-	settings = { ...settings, toolStamps: false };
+	settings = { ...settings, showExactTimeline: false };
+	assert.deepEqual(
+		expandedTool.render(80).map((line) => line.trim()),
+		["tool read · 1.3s · success"],
+	);
+	settings = { ...settings, showExactTimeline: true, toolStamps: false };
 	assert.deepEqual(tool.render(80), []);
 	settings = { ...settings, toolStamps: true };
 	for (const width of [1, 4, 8, 12]) {

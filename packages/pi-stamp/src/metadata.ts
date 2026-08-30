@@ -132,6 +132,7 @@ export function formatAssistantMetadataLines(
 	mode: StampAssistantMetadataMode,
 	debug: boolean,
 	thinkingLevel?: StampThinkingLevel,
+	showCompactAbnormalOutcome = true,
 ): string[] {
 	if (
 		mode === "off" ||
@@ -142,7 +143,7 @@ export function formatAssistantMetadataLines(
 	}
 	const lines =
 		mode === "compact"
-			? [formatCompactMetadata(metadata, thinkingLevel)]
+			? [formatCompactMetadata(metadata, thinkingLevel, showCompactAbnormalOutcome)]
 			: formatExpandedMetadata(metadata, thinkingLevel);
 	if (!debug) return lines;
 	if (metadata.responseId) lines.push(`debug · response id ${metadata.responseId}`);
@@ -255,6 +256,7 @@ function captureDiagnostics(
 function formatCompactMetadata(
 	metadata: Readonly<AssistantMetadataData>,
 	thinkingLevel: StampThinkingLevel | undefined,
+	showCompactAbnormalOutcome: boolean,
 ): string {
 	const model =
 		metadata.responseModel && metadata.responseModel !== metadata.model
@@ -263,9 +265,10 @@ function formatCompactMetadata(
 	const tokens = metadata.usage?.totalTokens;
 	const cost = metadata.usage?.estimatedCost;
 	const abnormalStopReason =
-		metadata.stopReason === "length" ||
-		metadata.stopReason === "error" ||
-		metadata.stopReason === "aborted"
+		showCompactAbnormalOutcome &&
+		(metadata.stopReason === "length" ||
+			metadata.stopReason === "error" ||
+			metadata.stopReason === "aborted")
 			? metadata.stopReason
 			: undefined;
 	return [

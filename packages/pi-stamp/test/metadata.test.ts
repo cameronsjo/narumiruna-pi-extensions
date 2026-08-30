@@ -200,8 +200,14 @@ test("assistant metadata formats effective Thinking level and only abnormal comp
 
 	const expanded = captureAssistantMetadata({ ...COMPLETE_MESSAGE, stopReason: "error" });
 	assert.ok(expanded);
+	assert.equal(
+		formatAssistantMetadataLines(expanded, "compact", false, "high", false)[0]?.includes(
+			"stop error",
+		),
+		false,
+	);
 	assert.match(
-		formatAssistantMetadataLines(expanded, "expanded", false, "high")[0] ?? "",
+		formatAssistantMetadataLines(expanded, "expanded", false, "high", false)[0] ?? "",
 		/thinking high · stop error/u,
 	);
 	assert.deepEqual(formatAssistantMetadataLines(expanded, "compact", false, "ultra" as never), []);

@@ -225,7 +225,7 @@ export function createStampEntryRenderer(
 					if (!label) return [];
 					return [
 						regularLine(label),
-						...(options.expanded
+						...(options.expanded && settings.showExactTimeline
 							? exactTimelineLines([
 									["started", data.startedAt],
 									["completed", data.completedAt],
@@ -265,14 +265,18 @@ export function createStampEntryRenderer(
 				if (hasAssistantTiming && data.completedAt !== undefined) {
 					timelineObservations.push(["completed", data.completedAt]);
 				}
-				const timelineLines = options.expanded ? exactTimelineLines(timelineObservations) : [];
+				const timelineLines =
+					options.expanded && settings.showExactTimeline
+						? exactTimelineLines(timelineObservations)
+						: [];
 				const metadataLines =
 					data.version === 4 || data.version === 5
 						? formatAssistantMetadataLines(
 								data.metadata,
 								settings.assistantMetadata,
 								options.expanded,
-								data.version === 5 ? data.thinkingLevel : undefined,
+								data.version === 5 && settings.showThinkingLevel ? data.thinkingLevel : undefined,
+								settings.showCompactAbnormalOutcome,
 							)
 						: [];
 				return [regularLine(label), ...timelineLines, ...metadataLines.map(regularLine)];
@@ -552,9 +556,11 @@ export default function stampExtension(
 	pi.on("turn_start", (_event, ctx) => {
 		activeAssistantTiming = undefined;
 		finalizedAssistantTiming = undefined;
+		const settings = settingsRuntime.get().settings;
 		activeThinkingLevel =
 			tuiSessionActive &&
-			settingsRuntime.get().settings.assistantMetadata !== "off" &&
+			settings.assistantMetadata !== "off" &&
+			settings.showThinkingLevel &&
 			isStampThinkingLevel(ctx.thinkingLevel)
 				? ctx.thinkingLevel
 				: undefined;

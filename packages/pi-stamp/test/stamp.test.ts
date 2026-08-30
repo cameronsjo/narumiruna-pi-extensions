@@ -256,16 +256,25 @@ test("Thinking level state cannot survive turn, agent, session, or shutdown boun
 	}
 });
 
-test("missing or invalid Thinking levels retain the exact version-4 metadata schema", async () => {
-	for (const thinkingLevel of [undefined, "ultra"] as const) {
+test("disabled, missing, or invalid Thinking levels retain version-4 metadata", async () => {
+	for (const scenario of [
+		{ thinkingLevel: "high", showThinkingLevel: false },
+		{ thinkingLevel: undefined, showThinkingLevel: true },
+		{ thinkingLevel: "ultra", showThinkingLevel: true },
+	] as const) {
 		const mock = createMockPi();
-		stamp(mock.pi, { settingsRuntime: settingsRuntimeWith({ assistantMetadata: "compact" }) });
-		const { ctx } = createMockContext({ mode: "tui", thinkingLevel });
+		stamp(mock.pi, {
+			settingsRuntime: settingsRuntimeWith({
+				assistantMetadata: "compact",
+				showThinkingLevel: scenario.showThinkingLevel,
+			}),
+		});
+		const { ctx } = createMockContext({ mode: "tui", thinkingLevel: scenario.thinkingLevel });
 		const assistant = assistantMessage(ASSISTANT_TIMESTAMP);
 		await emit(mock, "session_start", { reason: "startup" }, ctx);
 		await emit(mock, "turn_start", { turnIndex: 0, timestamp: ASSISTANT_TIMESTAMP }, ctx);
 		await emit(mock, "turn_end", { message: assistant, toolResults: [], turnIndex: 0 }, ctx);
-		assert.equal(messageStampDataAt(mock).version, 4, String(thinkingLevel));
+		assert.equal(messageStampDataAt(mock).version, 4, JSON.stringify(scenario));
 	}
 });
 
@@ -708,6 +717,9 @@ function defaultSettingsState(): Readonly<StampSettingsState> {
 			timeZone: "built-in",
 			responseTiming: "built-in",
 			assistantMetadata: "built-in",
+			showExactTimeline: "built-in",
+			showThinkingLevel: "built-in",
+			showCompactAbnormalOutcome: "built-in",
 			toolStamps: "built-in",
 		},
 		canSave: true,
