@@ -24,6 +24,7 @@ export function registerCodexFastMode(
 	pi: ExtensionAPI,
 	settingsRuntime: UsageSettingsRuntime,
 	refreshStatus: (ctx: ExtensionContext) => void,
+	options: { registerSessionStart?: boolean } = {},
 ) {
 	let sessionController = new AbortController();
 	let generation = 0;
@@ -95,41 +96,47 @@ export function registerCodexFastMode(
 		},
 	});
 
-	pi.on("session_start", async (_event, ctx) => {
+	const prepareSession = (ctx: ExtensionContext): Promise<void> => {
+		const sessionId = ctx.sessionManager.getSessionId();
 		generation += 1;
 		sessionController.abort();
 		pendingFastRequests.clear();
 		sessionController = new AbortController();
 		const ownerGeneration = generation;
-		const sessionId = ctx.sessionManager.getSessionId();
-		let state: Readonly<UsageSettingsState>;
-		try {
-			state = await settingsRuntime.reload(sessionController.signal);
-		} catch (error) {
-			if (sessionController.signal.aborted || ownerGeneration !== generation) return;
-			if (ctx.hasUI) {
+		return (async () => {
+			let state: Readonly<UsageSettingsState>;
+			try {
+				state = await settingsRuntime.reload(sessionController.signal);
+			} catch (error) {
+				if (sessionController.signal.aborted || ownerGeneration !== generation) return;
+				if (ctx.hasUI) {
+					ctx.ui.notify(
+						`Could not load pi-usage.json; using defaults. ${errorMessage(error)}`,
+						"warning",
+					);
+				}
+				return;
+			}
+			if (
+				sessionController.signal.aborted ||
+				ownerGeneration !== generation ||
+				ctx.sessionManager.getSessionId() !== sessionId
+			) {
+				return;
+			}
+			if (ctx.hasUI && state.kind === "invalid") {
 				ctx.ui.notify(
-					`Could not load pi-usage.json; using defaults. ${errorMessage(error)}`,
+					`Invalid pi-usage.json; using defaults without overwriting it. ${state.issue}`,
 					"warning",
 				);
 			}
-			return;
-		}
-		if (
-			sessionController.signal.aborted ||
-			ownerGeneration !== generation ||
-			ctx.sessionManager.getSessionId() !== sessionId
-		) {
-			return;
-		}
-		if (ctx.hasUI && state.kind === "invalid") {
-			ctx.ui.notify(
-				`Invalid pi-usage.json; using defaults without overwriting it. ${state.issue}`,
-				"warning",
-			);
-		}
-		refreshStatus(ctx);
-	});
+			refreshStatus(ctx);
+		})();
+	};
+
+	if (options.registerSessionStart !== false) {
+		pi.on("session_start", async (_event, ctx) => prepareSession(ctx));
+	}
 
 	pi.on("before_provider_request", (event, ctx) => {
 		const rewritten = rewriteCodexFastPayload(
@@ -164,6 +171,7 @@ export function registerCodexFastMode(
 	});
 
 	return {
+		prepareSession,
 		availability(model: PiModel | undefined) {
 			return codexFastAvailability(model, settingsRuntime.get().settings.codexFastMode);
 		},

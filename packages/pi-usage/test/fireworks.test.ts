@@ -176,8 +176,46 @@ test("Fireworks billing summary rejects malformed, ambiguous, or hostile payload
 			/whole units was not a bounded integer/iu,
 		],
 		[
+			{
+				lineItems: [
+					{
+						series: "SERVERLESS",
+						totalCost: { ...money("0", 0), units: "9223372036854775808" },
+					},
+				],
+			},
+			/whole units exceeded the int64 range/iu,
+		],
+		[
+			{
+				lineItems: [
+					{
+						series: "SERVERLESS",
+						totalCost: { ...money("0", 0), units: "-9223372036854775809" },
+					},
+				],
+			},
+			/whole units exceeded the int64 range/iu,
+		],
+		[
 			{ lineItems: [{ series: "SERVERLESS", totalCost: { ...money("1", 0), nanos: 1.5 } }] },
 			/nano units was not a bounded integer/iu,
+		],
+		[
+			{
+				lineItems: [
+					{ series: "SERVERLESS", totalCost: { ...money("0", 0), nanos: 1_000_000_000 } },
+				],
+			},
+			/nano units exceeded the Money range/iu,
+		],
+		[
+			{
+				lineItems: [
+					{ series: "SERVERLESS", totalCost: { ...money("0", 0), nanos: -1_000_000_000 } },
+				],
+			},
+			/nano units exceeded the Money range/iu,
 		],
 		[
 			{

@@ -90,7 +90,7 @@ Successful, already-completed, not-needed, and no-credit outcomes are reported s
 
 ## ⚙️ Settings
 
-Choose **Settings** in `/usage` to edit Codex Fast mode and the Codex reset countdown through Pi's settings-list interaction in TUI mode.
+Choose **Settings** in `/usage` to edit Codex Fast mode, the Codex reset countdown, and the Fireworks account selector through Pi's settings-list interaction in TUI mode.
 RPC mode reports the active manual settings path instead of opening terminal UI.
 
 These preferences live in `pi-usage.json` under Pi's user agent directory, normally `~/.pi/agent/pi-usage.json`.
@@ -104,7 +104,7 @@ Separate Pi processes are not mutually locked.
 ### Fireworks account
 
 A Fireworks key that can see one account needs no setting.
-For a key that can see several accounts, set the exact visible account slug in `pi-usage.json` and run `/reload`:
+For a key that can see several accounts, choose **Fireworks account** in the TUI Settings screen, or set the exact visible account slug in `pi-usage.json` and run `/reload`:
 
 ```json
 {
@@ -113,8 +113,7 @@ For a key that can see several accounts, set the exact visible account slug in `
 ```
 
 The `fireworksAccountId` setting is validated as a URL-safe account slug and then checked against the official account listing before billing data is requested.
-Remove the field to restore single-account auto-selection.
-The TUI Settings screen edits the bounded Codex preferences; edit this free-form account slug through the documented settings file.
+Submit a blank value from the TUI input, or remove the JSON field and run `/reload`, to restore single-account auto-selection.
 
 ### Codex Fast mode
 

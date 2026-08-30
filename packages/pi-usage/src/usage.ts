@@ -1120,7 +1120,7 @@ export default function usageExtension(
 			}
 		},
 	});
-	pi.on("session_start", (_event, ctx) => {
+	pi.on("session_start", async (_event, ctx) => {
 		sessionGeneration += 1;
 		statusGeneration += 1;
 		clearStatusTimers();
@@ -1128,7 +1128,13 @@ export default function usageExtension(
 		activeControllers.clear();
 		statusController = undefined;
 		sessionActive = true;
-		startStatusRefresh(ctx, ctx.model, false);
+		const ownerGeneration = sessionGeneration;
+		try {
+			await fastRuntime.prepareSession(ctx);
+		} catch (error) {
+			if (isStaleExtensionContextError(error) || ownerGeneration !== sessionGeneration) return;
+			throw error;
+		}
 	});
 	pi.on("session_tree", (_event, ctx) => {
 		startStatusRefresh(ctx, ctx.model, false);
@@ -1154,7 +1160,10 @@ export default function usageExtension(
 		safeSetStatus(ctx, undefined);
 	});
 
-	fastRuntime = registerCodexFastMode(pi, settingsRuntime, (ctx) =>
-		startStatusRefresh(ctx, ctx.model, false),
+	fastRuntime = registerCodexFastMode(
+		pi,
+		settingsRuntime,
+		(ctx) => startStatusRefresh(ctx, ctx.model, false),
+		{ registerSessionStart: false },
 	);
 }

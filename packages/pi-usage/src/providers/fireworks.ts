@@ -10,8 +10,10 @@ const NANOS_PER_UNIT = 1_000_000_000n;
 const CURRENCY_PATTERN = /^[A-Z]{3}$/u;
 const ACCOUNT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/u;
 const INTEGER_PATTERN = /^-?\d+$/u;
-const MAX_UNITS_CHARS = 16;
-const MAX_NANOS_CHARS = 10;
+const INT64_MIN = -(2n ** 63n);
+const INT64_MAX = 2n ** 63n - 1n;
+const MAX_UNITS_CHARS = 20;
+const MAX_NANOS_CHARS = 11;
 
 const SERIES_KEYS = ["serverless", "dedicated", "training", "other"] as const;
 type SeriesKey = (typeof SERIES_KEYS)[number];
@@ -133,10 +135,16 @@ function moneyAmount(value: unknown, description: string): RatedMoney {
 		money.units === undefined
 			? 0n
 			: integerComponent(money.units, description, "whole units", MAX_UNITS_CHARS);
+	if (units < INT64_MIN || units > INT64_MAX) {
+		throw new Error(`Fireworks billing ${description} whole units exceeded the int64 range.`);
+	}
 	const nanos =
 		money.nanos === undefined
 			? 0n
 			: integerComponent(money.nanos, description, "nano units", MAX_NANOS_CHARS);
+	if (nanos <= -NANOS_PER_UNIT || nanos >= NANOS_PER_UNIT) {
+		throw new Error(`Fireworks billing ${description} nano units exceeded the Money range.`);
+	}
 	if ((units > 0n && nanos < 0n) || (units < 0n && nanos > 0n)) {
 		throw new Error(`Fireworks billing ${description} mixed unit and nano signs.`);
 	}

@@ -116,6 +116,16 @@ test("the first explicit save creates a private file and preserves unknown field
 	if (process.platform !== "win32") assert.equal((await stat(path)).mode & 0o777, 0o600);
 });
 
+test("clearing the Fireworks account removes only its owned field", async () => {
+	const path = await tempSettingsPath();
+	await writeFile(path, '{"fireworksAccountId":"acme","future":"kept"}\n');
+	const runtime = createUsageSettingsRuntime(path);
+	await runtime.reload();
+	await runtime.update({ fireworksAccountId: undefined });
+	assert.deepEqual(JSON.parse(await readFile(path, "utf8")), { future: "kept" });
+	assert.equal(runtime.get().settings.fireworksAccountId, undefined);
+});
+
 test("serialized updates reread the latest document and leave no temporary files", async () => {
 	const path = await tempSettingsPath();
 	await writeFile(path, '{"codexFastMode":false,"external":"first"}\n');

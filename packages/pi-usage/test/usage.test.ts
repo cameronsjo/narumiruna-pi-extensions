@@ -633,7 +633,7 @@ test("current auth appearance during a command is revalidated before display", a
 	assert.ok(authCalls >= 3);
 });
 
-test("automatic lifecycle refresh starts asynchronously", () => {
+test("session start awaits settings before launching the automatic refresh", async () => {
 	const mock = createMockPi();
 	usageExtension(mock.pi);
 	const never = new Promise<never>(() => undefined);
@@ -647,7 +647,8 @@ test("automatic lifecycle refresh starts asynchronously", () => {
 	});
 
 	const result = mock.events.get("session_start")?.[0]?.({}, ctx);
-	assert.equal(result, undefined);
+	assert.ok(result instanceof Promise);
+	await result;
 	mock.events.get("session_shutdown")?.[0]?.({}, ctx);
 });
 
@@ -862,7 +863,7 @@ test("current Kimi usage follows account changes and clears status on model repl
 		},
 	});
 
-	mock.events.get("session_start")?.[0]?.({}, ctx);
+	await mock.events.get("session_start")?.[0]?.({}, ctx);
 	await settle();
 	assert.equal(statuses.get("usage"), "kimi 99% 5h 96% wk");
 	await command.handler("", ctx);
@@ -940,7 +941,7 @@ test("current DeepSeek API balance follows account changes and clears status", a
 		},
 	});
 
-	mock.events.get("session_start")?.[0]?.({}, ctx);
+	await mock.events.get("session_start")?.[0]?.({}, ctx);
 	await settle();
 	assert.equal(statuses.get("usage"), "deepseek USD 12.50");
 	await command.handler("", ctx);
@@ -1012,7 +1013,7 @@ test("current Fireworks usage receives its guard and settings-backed account sel
 		},
 	});
 
-	mock.events.get("session_start")?.[0]?.({}, ctx);
+	await mock.events.get("session_start")?.[0]?.({}, ctx);
 	await settle();
 	await settle();
 
@@ -1022,6 +1023,85 @@ test("current Fireworks usage receives its guard and settings-backed account sel
 	assert.ok(billingRequests.every((url) => url.includes("/accounts/beta/billing/summary")));
 	mock.events.get("session_shutdown")?.[0]?.({}, ctx);
 	assert.equal(statuses.get("usage"), undefined);
+});
+
+test("Fireworks waits for settings reload and cancels a replaced reload before refreshing", async (t) => {
+	const originalFetch = globalThis.fetch;
+	t.onTestFinished(() => {
+		globalThis.fetch = originalFetch;
+	});
+	const requests: string[] = [];
+	globalThis.fetch = async (input) => {
+		const url = String(input);
+		requests.push(url);
+		if (url.includes("/v1/accounts?")) {
+			return new Response(
+				JSON.stringify({ accounts: [{ name: "accounts/acme" }, { name: "accounts/beta" }] }),
+				{ status: 200 },
+			);
+		}
+		return new Response(
+			JSON.stringify({
+				lineItems: [
+					{
+						series: "SERVERLESS",
+						totalCost: { currencyCode: "USD", units: "1", nanos: 0 },
+					},
+				],
+			}),
+			{ status: 200 },
+		);
+	};
+	const settings = memorySettingsRuntime({ fireworksAccountId: "acme" });
+	let reloads = 0;
+	let markReloadStarted: () => void = () => undefined;
+	const reloadStarted = new Promise<void>((resolve) => {
+		markReloadStarted = resolve;
+	});
+	settings.runtime.reload = async (signal) => {
+		reloads += 1;
+		if (reloads === 1) {
+			markReloadStarted();
+			await new Promise<void>((_resolve, reject) => {
+				signal?.addEventListener(
+					"abort",
+					() => reject(new DOMException("Settings reload aborted", "AbortError")),
+					{ once: true },
+				);
+			});
+		}
+		return settings.runtime.update({ fireworksAccountId: "beta" }, signal);
+	};
+	const mock = createMockPi();
+	usageExtension(mock.pi, { settingsRuntime: settings.runtime });
+	const { ctx, statuses } = createMockContext({
+		model: fireworksModel,
+		modelRegistry: {
+			getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "fw-key" }),
+			getProviderAuth: async () => ({
+				auth: { apiKey: "fw-key", baseUrl: fireworksModel.baseUrl },
+			}),
+			getAvailable: () => [fireworksModel],
+			getAll: () => [fireworksModel],
+		},
+	});
+	const start = mock.events.get("session_start")?.[0];
+	assert.ok(start);
+
+	const replaced = Promise.resolve(start({}, ctx));
+	await reloadStarted;
+	assert.equal(requests.length, 0);
+	const replacement = Promise.resolve(start({}, ctx));
+	await Promise.all([replaced, replacement]);
+	await settle();
+	await settle();
+
+	assert.equal(settings.state().settings.fireworksAccountId, "beta");
+	assert.equal(statuses.get("usage"), "fireworks USD 1");
+	const billingRequests = requests.filter((url) => url.includes("/billing/summary"));
+	assert.ok(billingRequests.length > 0);
+	assert.ok(billingRequests.every((url) => url.includes("/accounts/beta/billing/summary")));
+	mock.events.get("session_shutdown")?.[0]?.({}, ctx);
 });
 
 test("DeepSeek account rotation at the request boundary retries without querying the stale key", async (t) => {
@@ -1067,7 +1147,7 @@ test("DeepSeek account rotation at the request boundary retries without querying
 		},
 	});
 
-	mock.events.get("session_start")?.[0]?.({}, ctx);
+	await mock.events.get("session_start")?.[0]?.({}, ctx);
 	await settle();
 	await settle();
 
@@ -1125,10 +1205,10 @@ test("DeepSeek session replacement aborts a stale balance request before publica
 		},
 	});
 
-	mock.events.get("session_start")?.[0]?.({}, ctx);
+	await mock.events.get("session_start")?.[0]?.({}, ctx);
 	await firstRequestReady;
 	activeKey = "deepseek-account-b";
-	mock.events.get("session_start")?.[0]?.({}, ctx);
+	await mock.events.get("session_start")?.[0]?.({}, ctx);
 	await settle();
 
 	assert.equal(requests, 2);
@@ -1181,7 +1261,7 @@ test("Z.AI providers publish statusline usage and refresh through /usage", async
 		},
 	});
 
-	mock.events.get("session_start")?.[0]?.({}, ctx);
+	await mock.events.get("session_start")?.[0]?.({}, ctx);
 	await settle();
 	assert.equal(fetches, 1);
 	assert.equal(statuses.get("usage"), "zai 90% 5h 80% wk");
@@ -1218,7 +1298,7 @@ test("automatic provider failures back off instead of retrying every turn", asyn
 		},
 	});
 
-	mock.events.get("session_start")?.[0]?.({}, ctx);
+	await mock.events.get("session_start")?.[0]?.({}, ctx);
 	await settle();
 	mock.events.get("turn_start")?.[0]?.({}, ctx);
 	await settle();
@@ -1272,7 +1352,7 @@ test("a current command supersedes an older automatic query for the same provide
 		},
 	});
 
-	mock.events.get("session_start")?.[0]?.({}, ctx);
+	await mock.events.get("session_start")?.[0]?.({}, ctx);
 	while (fetches < 1) await settle();
 	activeKey = "account-b";
 	await command.handler("", ctx);
@@ -1362,7 +1442,7 @@ test("session shutdown clears status through the shutdown context", async (t) =>
 		modelRegistry: registry,
 	});
 
-	mock.events.get("session_start")?.[0]?.({}, startContext);
+	await mock.events.get("session_start")?.[0]?.({}, startContext);
 	await settle();
 	assert.equal(statuses.get("usage"), "openrouter $75.00 left");
 	mock.events.get("session_shutdown")?.[0]?.({}, shutdownContext);
@@ -1408,7 +1488,7 @@ test("Codex reset countdown repaints locally and stops across replacement and sh
 		},
 	});
 
-	mock.events.get("session_start")?.[0]?.({}, ctx);
+	await mock.events.get("session_start")?.[0]?.({}, ctx);
 	await vi.advanceTimersByTimeAsync(0);
 	assert.equal(statuses.get("usage"), "codex 80% ↻ 3m");
 	assert.equal(fetches, 1);
@@ -1418,7 +1498,7 @@ test("Codex reset countdown repaints locally and stops across replacement and sh
 	assert.equal(fetches, 1);
 
 	Object.assign(ctx, { model: undefined });
-	mock.events.get("session_start")?.[0]?.({}, ctx);
+	await mock.events.get("session_start")?.[0]?.({}, ctx);
 	await vi.advanceTimersByTimeAsync(60_000);
 	assert.equal(statuses.get("usage"), undefined);
 	assert.equal(fetches, 1);
@@ -1474,7 +1554,7 @@ test("a slow command cannot overwrite status after the selected model changes", 
 		},
 	});
 
-	mock.events.get("session_start")?.[0]?.({}, ctx);
+	await mock.events.get("session_start")?.[0]?.({}, ctx);
 	await settle();
 	const commandPromise = command.handler("", ctx);
 	while (openRouterFetches < 2) await settle();
@@ -1539,7 +1619,7 @@ test("statusline follows runtime auth changes and clears for unsupported selecte
 		},
 	});
 
-	mock.events.get("session_start")?.[0]?.({}, ctx);
+	await mock.events.get("session_start")?.[0]?.({}, ctx);
 	await settle();
 	assert.equal(statuses.get("usage"), "openrouter $75.00 left");
 
@@ -1640,7 +1720,7 @@ test("a retired xAI setting cannot disable explicit usage or publish status", as
 		},
 	});
 
-	mock.events.get("session_start")?.[0]?.({}, ctx);
+	await mock.events.get("session_start")?.[0]?.({}, ctx);
 	await settle();
 	assert.equal(requests.length, 0);
 	await command.handler("", ctx);
@@ -1944,7 +2024,181 @@ test("the TUI SettingsList describes and applies usage preferences immediately",
 		),
 	);
 	assert.ok(renderedSettings.some((frame) => /Use faster Codex routing/.test(frame)));
+	assert.ok(renderedSettings.some((frame) => /Fireworks account/.test(frame)));
 	assert.doesNotMatch(renderedSettings.join("\n"), /xAI|warning|undocumented|experimental/iu);
+});
+
+test("the TUI Settings flow edits and clears the Fireworks account", async () => {
+	for (const [initial, entered, expected] of [
+		[undefined, "acme-prod", "acme-prod"],
+		["acme-prod", "   ", undefined],
+	] as const) {
+		const settings = memorySettingsRuntime({ fireworksAccountId: initial });
+		let customCalls = 0;
+		const applied: string[] = [];
+		const { ctx } = createMockContext({
+			hasUI: true,
+			mode: "tui",
+			input: async () => entered,
+			custom: async (factory: unknown) =>
+				new Promise<unknown>((resolve) => {
+					customCalls += 1;
+					let component: {
+						dispose?(): void;
+						handleInput(data: string): void;
+						render(width: number): string[];
+					};
+					const done = (value: unknown) => {
+						component.dispose?.();
+						resolve(value);
+					};
+					component = (
+						factory as (
+							tui: { requestRender(): void },
+							theme: {
+								bold(text: string): string;
+								fg(_color: string, text: string): string;
+							},
+							keybindings: object,
+							done: (value: unknown) => void,
+						) => typeof component
+					)({ requestRender() {} }, { bold: (text) => text, fg: (_color, text) => text }, {}, done);
+					if (customCalls === 1) {
+						component.handleInput("\u001b[B");
+						component.handleInput("\u001b[B");
+						component.handleInput("\r");
+					} else {
+						component.handleInput("\u0003");
+					}
+				}),
+		});
+
+		const changed = await showUsageSettings(
+			ctx,
+			settings.runtime,
+			new AbortController().signal,
+			() => true,
+			(id) => applied.push(id),
+		);
+
+		assert.equal(changed, true);
+		assert.equal(settings.state().settings.fireworksAccountId, expected);
+		assert.deepEqual(applied, ["fireworksAccountId"]);
+		assert.equal(customCalls, 2);
+	}
+});
+
+test("the Fireworks settings input retries validation and rolls back save failures", async () => {
+	for (const failUpdates of [false, true]) {
+		const settings = memorySettingsRuntime({ failUpdates });
+		const inputs = ["../unsafe", "acme"];
+		let customCalls = 0;
+		const { ctx, notifications } = createMockContext({
+			hasUI: true,
+			mode: "tui",
+			input: async () => inputs.shift(),
+			custom: async (factory: unknown) =>
+				new Promise<unknown>((resolve) => {
+					customCalls += 1;
+					let component: {
+						dispose?(): void;
+						handleInput(data: string): void;
+					};
+					const done = (value: unknown) => {
+						component.dispose?.();
+						resolve(value);
+					};
+					component = (
+						factory as (
+							tui: { requestRender(): void },
+							theme: {
+								bold(text: string): string;
+								fg(_color: string, text: string): string;
+							},
+							keybindings: object,
+							done: (value: unknown) => void,
+						) => typeof component
+					)({ requestRender() {} }, { bold: (text) => text, fg: (_color, text) => text }, {}, done);
+					if (customCalls === 1) {
+						component.handleInput("\u001b[B");
+						component.handleInput("\u001b[B");
+						component.handleInput("\r");
+					} else {
+						component.handleInput("\u0003");
+					}
+				}),
+		});
+
+		const changed = await showUsageSettings(
+			ctx,
+			settings.runtime,
+			new AbortController().signal,
+			() => true,
+			() => undefined,
+		);
+
+		assert.equal(changed, !failUpdates);
+		assert.equal(settings.state().settings.fireworksAccountId, failUpdates ? undefined : "acme");
+		assert.match(notifications[0]?.message ?? "", /URL-safe Fireworks account slug/iu);
+		if (failUpdates) assert.match(notifications[1]?.message ?? "", /disk full/iu);
+	}
+});
+
+test("parent cancellation aborts the Fireworks settings input without saving", async () => {
+	const settings = memorySettingsRuntime();
+	const parentController = new AbortController();
+	let markInputStarted: () => void = () => undefined;
+	const inputStarted = new Promise<void>((resolve) => {
+		markInputStarted = resolve;
+	});
+	const { ctx } = createMockContext({
+		hasUI: true,
+		mode: "tui",
+		input: async (_title: string, _placeholder: string, options: { signal: AbortSignal }) => {
+			markInputStarted();
+			return new Promise<undefined>((resolve) => {
+				options.signal.addEventListener("abort", () => resolve(undefined), { once: true });
+			});
+		},
+		custom: async (factory: unknown) =>
+			new Promise<unknown>((resolve) => {
+				let component: {
+					dispose?(): void;
+					handleInput(data: string): void;
+				};
+				const done = (value: unknown) => {
+					component.dispose?.();
+					resolve(value);
+				};
+				component = (
+					factory as (
+						tui: { requestRender(): void },
+						theme: {
+							bold(text: string): string;
+							fg(_color: string, text: string): string;
+						},
+						keybindings: object,
+						done: (value: unknown) => void,
+					) => typeof component
+				)({ requestRender() {} }, { bold: (text) => text, fg: (_color, text) => text }, {}, done);
+				component.handleInput("\u001b[B");
+				component.handleInput("\u001b[B");
+				component.handleInput("\r");
+			}),
+	});
+
+	const pending = showUsageSettings(
+		ctx,
+		settings.runtime,
+		parentController.signal,
+		() => true,
+		() => assert.fail("cancelled input must not apply"),
+	);
+	await inputStarted;
+	parentController.abort();
+
+	assert.equal(await pending, false);
+	assert.equal(settings.state().settings.fireworksAccountId, undefined);
 });
 
 test("Ctrl+C hard-cancels Settings before conflicting configurable actions", async (t) => {
@@ -2257,7 +2511,7 @@ test("shutdown cancels an explicit xAI identity body before billing or status pu
 		},
 	});
 
-	mock.events.get("session_start")?.[0]?.({}, ctx);
+	await mock.events.get("session_start")?.[0]?.({}, ctx);
 	const pending = command.handler("", ctx);
 	await started;
 	mock.events.get("session_shutdown")?.[0]?.({}, ctx);

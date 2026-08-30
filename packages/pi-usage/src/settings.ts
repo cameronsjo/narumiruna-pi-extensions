@@ -183,7 +183,11 @@ async function saveUsageSettingsPatch(
 	if (latest.kind === "invalid") {
 		throw new Error("Cannot overwrite an invalid pi-usage.json; repair it and reload first");
 	}
-	const document = { ...latest.document, ...patch };
+	const document = { ...latest.document };
+	for (const [key, value] of Object.entries(patch)) {
+		if (value === undefined) delete document[key];
+		else document[key] = value;
+	}
 	const settings = normalizeUsageSettings(document);
 	if (!settings) throw new Error("Refusing to save invalid pi-usage settings");
 	const directory = dirname(path);
