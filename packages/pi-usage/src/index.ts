@@ -32,6 +32,7 @@ export {
 	UsageCache,
 } from "./core.js";
 export { formatProviderStates, formatUsageReport, formatUsageStatusline } from "./format.js";
+export { normalizeBasetenBillingUsagePayload } from "./providers/baseten.js";
 export { normalizeCodexBackendPayload } from "./providers/codex.js";
 export { normalizeDeepSeekBalancePayload } from "./providers/deepseek.js";
 export {
@@ -75,6 +76,7 @@ export {
 	usageSettingsPath,
 } from "./settings.js";
 export type {
+	BasetenBillingUsagePayload,
 	DeepSeekBalancePayload,
 	FireworksAccountsPayload,
 	FireworksBillingSummaryPayload,

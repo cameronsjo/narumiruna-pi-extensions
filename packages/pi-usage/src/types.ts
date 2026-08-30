@@ -89,6 +89,12 @@ export type ProviderUsageState =
 			message: string;
 	  };
 
+export type BasetenBillingUsagePayload = {
+	dedicated_usage?: unknown;
+	model_apis_usage?: unknown;
+	training_usage?: unknown;
+};
+
 export type DeepSeekBalancePayload = {
 	is_available?: unknown;
 	balance_infos?: unknown;

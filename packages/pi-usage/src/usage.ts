@@ -282,6 +282,7 @@ export default function usageExtension(
 			};
 		}
 		const requiresRequestBoundaryGuard = [
+			"baseten",
 			"deepseek",
 			"fireworks",
 			"minimax",

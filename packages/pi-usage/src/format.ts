@@ -12,24 +12,27 @@ const VALUE_COLUMN = 29;
 export function formatUsageReport(report: UsageReport, displayState: UsageDisplayState): string {
 	const stateLabel = displayState === "current" ? "Current" : "Configured";
 	const title =
-		report.providerId === "deepseek"
-			? "DeepSeek API Balance"
-			: report.providerId === "fireworks"
-				? "Fireworks API Spend"
-				: report.providerId === "vercel-ai-gateway"
-					? "Vercel AI Gateway Credits"
-					: report.providerId === "moonshotai" || report.providerId === "moonshotai-cn"
-						? `${report.providerName} Balance`
-						: report.providerId === "minimax" || report.providerId === "minimax-cn"
-							? report.source === "minimax-account-balance"
-								? `${report.providerName} API Balance`
-								: `${report.providerName} Token Plan`
-							: `${report.providerName} Usage`;
+		report.providerId === "baseten"
+			? "Baseten Model APIs Spend"
+			: report.providerId === "deepseek"
+				? "DeepSeek API Balance"
+				: report.providerId === "fireworks"
+					? "Fireworks API Spend"
+					: report.providerId === "vercel-ai-gateway"
+						? "Vercel AI Gateway Credits"
+						: report.providerId === "moonshotai" || report.providerId === "moonshotai-cn"
+							? `${report.providerName} Balance`
+							: report.providerId === "minimax" || report.providerId === "minimax-cn"
+								? report.source === "minimax-account-balance"
+									? `${report.providerName} API Balance`
+									: `${report.providerName} Token Plan`
+								: `${report.providerName} Usage`;
 	const lines = [`${title} · ${stateLabel}`];
 	if (report.accountLabel) lines.push(`Account: ${report.accountLabel}`);
 	lines.push(`Semantics: ${report.semantics.label}`, "");
 
-	if (report.providerId === "openai-codex") formatCodexReport(lines, report);
+	if (report.providerId === "baseten") formatBasetenReport(lines, report);
+	else if (report.providerId === "openai-codex") formatCodexReport(lines, report);
 	else if (report.providerId === "deepseek") formatDeepSeekReport(lines, report);
 	else if (report.providerId === "fireworks") formatFireworksReport(lines, report);
 	else if (report.providerId === "vercel-ai-gateway") formatVercelAIGatewayReport(lines, report);
@@ -58,6 +61,7 @@ export function formatUsageStatusline(
 	now = Date.now(),
 	showCodexResetCountdown = true,
 ): string | undefined {
+	if (report.providerId === "baseten") return formatBasetenStatusline(report);
 	if (report.providerId === "openai-codex") {
 		return formatCodexStatusline(report, model, now, showCodexResetCountdown);
 	}
@@ -99,6 +103,18 @@ export function formatProviderStates(states: readonly ProviderUsageState[]): str
 			return `${state.providerName} · ${label}\n${status}: ${state.message}`;
 		})
 		.join("\n\n");
+}
+
+function formatBasetenReport(lines: string[], report: UsageReport): void {
+	lines.push(`${"Spend window:".padEnd(VALUE_COLUMN)}Last 30 days`);
+	for (const metric of report.metrics) {
+		lines.push(`${`${metric.label}:`.padEnd(VALUE_COLUMN)}USD ${metric.value}`);
+	}
+}
+
+function formatBasetenStatusline(report: UsageReport): string {
+	const subtotal = report.metrics.find((metric) => metric.id === "net-subtotal");
+	return subtotal ? `baseten USD ${subtotal.value} net` : "baseten no Model APIs usage";
 }
 
 function formatCodexReport(lines: string[], report: UsageReport): void {
