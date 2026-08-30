@@ -94,8 +94,14 @@ export function formatDocumentPresentation(
 	const resolvedFormat = format ?? { kind: "text" as const };
 	if (resolvedFormat.kind === "markdown") {
 		const lines = renderMarkdownDocument(content, resolvedFormat, width, theme);
-		const searchLines = lines.map((line) => PiTui.stripTerminalSequences(line).trimEnd());
-		const softWrapAfter = markdownSoftWrapAfter(content, searchLines);
+		const searchLines = lines.map(markdownSearchLine);
+		const referenceLines = renderMarkdownDocument(
+			content,
+			resolvedFormat,
+			markdownReferenceWidth(content, width),
+			theme,
+		).map(markdownSearchLine);
+		const softWrapAfter = markdownSoftWrapAfter(searchLines, referenceLines);
 		return {
 			lines,
 			searchLines,
@@ -132,19 +138,31 @@ export function formatDocumentPresentation(
 	};
 }
 
-function markdownSoftWrapAfter(content: string, lines: readonly string[]) {
-	const source = sanitizeDocumentText(content);
-	let sourceOffset = 0;
+function markdownSearchLine(line: string) {
+	const plain = PiTui.stripTerminalSequences(line).trimEnd();
+	return plain.replace(/^(?:│ )+/u, (prefix) => " ".repeat(PiTui.visibleWidth(prefix)));
+}
+
+function markdownReferenceWidth(content: string, width: number) {
+	const widestSourceLine = sanitizeDocumentText(content)
+		.split("\n")
+		.reduce((widest, line) => Math.max(widest, PiTui.visibleWidth(line)), 0);
+	return Math.max(1, width, widestSourceLine + 32);
+}
+
+function markdownSoftWrapAfter(lines: readonly string[], referenceLines: readonly string[]) {
+	const reference = referenceLines.map((line) => line.trim()).join("\n");
+	let referenceOffset = 0;
 	return lines.map((line, index) => {
 		const next = lines[index + 1];
 		if (next === undefined) return false;
 		const left = Array.from(line.trim()).slice(-16).join("");
 		const right = Array.from(next.trim()).slice(0, 16).join("");
 		if (!left || !right) return false;
-		const leftIndex = source.indexOf(left, sourceOffset);
+		const leftIndex = reference.indexOf(left, referenceOffset);
 		if (leftIndex < 0) return false;
-		sourceOffset = leftIndex + left.length;
-		return source.startsWith(right, sourceOffset);
+		referenceOffset = leftIndex + left.length;
+		return reference.startsWith(right, referenceOffset);
 	});
 }
 

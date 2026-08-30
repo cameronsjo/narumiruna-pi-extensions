@@ -66,6 +66,25 @@ test("preserves Markdown tokens across soft wraps without joining source lines",
 	controller.updateLines(list.searchLines, list.softWrapAfter, list.ignoreLeadingWhitespace);
 	assert.equal(controller.count, 1);
 
+	const quote = formatDocumentPresentation("> abcdefghijklmnop", { kind: "markdown" }, 6, theme);
+	assert.deepEqual(quote.softWrapAfter, [true, true, true, false]);
+	controller.updateLines(quote.searchLines, quote.softWrapAfter, quote.ignoreLeadingWhitespace);
+	assert.equal(controller.count, 1);
+
+	const explicitQuote = formatDocumentPresentation(
+		"> abcd\n> efgh",
+		{ kind: "markdown" },
+		6,
+		theme,
+	);
+	assert.deepEqual(explicitQuote.softWrapAfter, [false, false]);
+	controller.updateLines(
+		explicitQuote.searchLines,
+		explicitQuote.softWrapAfter,
+		explicitQuote.ignoreLeadingWhitespace,
+	);
+	assert.equal(controller.count, 0);
+
 	const explicitLines = formatDocumentPresentation("abcd\nefgh", { kind: "markdown" }, 4, theme);
 	assert.deepEqual(explicitLines.softWrapAfter, [false, false]);
 	controller.updateLines(
