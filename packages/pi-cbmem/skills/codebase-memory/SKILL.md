@@ -20,7 +20,8 @@ Always prefer MCP graph tools over grep, glob, or file search for code discovery
 
 ## Quick Decision Matrix
 
-Use the exact `project="<name>"` returned by `list_projects` in every project-scoped call.
+Use `project="@current"` for eligible graph reads in the active checkout, or use the exact `project="<name>"` returned by `list_projects`.
+Never replace `@current` with its borrowed source project in later graph calls because the alias revalidates the worktree on every call.
 
 | Question | Tool call |
 |----------|----------|
@@ -34,13 +35,30 @@ Use the exact `project="<name>"` returned by `list_projects` in every project-sc
 | Risk-classified trace | `trace_path(project="<name>", function_name="X", risk_labels=true)` |
 | Text search | `search_code(project="<name>", pattern="...")` or Grep |
 
+## Current Worktree Resolution
+
+- `index_status(project="@current")` resolves an existing current-root index first.
+- In an unindexed linked worktree, `@current` borrows a canonical checkout graph only when both trees are clean, share one Git common directory and `HEAD`, and the graph-recorded Branch snapshot matches.
+- Keep using `@current` for `search_graph`, `query_graph`, `trace_path`, `get_code_snippet`, `get_graph_schema`, `get_architecture`, and `index_status` so each call revalidates the borrowed snapshot.
+- Inspect `pi_cbmem_resolution`; `borrowed_canonical_base` means the result is read-only borrowed graph evidence rather than a worktree index.
+- Borrowed `get_code_snippet` reads the reported lines from the current worktree.
+- Do not use `@current` with `search_code`, `check_index_coverage`, `detect_changes`, `manage_adr`, `ingest_traces`, `delete_project`, or `index_repository`.
+- For required coverage on borrowed evidence, call `check_index_coverage` once with the reported source project, read flagged paths from the current worktree, then rerun `index_status(project="@current")` before relying on the result.
+  Do not use the reported source project for graph reads.
+- If `@current` rejects a dirty, divergent, stale, missing, or ambiguous context, do not bypass the guard with the canonical project name.
+  Index the worktree or use current-root file reads and grep instead.
+- Treat borrowed coverage as best-effort because Codebase Memory exposes no immutable generation lease or complete semantic-input comparison.
+
 ## Exploration Workflow
 
-1. `list_projects` — check whether the project is indexed and copy its exact name.
-2. `get_graph_schema(project="<name>")` — understand node and edge types.
-3. `search_graph(project="<name>", label="Function", name_pattern=".*Pattern.*")` — find code.
-4. `get_code_snippet(project="<name>", qualified_name="project.path.FuncName")` — read source.
-5. `check_index_coverage(project="<name>", paths=["path/to/file"])` — validate every evidence path.
+Use `@current` for eligible calls below when the first step succeeds; otherwise substitute the exact project discovered by `list_projects`.
+
+1. `index_status(project="@current")` — resolve and validate the active checkout when supported.
+2. `list_projects` — fall back to discovering and copying an exact project name when `@current` is unavailable.
+3. `get_graph_schema(project="<name>")` — understand node and edge types.
+4. `search_graph(project="<name>", label="Function", name_pattern=".*Pattern.*")` — find code.
+5. `get_code_snippet(project="<name>", qualified_name="project.path.FuncName")` — read source.
+6. `check_index_coverage(project="<name>", paths=["path/to/file"])` — validate every evidence path.
 
 ## Tracing Workflow
 
@@ -75,7 +93,7 @@ Use the exact `project="<name>"` returned by `list_projects` in every project-sc
 
 ## Session Resets and Subagents
 
-- At session start or after compaction, confirm the nearest graph project and generation with `list_projects` or `index_status`, then choose Scout, Verify, or Auditor.
+- At session start or after compaction, try `index_status(project="@current")`, then use `list_projects` or an exact-name `index_status` fallback before choosing Scout, Verify, or Auditor.
 - Before spawning a subagent, query the graph and coverage in the parent.
   Pass the tier, project, generation or freshness, bounded scope, queries and pagination state, qualified symbols, paths, call-chain findings, coverage evidence with ranges and reasons, source fallback already performed, and unresolved questions in the delegated task context.
 - Do not assume subagents inherit MCP access or the parent conversation.
@@ -112,3 +130,4 @@ MATCH (a)-[r:CALLS]->(b) WHERE a.name = 'main' RETURN b.name
 3. `trace_path` needs exact names — use `search_graph(project="<name>", name_pattern="...")` first.
 4. `direction="outbound"` misses cross-service callers — use `direction="both"`.
 5. `search_graph` results default to 50 per page — check `has_more` and use `offset`.
+6. `@current` is a pi-cbmem read alias, not a Codebase Memory project or a shared-index identity.
