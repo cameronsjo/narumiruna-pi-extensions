@@ -4,8 +4,9 @@ import { convertToLlm } from "@earendil-works/pi-coding-agent";
 import { test } from "vitest";
 import todoWidgetExtension, {
 	reconcileTodoContext,
+	TODO_DETAILS_VERSION,
 	TOOL_NAME,
-	type TodoItem,
+	type Todo,
 } from "../src/todo-widget.js";
 
 interface RegisteredTool {
@@ -61,14 +62,14 @@ function assistantMessage(text: string): ContextEvent["messages"][number] {
 	return assistantMessageWithContent([{ type: "text", text }], "stop");
 }
 
-function todoToolCallMessage(items: readonly TodoItem[]): ContextEvent["messages"][number] {
+function todoToolCallMessage(todos: readonly Todo[]): ContextEvent["messages"][number] {
 	return assistantMessageWithContent(
 		[
 			{
 				type: "toolCall",
-				id: `todo-call-${items.length}`,
+				id: `todo-call-${todos.length}`,
 				name: TOOL_NAME,
-				arguments: { items },
+				arguments: { todos },
 			},
 		],
 		"toolUse",
@@ -98,22 +99,22 @@ function assistantMessageWithContent(
 	};
 }
 
-function todoToolResultMessage(items: readonly TodoItem[]): ContextEvent["messages"][number] {
+function todoToolResultMessage(todos: readonly Todo[]): ContextEvent["messages"][number] {
 	return {
 		role: "toolResult",
-		toolCallId: `todo-call-${items.length}`,
+		toolCallId: `todo-call-${todos.length}`,
 		toolName: TOOL_NAME,
-		content: [{ type: "text", text: items.length === 0 ? "cleared" : "updated" }],
-		details: { version: 1, items },
+		content: [{ type: "text", text: todos.length === 0 ? "cleared" : "updated" }],
+		details: { version: TODO_DETAILS_VERSION, todos },
 		isError: false,
 		timestamp: 0,
 	};
 }
 
 test("todo compaction restoration preserves normalized ordinary-request prefixes", () => {
-	const items: TodoItem[] = [
-		{ text: "inspect", status: "completed" },
-		{ text: "implement", status: "in_progress" },
+	const todos: Todo[] = [
+		{ step: "inspect", status: "completed" },
+		{ step: "implement", status: "in_progress" },
 	];
 	const summaries: ContextEvent["messages"] = [
 		{
@@ -130,14 +131,14 @@ test("todo compaction restoration preserves normalized ordinary-request prefixes
 		},
 	];
 	const firstRaw = [...summaries, userMessage("continue")];
-	const firstMessages = reconcileTodoContext(firstRaw, items);
+	const firstMessages = reconcileTodoContext(firstRaw, todos);
 	const restored = firstMessages[2];
 	if (restored?.role !== "custom" || typeof restored.content !== "string") {
 		assert.fail("expected restored todo boundary");
 	}
 	const first = normalizedRequest(firstMessages);
 	const secondRaw = [...firstRaw, assistantMessage("working"), userMessage("continue again")];
-	const second = normalizedRequest(reconcileTodoContext(secondRaw, items, restored.content));
+	const second = normalizedRequest(reconcileTodoContext(secondRaw, todos, restored.content));
 
 	assert.deepEqual(second.effectiveSystemGuidance, first.effectiveSystemGuidance);
 	assert.deepEqual(second.activeToolNames, [TOOL_NAME]);
@@ -145,14 +146,14 @@ test("todo compaction restoration preserves normalized ordinary-request prefixes
 	assert.deepEqual(second.toolDefinitions, first.toolDefinitions);
 	assert.deepEqual(second.messages.slice(0, first.messages.length), first.messages);
 
-	const updatedItems: TodoItem[] = [{ text: "implement", status: "completed" }];
+	const updatedTodos: Todo[] = [{ step: "implement", status: "completed" }];
 	const updatedRaw = [
 		...secondRaw,
-		todoToolCallMessage(updatedItems),
-		todoToolResultMessage(updatedItems),
+		todoToolCallMessage(updatedTodos),
+		todoToolResultMessage(updatedTodos),
 	];
 	const updated = normalizedRequest(
-		reconcileTodoContext(updatedRaw, updatedItems, restored.content),
+		reconcileTodoContext(updatedRaw, updatedTodos, restored.content),
 	);
 	assert.deepEqual(updated.messages.slice(0, second.messages.length), second.messages);
 
@@ -160,5 +161,5 @@ test("todo compaction restoration preserves normalized ordinary-request prefixes
 	const cleared = normalizedRequest(reconcileTodoContext(clearedRaw, [], restored.content));
 	assert.deepEqual(cleared.messages.slice(0, updated.messages.length), updated.messages);
 
-	assert.equal(reconcileTodoContext(firstMessages, items, restored.content), firstMessages);
+	assert.equal(reconcileTodoContext(firstMessages, todos, restored.content), firstMessages);
 });
