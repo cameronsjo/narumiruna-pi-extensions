@@ -866,7 +866,7 @@ test("review keeps the current search match visible after rewrapping", () => {
 	const harness = reviewComponentHarness(
 		{
 			...reviewScreen,
-			content: `${"prefix ".repeat(12)}needle`,
+			content: `${"prefix ".repeat(12)}\nneedle`,
 			enableSearch: true,
 		},
 		false,
@@ -875,8 +875,10 @@ test("review keeps the current search match visible after rewrapping", () => {
 	harness.component.render(80);
 	harness.component.handleInput("s");
 	harness.component.handleInput("needle");
-	assert.match(plainRender(harness.component, 80), /needle/u);
-	assert.match(plainRender(harness.component, 12), /needle/u);
+	assert.equal(plainLines(harness.component, 80).includes("needle"), true);
+	assert.equal(plainLines(harness.component, 12).includes("needle"), true);
+	harness.setTerminalRows(6);
+	assert.equal(plainLines(harness.component, 12).includes("needle"), true);
 });
 
 test("review preserves manual scrolling while search is active", () => {

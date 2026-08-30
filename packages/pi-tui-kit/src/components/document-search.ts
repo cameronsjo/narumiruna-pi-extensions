@@ -14,6 +14,7 @@ const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme
 const PASTE_START = "\u001b[200~";
 const PASTE_END = "\u001b[201~";
 const MAX_HIGHLIGHTED_MATCHES = 1_000;
+const MAX_SEARCH_QUERY_LENGTH = 4_096;
 
 type SearchTheme = Pick<Theme, "fg"> & Partial<Pick<Theme, "bg" | "underline">>;
 
@@ -396,7 +397,7 @@ function sanitizePastedSearchData(data: string, initiallyPasting: boolean, initi
 }
 
 function sanitizeSearchQuery(value: string) {
-	return sanitizeTerminalDocument(value).replace(/\s+/gu, " ");
+	return sanitizeTerminalDocument(value).replace(/\s+/gu, " ").slice(0, MAX_SEARCH_QUERY_LENGTH);
 }
 
 function normalizeQuery(value: string) {
@@ -404,6 +405,7 @@ function normalizeQuery(value: string) {
 }
 
 function findMatchOffsets(corpus: string, query: string) {
+	if (query.length > corpus.length) return new Uint32Array();
 	const expression = new RegExp(escapeRegExp(query), "giu");
 	const offsets: number[] = [];
 	for (const match of corpus.matchAll(expression)) {

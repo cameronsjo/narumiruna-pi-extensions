@@ -164,6 +164,19 @@ test("uses one width-sensitive Markdown transform for display and search metadat
 	assert.equal(controller.count, 1);
 });
 
+test("bounds Markdown reference rendering without losing capped-wrap matches", () => {
+	const token = `${"a".repeat(497)}XYZ${"b".repeat(100)}`;
+	const content = [token, ...Array.from({ length: 2_000 }, () => "short")].join("\n");
+	const presentation = formatDocumentPresentation(content, { kind: "markdown" }, 20, theme);
+	const controller = search(presentation.searchLines, "XYZb");
+	controller.updateLines(
+		presentation.searchLines,
+		presentation.softWrapAfter,
+		presentation.ignoreLeadingWhitespace,
+	);
+	assert.equal(controller.count, 1);
+});
+
 test("maps combining and wide graphemes to ANSI-safe cell ranges", () => {
 	const lines = ["x e\u0301你🙂 y"];
 	const controller = search(lines, "e\u0301你");
@@ -253,6 +266,14 @@ test("indexes repetitive documents compactly while retaining count and navigatio
 	controller.next();
 	assert.equal(controller.current, 1);
 	assert.equal(controller.highlight([line], theme).length, 1);
+});
+
+test("bounds pasted search queries before compiling matchers", () => {
+	const controller = new DocumentSearchController();
+	controller.activate(["short"]);
+	controller.handleInput(`\u001b[200~${"x".repeat(10_000)}\u001b[201~`);
+	assert.equal(controller.input.getValue().length, 4_096);
+	assert.equal(controller.count, 0);
 });
 
 test("routes only pasted bytes ahead of surrounding shortcuts", () => {

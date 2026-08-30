@@ -10,6 +10,7 @@ import { getLanguageFromPath, highlightCode } from "./syntax-highlighting.js";
 
 export const RPC_DOCUMENT_LINE_WIDTH = 120;
 export const RPC_DOCUMENT_PAGE_SIZE = 8;
+const MAX_MARKDOWN_REFERENCE_CELLS = 1_000_000;
 
 type DocumentTheme = Pick<Theme, "fg" | "bold"> &
 	Partial<Pick<Theme, "italic" | "underline" | "strikethrough">>;
@@ -109,14 +110,10 @@ export function formatDocumentPresentation(
 				searchSources: [],
 			};
 		}
-		const referenceLines = renderMarkdownDocument(
-			prepared,
-			resolvedFormat,
-			markdownReferenceWidth(prepared, width),
-			theme,
-		);
+		const referenceWidth = markdownReferenceWidth(prepared, width);
+		const referenceLines = renderMarkdownDocument(prepared, resolvedFormat, referenceWidth, theme);
 		const referenceSearchLines = markdownSearchLines(referenceLines);
-		const softWrapAfter = markdownSoftWrapAfter(searchLines, referenceSearchLines);
+		const softWrapAfter = markdownSoftWrapAfter(searchLines, referenceSearchLines, referenceWidth);
 		return {
 			lines,
 			searchLines,
@@ -256,14 +253,31 @@ function markdownTableCells(line: string, row: number) {
 }
 
 function markdownReferenceWidth(content: string, width: number) {
-	const widestSourceLine = content
-		.split("\n")
-		.reduce((widest, line) => Math.max(widest, PiTui.visibleWidth(line)), 0);
-	return Math.max(1, width, widestSourceLine + 32);
+	const sourceLines = content.split("\n");
+	const widestSourceLine = sourceLines.reduce(
+		(widest, line) => Math.max(widest, PiTui.visibleWidth(line)),
+		0,
+	);
+	const budgetedWidth = Math.max(
+		1,
+		Math.floor(MAX_MARKDOWN_REFERENCE_CELLS / Math.max(1, sourceLines.length)),
+	);
+	return Math.max(1, width, Math.min(widestSourceLine + 32, budgetedWidth));
 }
 
-function markdownSoftWrapAfter(lines: readonly string[], referenceLines: readonly string[]) {
-	const reference = referenceLines.map((line) => line.trim()).join("\n");
+function markdownSoftWrapAfter(
+	lines: readonly string[],
+	referenceLines: readonly string[],
+	referenceWidth: number,
+) {
+	const reference = referenceLines
+		.map((line, index) => {
+			const separator = markdownReferenceLineWraps(referenceLines, index, referenceWidth)
+				? ""
+				: "\n";
+			return `${line.trim()}${separator}`;
+		})
+		.join("");
 	let referenceOffset = 0;
 	return lines.map((line, index) => {
 		const next = lines[index + 1];
@@ -276,6 +290,20 @@ function markdownSoftWrapAfter(lines: readonly string[], referenceLines: readonl
 		referenceOffset = leftIndex + left.length;
 		return reference.startsWith(right, referenceOffset);
 	});
+}
+
+function markdownReferenceLineWraps(
+	lines: readonly string[],
+	index: number,
+	referenceWidth: number,
+) {
+	const line = lines[index] ?? "";
+	return (
+		index < lines.length - 1 &&
+		PiTui.visibleWidth(line) >= referenceWidth &&
+		!isMarkdownTableRow(lines, index) &&
+		!/^[─┌├└]/u.test(line.trimStart())
+	);
 }
 
 export function plainDocumentLines(content: string, width: number): string[] {

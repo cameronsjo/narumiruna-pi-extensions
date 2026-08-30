@@ -161,9 +161,14 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 				);
 				const displayedContent = detailSearch?.highlight(content, options.theme) ?? content;
 				const layout = detailLayout(contentRows, content.length, detailSearch?.active ?? false);
+				const viewportChanged = layout.contentRows !== detailViewportRows;
 				detailViewportRows = layout.contentRows;
 				detailMaximumScroll = Math.max(0, content.length - layout.contentRows);
-				if (searchRebuilt && detailSearch?.active && detailSearch.currentRow !== undefined) {
+				if (
+					(searchRebuilt || viewportChanged) &&
+					detailSearch?.active &&
+					detailSearch.currentRow !== undefined
+				) {
 					detailScrollOffset = keepRowVisible(
 						detailScrollOffset,
 						detailSearch.currentRow,

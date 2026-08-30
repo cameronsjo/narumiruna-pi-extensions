@@ -475,7 +475,7 @@ test("browse keeps the current detail match visible after rewrapping", () => {
 			{
 				id: "exact",
 				label: "Exact",
-				detailDocument: { content: `${"prefix ".repeat(12)}needle` },
+				detailDocument: { content: `${"prefix ".repeat(12)}\nneedle` },
 			},
 		],
 	};
@@ -485,8 +485,10 @@ test("browse keeps the current detail match visible after rewrapping", () => {
 	harness.component.render(80);
 	harness.component.handleInput("s");
 	harness.component.handleInput("needle");
-	assert.match(plainRender(harness.component, 80).join("\n"), /needle/u);
-	assert.match(plainRender(harness.component, 12).join("\n"), /needle/u);
+	assert.equal(plainRender(harness.component, 80).includes("needle"), true);
+	assert.equal(plainRender(harness.component, 12).includes("needle"), true);
+	harness.host.terminal.rows = 6;
+	assert.equal(plainRender(harness.component, 12).includes("needle"), true);
 });
 
 test("browse preserves manual detail scrolling while search is active", () => {

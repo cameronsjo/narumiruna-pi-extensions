@@ -44,6 +44,8 @@ export function createReviewComponent<ScreenId extends string, ActionId extends 
 	let scrollOffset = 0;
 	let lastMaximumScroll = 0;
 	let lastViewportSize = reviewViewportSize(options.screen);
+	let lastTerminalRows = options.tui.terminal.rows;
+	let lastSearchActive = false;
 	let disposed = false;
 	let focused = false;
 	let lastLines: readonly string[] = [];
@@ -89,21 +91,20 @@ export function createReviewComponent<ScreenId extends string, ActionId extends 
 				lastIgnoreLeadingWhitespace,
 				lastSearchSources,
 			);
-			if (searchRebuilt && search?.active && search.currentRow !== undefined) {
-				scrollOffset = keepRowVisible(
-					scrollOffset,
-					search.currentRow,
-					Math.max(1, lastViewportSize),
-				);
-			}
-			const frame = renderAdaptiveReviewFrame({
+			const searchActive = search?.active ?? false;
+			const terminalRows = options.tui.terminal.rows;
+			const layoutChanged =
+				Boolean(searchRebuilt) ||
+				terminalRows !== lastTerminalRows ||
+				searchActive !== lastSearchActive;
+			const frameOptions: AdaptiveReviewFrameOptions<ActionId> = {
 				screen: options.screen,
 				allLines: search?.highlight(allLines, options.theme) ?? allLines,
-				searchLine: search?.active ? search.render(safeWidth) : undefined,
+				searchLine: searchActive ? search?.render(safeWidth) : undefined,
 				searchEnabled: Boolean(search),
-				searchActive: search?.active ?? false,
+				searchActive,
 				width: safeWidth,
-				terminalRows: options.tui.terminal.rows,
+				terminalRows,
 				maximumViewportSize:
 					options.screen.viewportSize === "adaptive"
 						? undefined
@@ -111,7 +112,20 @@ export function createReviewComponent<ScreenId extends string, ActionId extends 
 				scrollOffset,
 				theme: options.theme,
 				keybindings: options.keybindings,
-			});
+			};
+			let frame = renderAdaptiveReviewFrame(frameOptions);
+			if (layoutChanged && searchActive && search?.currentRow !== undefined) {
+				const correctedOffset = keepRowVisible(
+					frame.scrollOffset,
+					search.currentRow,
+					Math.max(1, frame.viewportSize),
+				);
+				if (correctedOffset !== frame.scrollOffset) {
+					frame = renderAdaptiveReviewFrame({ ...frameOptions, scrollOffset: correctedOffset });
+				}
+			}
+			lastTerminalRows = terminalRows;
+			lastSearchActive = searchActive;
 			scrollOffset = frame.scrollOffset;
 			lastMaximumScroll = frame.maximumScroll;
 			lastViewportSize = frame.viewportSize;
