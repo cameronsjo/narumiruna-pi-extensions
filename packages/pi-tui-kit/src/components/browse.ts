@@ -19,7 +19,7 @@ import {
 	RPC_DOCUMENT_LINE_WIDTH,
 	RPC_DOCUMENT_PAGE_SIZE,
 } from "./document-formatting.js";
-import { DOCUMENT_SEARCH_ACTIVATE_KEY, DocumentSearchController } from "./document-search.js";
+import { DocumentSearchController, documentSearchActivationKey } from "./document-search.js";
 import {
 	componentRows,
 	handleSearchInput,
@@ -47,6 +47,9 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 	const searchInput = new Input();
 	const detailSearch = options.screen.enableDetailSearch
 		? new DocumentSearchController()
+		: undefined;
+	const detailSearchActivationKey = detailSearch
+		? documentSearchActivationKey(options.keybindings)
 		: undefined;
 	const allItems: SearchableItem[] = options.screen.items.map((item) => ({
 		item,
@@ -196,7 +199,7 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 									"dim",
 									detailHint(
 										options.keybindings,
-										Boolean(detailSearch),
+										detailSearchActivationKey,
 										detailSearch?.active ?? false,
 									),
 								),
@@ -263,40 +266,44 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 		handleInput(data) {
 			if (disposed) return;
 			if (view === "detail" && detailSearch?.active) {
-				const routed = detailSearch.routeInput(data, (outsidePaste) => {
-					if (matchesKey(outsidePaste, Key.ctrl("c"))) {
-						options.onEvent({ kind: "close" });
-						return false;
-					}
-					if (options.keybindings.matches(outsidePaste, "tui.altScreen.searchClose")) {
-						detailSearch.close();
-						return false;
-					}
-					if (options.keybindings.matches(outsidePaste, "tui.altScreen.searchNext")) {
-						moveToDetailMatch(detailSearch.next());
-					} else if (options.keybindings.matches(outsidePaste, "tui.altScreen.searchPrevious")) {
-						moveToDetailMatch(detailSearch.previous());
-					} else if (options.keybindings.matches(outsidePaste, "tui.select.up")) {
-						detailScrollOffset = clamp(detailScrollOffset - 1, 0, detailMaximumScroll);
-					} else if (options.keybindings.matches(outsidePaste, "tui.select.down")) {
-						detailScrollOffset = clamp(detailScrollOffset + 1, 0, detailMaximumScroll);
-					} else if (options.keybindings.matches(outsidePaste, "tui.select.pageUp")) {
-						detailScrollOffset = clamp(
-							detailScrollOffset - detailViewportRows,
-							0,
-							detailMaximumScroll,
-						);
-					} else if (options.keybindings.matches(outsidePaste, "tui.select.pageDown")) {
-						detailScrollOffset = clamp(
-							detailScrollOffset + detailViewportRows,
-							0,
-							detailMaximumScroll,
-						);
-					} else if (detailSearch.handleInput(outsidePaste)) {
-						moveToDetailMatch(detailSearch.currentRow);
-					}
-					return true;
-				});
+				const routed = detailSearch.routeInput(
+					data,
+					(outsidePaste) => {
+						if (matchesKey(outsidePaste, Key.ctrl("c"))) {
+							options.onEvent({ kind: "close" });
+							return false;
+						}
+						if (options.keybindings.matches(outsidePaste, "tui.altScreen.searchClose")) {
+							detailSearch.close();
+							return false;
+						}
+						if (options.keybindings.matches(outsidePaste, "tui.altScreen.searchNext")) {
+							moveToDetailMatch(detailSearch.next());
+						} else if (options.keybindings.matches(outsidePaste, "tui.altScreen.searchPrevious")) {
+							moveToDetailMatch(detailSearch.previous());
+						} else if (options.keybindings.matches(outsidePaste, "tui.select.up")) {
+							detailScrollOffset = clamp(detailScrollOffset - 1, 0, detailMaximumScroll);
+						} else if (options.keybindings.matches(outsidePaste, "tui.select.down")) {
+							detailScrollOffset = clamp(detailScrollOffset + 1, 0, detailMaximumScroll);
+						} else if (options.keybindings.matches(outsidePaste, "tui.select.pageUp")) {
+							detailScrollOffset = clamp(
+								detailScrollOffset - detailViewportRows,
+								0,
+								detailMaximumScroll,
+							);
+						} else if (options.keybindings.matches(outsidePaste, "tui.select.pageDown")) {
+							detailScrollOffset = clamp(
+								detailScrollOffset + detailViewportRows,
+								0,
+								detailMaximumScroll,
+							);
+						} else if (detailSearch.handleInput(outsidePaste)) {
+							moveToDetailMatch(detailSearch.currentRow);
+						}
+						return true;
+					},
+					(outsidePaste) => options.keybindings.matches(outsidePaste, "tui.altScreen.searchClose"),
+				);
 				if (routed.changed && !routed.stopped) moveToDetailMatch(detailSearch.currentRow);
 				options.tui.requestRender();
 				return;
@@ -333,7 +340,11 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 					);
 				} else if (matchesKey(data, Key.home)) detailScrollOffset = 0;
 				else if (matchesKey(data, Key.end)) detailScrollOffset = detailMaximumScroll;
-				else if (detailSearch && matchesKey(data, DOCUMENT_SEARCH_ACTIVATE_KEY)) {
+				else if (
+					detailSearch &&
+					detailSearchActivationKey &&
+					matchesKey(data, detailSearchActivationKey)
+				) {
 					detailSearch.activate(
 						lastDetailLines,
 						lastDetailSoftWrapAfter,
@@ -608,7 +619,11 @@ function browseHint(keybindings: MenuKeybindings, destination: "back" | "close")
 	return ["type to search", controls].filter(Boolean).join(" · ");
 }
 
-function detailHint(keybindings: MenuKeybindings, searchEnabled: boolean, searchActive: boolean) {
+function detailHint(
+	keybindings: MenuKeybindings,
+	searchActivationKey: string | undefined,
+	searchActive: boolean,
+) {
 	return formatInteractionHints(
 		keybindings,
 		searchActive
@@ -621,7 +636,7 @@ function detailHint(keybindings: MenuKeybindings, searchEnabled: boolean, search
 			: [
 					{ bindings: ["tui.select.up", "tui.select.down"], label: "scroll" },
 					{ bindings: ["tui.select.pageUp", "tui.select.pageDown"], label: "page" },
-					...(searchEnabled ? [{ keys: [DOCUMENT_SEARCH_ACTIVATE_KEY], label: "search" }] : []),
+					...(searchActivationKey ? [{ keys: [searchActivationKey], label: "search" }] : []),
 					{
 						bindings: ["tui.select.cancel"],
 						excludeKeys: ["ctrl+c"],

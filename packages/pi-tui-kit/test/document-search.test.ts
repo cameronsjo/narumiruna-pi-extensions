@@ -158,6 +158,26 @@ test("preserves Markdown tokens across soft wraps without joining source lines",
 	);
 	assert.equal(decoratedSearch.count, 1);
 
+	for (const [content, query] of [
+		["> | value |\n> |---|\n> | abcdefghijklmnopqrstuvwxyz |", "nop"],
+		["- | value |\n  |---|\n  | abcdefghijklmnopqrstuvwxyz |", "nop"],
+		["- > | value |\n  > |---|\n  > | abcdefghijklmnopqrstuvwxyz |", "lmn"],
+	] as const) {
+		const nestedTable = formatDocumentPresentation(content, { kind: "markdown" }, 20, theme);
+		const nestedTableSearch = search(nestedTable.searchLines, query);
+		nestedTableSearch.updateLines(
+			nestedTable.searchLines,
+			nestedTable.softWrapAfter,
+			nestedTable.ignoreLeadingWhitespace,
+			nestedTable.searchSources,
+		);
+		assert.equal(nestedTableSearch.count, 1);
+		assert.deepEqual(
+			nestedTableSearch.highlight(nestedTable.lines, theme).map(stripVTControlCharacters),
+			nestedTable.lines.map(stripVTControlCharacters),
+		);
+	}
+
 	const explicitLines = formatDocumentPresentation("abcd\nefgh", { kind: "markdown" }, 4, theme);
 	assert.deepEqual(explicitLines.softWrapAfter, [false, false]);
 	controller.updateLines(
@@ -209,7 +229,9 @@ test("bounds Markdown reference rendering without losing capped-wrap matches", (
 		presentation.ignoreLeadingWhitespace,
 	);
 	assert.equal(controller.count, 1);
+});
 
+test("keeps explicit Markdown lines separate under the reference-render cap", () => {
 	const explicitContent = [
 		"a".repeat(499),
 		"b",
@@ -228,7 +250,9 @@ test("bounds Markdown reference rendering without losing capped-wrap matches", (
 		explicitPresentation.ignoreLeadingWhitespace,
 	);
 	assert.equal(explicitSearch.count, 0);
+});
 
+test("preserves capped Markdown table-cell matches", () => {
 	const tableToken = `${"a".repeat(493)}XYZb`;
 	const tableContent = [
 		"| value |",

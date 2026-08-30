@@ -10,7 +10,7 @@ import { getLanguageFromPath, highlightCode } from "./syntax-highlighting.js";
 
 export const RPC_DOCUMENT_LINE_WIDTH = 120;
 export const RPC_DOCUMENT_PAGE_SIZE = 8;
-const MAX_MARKDOWN_REFERENCE_CELLS = 1_000_000;
+const MAX_MARKDOWN_REFERENCE_CELLS = 250_000;
 
 type DocumentTheme = Pick<Theme, "fg" | "bold"> &
 	Partial<Pick<Theme, "italic" | "underline" | "strikethrough">>;
@@ -169,25 +169,60 @@ export function formatDocumentPresentation(
 
 function markdownSearchLines(lines: readonly string[]) {
 	const plainLines = lines.map((line) => PiTui.stripTerminalSequences(line).trimEnd());
+	const tableRowStarts = markdownTableRowStarts(plainLines);
 	return plainLines.map((line, index) => {
-		if (isMarkdownTableRow(plainLines, index)) {
-			return line.replace(/^│ /u, "  ").replace(/ │$/u, "");
+		const tableStart = tableRowStarts[index];
+		if (tableStart !== undefined) {
+			const prefix = PiTui.sliceByColumn(line, 0, tableStart, true);
+			const frame = markdownTableFrame(line, tableStart);
+			return `${normalizeMarkdownContainerPrefix(prefix)}${frame
+				.replace(/^│ /u, "  ")
+				.replace(/ │$/u, "")}`;
 		}
-		return line.replace(
-			/^((?:(?:\s+|(?:[-+*]|\d+[.)])\s+))*)((?:│ )+)/u,
-			(_match, prefix: string, quoteBorders: string) =>
-				prefix + " ".repeat(PiTui.visibleWidth(quoteBorders)),
-		);
+		return normalizeMarkdownContainerPrefix(line);
 	});
 }
 
-function isMarkdownTableRow(lines: readonly string[], index: number) {
-	if (!/^│ .* │$/u.test(lines[index] ?? "")) return false;
-	let before = index - 1;
-	while (before >= 0 && /^│ .* │$/u.test(lines[before] ?? "")) before -= 1;
-	let after = index + 1;
-	while (after < lines.length && /^│ .* │$/u.test(lines[after] ?? "")) after += 1;
-	return /^[┌├].*[┐┤]$/u.test(lines[before] ?? "") && /^[├└].*[┤┘]$/u.test(lines[after] ?? "");
+function normalizeMarkdownContainerPrefix(line: string) {
+	return line.replace(
+		/^((?:(?:\s+|(?:[-+*]|\d+[.)])\s+))*)((?:│ )+)/u,
+		(_match, prefix: string, quoteBorders: string) =>
+			prefix + " ".repeat(PiTui.visibleWidth(quoteBorders)),
+	);
+}
+
+function markdownTableRowStarts(lines: readonly string[]) {
+	const starts: Array<number | undefined> = lines.map(() => undefined);
+	for (const [index, line] of lines.entries()) {
+		const tableStart = markdownTableTopStart(line);
+		if (tableStart === undefined) continue;
+		const rows: number[] = [];
+		for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
+			const frame = markdownTableFrame(lines[cursor] ?? "", tableStart);
+			if (/^│ .* │$/u.test(frame)) {
+				rows.push(cursor);
+				continue;
+			}
+			if (/^├.*┤$/u.test(frame)) continue;
+			if (/^└.*┘$/u.test(frame)) {
+				for (const row of rows) starts[row] = tableStart;
+			}
+			break;
+		}
+	}
+	return starts;
+}
+
+function markdownTableTopStart(line: string) {
+	for (let index = line.indexOf("┌"); index >= 0; index = line.indexOf("┌", index + 1)) {
+		const start = PiTui.visibleWidth(line.slice(0, index));
+		if (/^┌.*┐$/u.test(markdownTableFrame(line, start))) return start;
+	}
+	return undefined;
+}
+
+function markdownTableFrame(line: string, start: number) {
+	return PiTui.sliceByColumn(line, start, Math.max(0, PiTui.visibleWidth(line) - start), true);
 }
 
 function markdownTableSearchSources(
@@ -212,15 +247,17 @@ function markdownTableSearchSources(
 
 function markdownTableCellSources(lines: readonly string[]) {
 	const plainLines = lines.map((line) => PiTui.stripTerminalSequences(line).trimEnd());
+	const tableRowStarts = markdownTableRowStarts(plainLines);
 	const sources: DocumentSearchSource[] = [];
 	for (let index = 0; index < plainLines.length; ) {
-		if (!isMarkdownTableRow(plainLines, index)) {
+		const tableStart = tableRowStarts[index];
+		if (tableStart === undefined) {
 			index += 1;
 			continue;
 		}
-		const boundaries = markdownTableBoundaries(plainLines, index);
+		const boundaries = markdownTableBoundaries(plainLines, index, tableStart);
 		const rows: Array<ReturnType<typeof markdownTableCells>> = [];
-		while (index < plainLines.length && isMarkdownTableRow(plainLines, index)) {
+		while (index < plainLines.length && tableRowStarts[index] === tableStart) {
 			rows.push(markdownTableCells(plainLines[index] ?? "", index, boundaries));
 			index += 1;
 		}
@@ -267,9 +304,14 @@ function markTableCellSeparators(
 	});
 }
 
-function markdownTableBoundaries(lines: readonly string[], rowIndex: number) {
+function markdownTableBoundaries(lines: readonly string[], rowIndex: number, tableStart: number) {
 	let borderIndex = rowIndex - 1;
-	while (borderIndex >= 0 && isMarkdownTableRow(lines, borderIndex)) borderIndex -= 1;
+	while (
+		borderIndex >= 0 &&
+		/^│ .* │$/u.test(markdownTableFrame(lines[borderIndex] ?? "", tableStart))
+	) {
+		borderIndex -= 1;
+	}
 	const border = lines[borderIndex] ?? "";
 	const boundaries: number[] = [];
 	let column = 0;

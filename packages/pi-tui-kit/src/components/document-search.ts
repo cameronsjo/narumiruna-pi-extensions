@@ -3,12 +3,15 @@ import {
 	decodeKittyPrintable,
 	type Focusable,
 	Input,
+	Key,
+	matchesKey,
 	sliceByColumn,
 	stripTerminalSequences,
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import { sanitizeTerminalDocument } from "../terminal-document.js";
+import type { MenuBinding, MenuKeybindings } from "./contracts.js";
 import { handleSearchInput } from "./rendering.js";
 
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -17,7 +20,26 @@ const PASTE_END = "\u001b[201~";
 const MAX_HIGHLIGHTED_MATCHES = 1_000;
 const MAX_SEARCH_QUERY_LENGTH = 4_096;
 const MAX_PASTE_BUFFER_LENGTH = MAX_SEARCH_QUERY_LENGTH * 16;
-export const DOCUMENT_SEARCH_ACTIVATE_KEY = "/";
+const DOCUMENT_SEARCH_ACTIVATE_KEYS = ["/", "?"] as const;
+const DOCUMENT_SEARCH_CONFLICT_BINDINGS = [
+	"tui.select.up",
+	"tui.select.down",
+	"tui.select.pageUp",
+	"tui.select.pageDown",
+	"tui.select.confirm",
+	"tui.select.cancel",
+	"tui.altScreen.search",
+] as const satisfies readonly MenuBinding[];
+
+export function documentSearchActivationKey(keybindings: MenuKeybindings) {
+	return DOCUMENT_SEARCH_ACTIVATE_KEYS.find(
+		(key) =>
+			!matchesKey(key, Key.ctrl("c")) &&
+			!matchesKey(key, Key.home) &&
+			!matchesKey(key, Key.end) &&
+			!DOCUMENT_SEARCH_CONFLICT_BINDINGS.some((binding) => keybindings.matches(key, binding)),
+	);
+}
 
 type SearchTheme = Pick<Theme, "bold" | "fg"> &
 	Partial<Pick<Theme, "bg" | "inverse" | "underline">>;
@@ -219,7 +241,11 @@ export class DocumentSearchController implements Focusable {
 		return true;
 	}
 
-	routeInput(data: string, handleOutsidePaste: (data: string) => boolean) {
+	routeInput(
+		data: string,
+		handleOutsidePaste: (data: string) => boolean,
+		shouldDispatchPrefix: (data: string) => boolean = () => false,
+	) {
 		let changed = false;
 		const input = this.pasteStartBuffer + data;
 		this.pasteStartBuffer = "";
@@ -246,7 +272,11 @@ export class DocumentSearchController implements Focusable {
 				if (outsidePaste && !handleOutsidePaste(outsidePaste)) {
 					return { changed, stopped: true };
 				}
-				this.pasteStartBuffer = remainder.slice(remainder.length - prefixLength);
+				const prefix = remainder.slice(remainder.length - prefixLength);
+				if (prefix && shouldDispatchPrefix(prefix)) {
+					return { changed, stopped: !handleOutsidePaste(prefix) };
+				}
+				this.pasteStartBuffer = prefix;
 				return { changed, stopped: false };
 			}
 			if (start > offset && !handleOutsidePaste(input.slice(offset, start))) {

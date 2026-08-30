@@ -469,6 +469,47 @@ test("browse detail search stays independent from list filtering", () => {
 	assert.deepEqual(harness.events, [{ kind: "close" }]);
 });
 
+test("browse detail search falls back from claimed activation and closes on Escape", () => {
+	const remappedKeybindings = {
+		matches(data: string, binding: string) {
+			if (binding === "tui.select.down") return data === "/";
+			if (binding === "tui.altScreen.searchClose") return data === "\u001b";
+			return keybindings.matches(data, binding);
+		},
+		getKeys(binding: string) {
+			if (binding === "tui.select.down") return ["/"];
+			if (binding === "tui.altScreen.searchClose") return ["escape"];
+			return keybindings.getKeys(binding);
+		},
+	};
+	const screen: MenuScreen<ScreenId, ActionId> = {
+		kind: "browse",
+		title: "Documents",
+		enableDetailSearch: true,
+		items: [
+			{
+				id: "exact",
+				label: "Exact",
+				detailDocument: { content: "needle\nsecond row\nthird row" },
+			},
+		],
+	};
+	const harness = componentHarness(screen, { rows: 10, keybindings: remappedKeybindings });
+	harness.component.render(40);
+	harness.component.handleInput("y");
+	const inactive = plainRender(harness.component, 40).join("\n");
+	assert.doesNotMatch(inactive, /\/ search/u);
+	assert.match(inactive, /\? search/u);
+	harness.component.handleInput("/");
+	assert.doesNotMatch(plainRender(harness.component, 40).join("\n"), /Find:/u);
+	harness.component.handleInput("?");
+	assert.match(plainRender(harness.component, 40).join("\n"), /Find:/u);
+	harness.component.handleInput("\u001b");
+	assert.doesNotMatch(plainRender(harness.component, 40).join("\n"), /Find:/u);
+	harness.component.handleInput("a");
+	assert.doesNotMatch(plainRender(harness.component, 40).join("\n"), /Find:/u);
+});
+
 test("browse keeps the current detail match visible after rewrapping", () => {
 	const screen: MenuScreen<ScreenId, ActionId> = {
 		kind: "browse",
@@ -589,6 +630,7 @@ function componentHarness(
 		selectedItemId?: string;
 		themed?: boolean;
 		onColor?: (color: string) => void;
+		keybindings?: typeof keybindings;
 	} = {},
 ) {
 	const events: MenuScreenEvent[] = [];
@@ -605,7 +647,7 @@ function componentHarness(
 			},
 			bold: (text: string) => text,
 		},
-		keybindings,
+		keybindings: options.keybindings ?? keybindings,
 		onEvent: (event) => events.push(event),
 		onSelectionChange: (itemId) => selectionChanges.push(itemId),
 	});

@@ -964,6 +964,39 @@ test("review keeps local activation and omits unavailable active-search hints", 
 	assert.match(active, /ctrl\+c close/u);
 });
 
+test("review search falls back from claimed activation and closes immediately on Escape", () => {
+	const remappedKeybindings: ReviewKeybindings = {
+		matches(data, binding) {
+			if (binding === "tui.select.confirm") return data === "/";
+			if (binding === "tui.altScreen.searchClose") return data === "\u001b";
+			return reviewTestKeybindings.matches(data, binding);
+		},
+		getKeys(binding) {
+			if (binding === "tui.select.confirm") return ["/"];
+			if (binding === "tui.altScreen.searchClose") return ["escape"];
+			return reviewTestKeybindings.getKeys(binding);
+		},
+	};
+	const harness = reviewComponentHarness(
+		{ ...reviewScreen, enableSearch: true },
+		false,
+		8,
+		undefined,
+		remappedKeybindings,
+	);
+	const inactive = plainRender(harness.component, 80);
+	assert.doesNotMatch(inactive, /\/ search/u);
+	assert.match(inactive, /\? search/u);
+	harness.component.handleInput("/");
+	assert.deepEqual(harness.events, [{ kind: "activate", itemId: "raw-apply" }]);
+	harness.component.handleInput("?");
+	assert.match(plainRender(harness.component, 40), /Find:/u);
+	harness.component.handleInput("\u001b");
+	assert.doesNotMatch(plainRender(harness.component, 40), /Find:/u);
+	harness.component.handleInput("a");
+	assert.doesNotMatch(plainRender(harness.component, 40), /Find:/u);
+});
+
 test("search-disabled review keeps its prior component and disposal behavior", () => {
 	const harness = reviewComponentHarness(reviewScreen);
 	assert.equal("focused" in harness.component, false);
