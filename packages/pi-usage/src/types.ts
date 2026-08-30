@@ -89,6 +89,15 @@ export type DeepSeekBalancePayload = {
 	balance_infos?: unknown;
 };
 
+export type FireworksAccountsPayload = {
+	accounts?: unknown;
+	nextPageToken?: unknown;
+};
+
+export type FireworksBillingSummaryPayload = {
+	lineItems?: unknown;
+};
+
 export type GitHubCopilotUsagePayload = {
 	login?: unknown;
 	copilot_plan?: unknown;

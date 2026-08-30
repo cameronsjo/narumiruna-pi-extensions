@@ -15,6 +15,8 @@ xAI OAuth subscription reporting follows the reviewed Grok Build contract and ru
 - Reports GitHub Copilot allowances and OpenRouter per-key limits and spending windows.
 - Reports exact DeepSeek API balances with separate CNY and USD values.
 - Reports OpenCode Go plan windows and Z.AI Coding Plan quotas.
+- Reports Fireworks rated API spend for the last 30 days with per-series subtotals.
+- Reports Fireworks rated API spend for the last 30 days with per-series subtotals.
 - Reports xAI OAuth subscription allowances and credits.
 - Toggles persistent Codex Fast routing through `/fast` or the usage menu.
 - Redeems eligible Codex resets only after fresh account matching and explicit confirmation.
@@ -219,6 +221,22 @@ The balance endpoint does not provide historical spend, request windows, reset t
 The contract was verified on 2026-08-28 against [DeepSeek's Get User Balance documentation](https://api-docs.deepseek.com/api/get-user-balance) and Pi's [`deepseek.ts`](https://github.com/earendil-works/pi/blob/c49906ec77788625aacbdc53ebca6fbe65bd20f5/packages/ai/src/providers/deepseek.ts) at `c49906ec77788625aacbdc53ebca6fbe65bd20f5`.
 DeepSeek Harness `cd5ef8148158c3a752a658978873241fdf8e2bbc` reports only per-request model token usage and does not provide account balance data.
 
+### Fireworks API spend
+
+- Provider ID: `fireworks`
+- Semantics: rated 30-day account spend, not credit balance or spend-cap quota
+- Source: documented `GET https://api.fireworks.ai/v1/accounts` account discovery and `GET https://api.fireworks.ai/v1/accounts/{account_id}/billing/summary` rated costs using Pi's resolved inference API key
+- Displayed data: exact rated spend per currency with serverless, dedicated-deployment, and training subtotals for the trailing 30 days
+- Statusline example: `fireworks USD 12.345678901`
+
+The extension queries the fixed endpoints only when the selected model origin is `https://api.fireworks.ai` and any resolved-auth origin override, when present, has the same official origin.
+The account slug is discovered through the documented account listing; a key that can see several accounts must set `FIREWORKS_ACCOUNT_ID` to one of the listed account slugs, and the slug must remain visible to the key.
+Monetary `units` and `nanos` values are summed exactly with integer arithmetic and stay exact through display.
+Fireworks does not expose credit balance, spend caps, per-window quota, or reset times through its API, so `pi-usage` does not claim those Fireworks capabilities; the web console remains the authoritative balance source.
+Rated line items may differ from the final invoice once credits or adjustments are applied.
+
+The contract was verified on 2026-07-31 against Fireworks' [Usage & Cost Breakdown](https://docs.fireworks.ai/accounts/exporting-usage-and-costs), [Get billing summary](https://docs.fireworks.ai/api-reference/get-billing-summary), and [List Accounts](https://docs.fireworks.ai/api-reference/list-accounts) API references.
+
 ### OpenCode Go (Zen)
 
 - Provider ID: `opencode-go`
@@ -303,6 +321,7 @@ After the active runtime credential changes, the next command, turn, or schedule
 The `usage` status item is active only for selected providers that publish statusline usage.
 It refreshes every five minutes while the session remains on such a provider and is cleared when the model changes to an unsupported or menu-only provider.
 DeepSeek publishes each returned currency as a separate exact balance segment and reports when the API is unavailable.
+Fireworks publishes exact per-currency rated spend totals and reports when no rated usage exists.
 xAI is always menu-only and never starts a scheduled status refresh.
 Z.AI statusline usage refreshes every five minutes while the selected model remains on Z.AI.
 
@@ -334,6 +353,7 @@ Credential candidates are collected synchronously in memory and are not cached, 
 The protocol carries no account name or extension identity.
 Only the selected provider's exact runtime match is used, and secrets are sent only to its validated official origin.
 DeepSeek balance requests require Bearer authentication, send only that resolved credential from Pi's runtime auth to `https://api.deepseek.com/user/balance`, and refuse redirects.
+Fireworks spend requests send only that resolved credential to the official `https://api.fireworks.ai` account-listing and billing-summary endpoints and refuse redirects.
 Pi extensions run with the user's process privileges, so the shared event bus is not a security boundary between installed extensions.
 Install only trusted extensions because they can read user files and process memory.
 Protocol v1 interoperability is characterized for the repository's supported Pi runtime.
@@ -348,6 +368,7 @@ An absent or incompatible peer preserves standalone fallback and fail-closed mis
 - Credentials resolved for custom provider base URLs are never forwarded to the providers' official usage endpoints; effective auth origin validation requires Pi 0.81.0 or newer.
 - Provider reports are snapshots and may themselves be delayed by the provider.
 - DeepSeek reports current API balance only; it does not expose historical usage, quota windows, reset times, or account-wide token totals through the balance endpoint.
+- Fireworks reports rated 30-day spend only; credit balance and spend caps are visible only in the Fireworks web console, and keys that can see several accounts must set `FIREWORKS_ACCOUNT_ID`.
 - OpenRouter successful inference responses do not expose proactive request-rate counters; `/usage` reports the documented per-key credit/spend fields instead.
 - A provider may not return a safe human-readable account identity.
   In that case the provider and runtime credential state remain visible without exposing secrets.
@@ -390,7 +411,7 @@ The generated runtime is built from the authoritative `src/index.ts` graph and d
 
 ## 🔎 Keywords
 
-Pi extension, Pi coding agent, usage, quota, DeepSeek API balance, DeepSeek balance, OpenAI Codex usage, ChatGPT subscription limits, Kimi For Coding, Kimi Coding Plan usage, GitHub Copilot AI credits, GitHub Copilot premium requests, OpenRouter credits, xAI OAuth usage, Grok subscription allowance, API-key spend limits, TypeScript Pi package, npm Pi extension.
+Pi extension, Pi coding agent, usage, quota, DeepSeek API balance, DeepSeek balance, Fireworks API spend, Fireworks rated spend, OpenAI Codex usage, ChatGPT subscription limits, Kimi For Coding, Kimi Coding Plan usage, GitHub Copilot AI credits, GitHub Copilot premium requests, OpenRouter credits, xAI OAuth usage, Grok subscription allowance, API-key spend limits, TypeScript Pi package, npm Pi extension.
 
 ## 📄 License
 
