@@ -461,6 +461,28 @@ test("keeps logical table matches stable across wrapping widths", () => {
 	}
 });
 
+test("preserves distinct rendered matches that start inside a logical table source", () => {
+	const presentation = formatDocumentPresentation(
+		"| left | right |\n|---|---|\n| foo │ bar xxxx foo | zzzz zzzz bar |",
+		{ kind: "markdown" },
+		28,
+		theme,
+	);
+	const controller = search(presentation.searchLines, "foo │ bar");
+	controller.updateLines(
+		presentation.searchLines,
+		presentation.softWrapAfter,
+		presentation.ignoreLeadingWhitespace,
+		presentation.searchSources,
+	);
+	assert.equal(controller.count, 2);
+	const currentTheme = { ...theme, bold: (text: string) => `<current>${text}</current>` };
+	for (let index = 0; index < controller.count; index += 1) {
+		assert.match(controller.highlight(presentation.lines, currentTheme).join("\n"), /<current>/u);
+		controller.next();
+	}
+});
+
 test("bounds the stored query across typed and pasted input", () => {
 	const controller = new DocumentSearchController();
 	controller.activate(["x".repeat(4_096)]);

@@ -429,6 +429,7 @@ export class DocumentSearchController implements Focusable {
 			}
 			this.compactMatchOffsets = filterMatchOffsets(
 				findMatchOffsets(this.corpus, query),
+				this.corpus,
 				this.cells,
 				buildSearchSourceRanges(matchingSources),
 			);
@@ -714,38 +715,84 @@ interface SearchSourceRange {
 	end: number;
 }
 
+interface IndexedSearchSourceRange extends SearchSourceRange {
+	sourceIndex: number;
+}
+
 function buildSearchSourceRanges(sources: readonly DocumentSearchSource[]) {
-	const ranges = new Map<number, SearchSourceRange[]>();
-	for (const source of sources) {
+	const byRow = new Map<number, IndexedSearchSourceRange[]>();
+	const bySource = sources.map(() => new Map<number, SearchSourceRange[]>());
+	for (const [sourceIndex, source] of sources.entries()) {
 		for (const segment of source) {
-			const rowRanges = ranges.get(segment.row) ?? [];
-			rowRanges.push({
+			const range = {
 				start: segment.column,
 				end: segment.column + visibleWidth(segment.text),
-			});
-			ranges.set(segment.row, rowRanges);
+			};
+			const rowRanges = byRow.get(segment.row) ?? [];
+			rowRanges.push({ ...range, sourceIndex });
+			byRow.set(segment.row, rowRanges);
+			const sourceRowRanges = bySource[sourceIndex]?.get(segment.row) ?? [];
+			sourceRowRanges.push(range);
+			bySource[sourceIndex]?.set(segment.row, sourceRowRanges);
 		}
 	}
-	return ranges;
+	return { byRow, bySource };
 }
 
 function filterMatchOffsets(
 	offsets: Uint32Array,
+	corpus: string,
 	cells: CorpusCells,
-	sourceRanges: ReadonlyMap<number, readonly SearchSourceRange[]>,
+	sourceRanges: ReturnType<typeof buildSearchSourceRanges>,
 ) {
-	if (sourceRanges.size === 0) return offsets;
+	if (sourceRanges.bySource.length === 0) return offsets;
 	const retained = new MatchOffsetBuilder();
 	for (let index = 0; index < offsets.length; index += 2) {
 		const start = offsets[index] ?? 0;
+		const end = offsets[index + 1] ?? start;
 		const row = cells.rows[start] ?? INVALID_CELL;
-		const column = cells.starts[start] ?? 0;
-		if (sourceRanges.get(row)?.some((range) => column >= range.start && column < range.end)) {
-			continue;
-		}
-		retained.push(start, offsets[index + 1] ?? start);
+		const cellStart = cells.starts[start] ?? 0;
+		const cellEnd = cells.ends[start] ?? 0;
+		const contained = sourceRanges.byRow
+			.get(row)
+			?.some(
+				(range) =>
+					cellStart >= range.start &&
+					cellEnd <= range.end &&
+					matchContainedInSource(
+						corpus,
+						cells,
+						start,
+						end,
+						sourceRanges.bySource[range.sourceIndex],
+					),
+			);
+		if (!contained) retained.push(start, end);
 	}
 	return retained.finish();
+}
+
+function matchContainedInSource(
+	corpus: string,
+	cells: CorpusCells,
+	start: number,
+	end: number,
+	sourceRanges: ReadonlyMap<number, readonly SearchSourceRange[]> | undefined,
+) {
+	if (!sourceRanges) return false;
+	let hasVisibleCell = false;
+	for (let index = start; index < end; index += 1) {
+		const row = cells.rows[index] ?? INVALID_CELL;
+		const cellStart = cells.starts[index] ?? 0;
+		const cellEnd = cells.ends[index] ?? 0;
+		if (row === INVALID_CELL || cellEnd <= cellStart) continue;
+		hasVisibleCell = true;
+		const contained = sourceRanges
+			.get(row)
+			?.some((range) => cellStart >= range.start && cellEnd <= range.end);
+		if (!contained && corpus[index] !== " ") return false;
+	}
+	return hasVisibleCell;
 }
 
 function mergeCompactMatchGroups(groups: readonly CompactMatchGroup[]) {
