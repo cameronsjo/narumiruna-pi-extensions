@@ -1,5 +1,17 @@
 # @narumitw/pi-tui-kit
 
+## 0.60.0
+
+### Minor Changes
+
+- fc6fab5: Add opt-in search to review screens and browse detail views.
+  
+  Export multiline terminal-document sanitization and cell-aware hard-wrapping helpers.
+
+### Patch Changes
+
+- 636fd3c: Keep stored document-search queries bounded and deduplicate wrapped Markdown table results by logical cell occurrences.
+
 ## 0.59.0
 
 ### Minor Changes
