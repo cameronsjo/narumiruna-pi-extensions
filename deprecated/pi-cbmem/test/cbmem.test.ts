@@ -843,11 +843,11 @@ test("pre-aborted calls reject before sending an MCP request", async () => {
 test("bundled skill enforces graph-first evidence and valid project-scoped calls", async () => {
 	const skillDirectory = path.join(packageDirectory, "skills");
 	const skill = await readFile(path.join(skillDirectory, "codebase-memory", "SKILL.md"), "utf8");
-	const rootManifest = JSON.parse(
-		await readFile(path.resolve(packageDirectory, "..", "..", "package.json"), "utf8"),
+	const packageManifest = JSON.parse(
+		await readFile(path.resolve(packageDirectory, "package.json"), "utf8"),
 	) as { pi?: { skills?: string[] } };
 
-	assert.ok(rootManifest.pi?.skills?.includes("./packages/pi-cbmem/skills"));
+	assert.ok(packageManifest.pi?.skills?.includes("./skills"));
 
 	for (const evidence of [
 		/always prefer MCP graph tools/i,

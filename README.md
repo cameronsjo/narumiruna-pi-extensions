@@ -249,6 +249,7 @@ The following packages remain available as source references but are excluded fr
 - `pi-biome-lsp` and `pi-python-lsp` — replaced by [`pi-lsp`](./packages/pi-lsp)
 - `pi-codex-accounts` — replaced by [`pi-accounts`](./packages/pi-accounts)
 - `pi-codex-usage` — replaced by [`pi-usage`](./packages/pi-usage)
+- [`pi-cbmem`](./deprecated/pi-cbmem) — deprecated without a replacement because a simple benchmark found insufficient benefit and substantially higher token usage
 - `pi-retry` — replaced by Pi's built-in provider retry and timeout behavior
 - `pi-google-genai` — replaced by the `grounding-with-google-genai` agent skill
 - `pi-image-drop` — deprecated without a replacement

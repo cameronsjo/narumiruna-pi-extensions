@@ -1,7 +1,7 @@
 {
 	"name": "@narumitw/pi-cbmem",
 	"version": "0.1.0",
-	"description": "Pi extension package for Codebase Memory knowledge graph tools and guidance.",
+	"description": "Deprecated Pi extension for Codebase Memory knowledge graph tools and guidance.",
 	"type": "module",
 	"license": "MIT",
 	"private": false,
@@ -59,6 +59,6 @@
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/narumiruna/pi-extensions",
-		"directory": "packages/pi-cbmem"
+		"directory": "deprecated/pi-cbmem"
 	}
 }

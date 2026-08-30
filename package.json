@@ -13,7 +13,6 @@
 			"./packages/pi-analytics/src/index.ts",
 			"./packages/pi-btw/src/index.ts",
 			"./packages/pi-caffeinate/src/index.ts",
-			"./packages/pi-cbmem/src/index.ts",
 			"./packages/pi-chat/src/index.ts",
 			"./packages/pi-chrome-devtools/src/index.ts",
 			"./packages/pi-codex-compact/src/index.ts",
@@ -40,7 +39,6 @@
 			"./packages/pi-worktree/src/index.ts"
 		],
 		"skills": [
-			"./packages/pi-cbmem/skills",
 			"./packages/pi-herdr/skills"
 		]
 	},
