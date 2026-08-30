@@ -838,6 +838,8 @@ test("review search is opt-in, focus-aware, navigable, and separately dismissibl
 	focusable.focused = true;
 	harness.component.render(40);
 	harness.component.handleInput("s");
+	assert.doesNotMatch(plainRender(harness.component, 40), /Find:/u);
+	harness.component.handleInput("/");
 	harness.component.handleInput("\u001b[200~");
 	harness.component.handleInput("n");
 	harness.component.handleInput("eedle\u001b[201~");
@@ -848,7 +850,7 @@ test("review search is opt-in, focus-aware, navigable, and separately dismissibl
 	harness.component.handleInput("x");
 	assert.doesNotMatch(plainRender(harness.component, 40), /Find:/u);
 	assert.deepEqual(harness.events, []);
-	harness.component.handleInput("s");
+	harness.component.handleInput("/");
 	harness.component.handleInput("\u001b[200~");
 	harness.component.handleInput("\u0003");
 	harness.component.handleInput("\u001b[201~");
@@ -856,7 +858,7 @@ test("review search is opt-in, focus-aware, navigable, and separately dismissibl
 	harness.component.handleInput("x");
 	harness.component.handleInput("q");
 	assert.deepEqual(harness.events, [{ kind: "back" }]);
-	harness.component.handleInput("s");
+	harness.component.handleInput("/");
 	harness.component.handleInput("\u001b[200~needle");
 	harness.component.handleInput("\u001b[201~\u0003");
 	assert.deepEqual(harness.events.at(-1), { kind: "close" });
@@ -873,7 +875,7 @@ test("review keeps the current search match visible after rewrapping", () => {
 		8,
 	);
 	harness.component.render(80);
-	harness.component.handleInput("s");
+	harness.component.handleInput("/");
 	harness.component.handleInput("needle");
 	assert.equal(plainLines(harness.component, 80).includes("needle"), true);
 	assert.equal(plainLines(harness.component, 12).includes("needle"), true);
@@ -897,10 +899,27 @@ test("review keeps the current match visible when width only changes chrome layo
 		16,
 	);
 	harness.component.render(100);
-	harness.component.handleInput("s");
+	harness.component.handleInput("/");
 	harness.component.handleInput("needle");
 	assert.equal(plainLines(harness.component, 100).includes("needle"), true);
 	assert.equal(plainLines(harness.component, 20).includes("needle"), true);
+});
+
+test("review forwards Home and End to the active search input", () => {
+	const harness = reviewComponentHarness(
+		{ ...reviewScreen, content: "zabcd", enableSearch: true },
+		false,
+		8,
+	);
+	harness.component.render(30);
+	harness.component.handleInput("/");
+	harness.component.handleInput("abcd");
+	harness.component.handleInput("\u001b[H");
+	harness.component.handleInput("z");
+	assert.match(plainRender(harness.component, 30), /Find:.*zabcd.*1\/1/u);
+	harness.component.handleInput("\u001b[F");
+	harness.component.handleInput("y");
+	assert.match(plainRender(harness.component, 30), /Find:.*zabcdy.*0\/0/u);
 });
 
 test("review preserves manual scrolling while search is active", () => {
@@ -916,7 +935,7 @@ test("review preserves manual scrolling while search is active", () => {
 		8,
 	);
 	harness.component.render(30);
-	harness.component.handleInput("s");
+	harness.component.handleInput("/");
 	harness.component.handleInput("needle");
 	assert.match(plainRender(harness.component, 30), /needle/u);
 	harness.component.handleInput("d");
@@ -925,9 +944,9 @@ test("review preserves manual scrolling while search is active", () => {
 	assert.match(scrolled, /row 1/u);
 });
 
-test("review omits compact search hints with empty effective bindings", () => {
+test("review keeps local activation and omits unavailable active-search hints", () => {
 	const hiddenSearchKeybindings: ReviewKeybindings = {
-		matches: (data, binding) => data === "s" && binding === "tui.altScreen.search",
+		matches: () => false,
 		getKeys: () => [],
 	};
 	const harness = reviewComponentHarness(
@@ -937,8 +956,8 @@ test("review omits compact search hints with empty effective bindings", () => {
 		undefined,
 		hiddenSearchKeybindings,
 	);
-	assert.doesNotMatch(plainRender(harness.component, 40), /\bsearch\b/u);
-	harness.component.handleInput("s");
+	assert.match(plainRender(harness.component, 100), /\/ search/u);
+	harness.component.handleInput("/");
 	const active = plainRender(harness.component, 40);
 	assert.doesNotMatch(active, /close search|\bnext\b/u);
 	assert.match(active, /ctrl\+c close/u);
@@ -948,7 +967,7 @@ test("search-disabled review keeps its prior component and disposal behavior", (
 	const harness = reviewComponentHarness(reviewScreen);
 	assert.equal("focused" in harness.component, false);
 	harness.component.render(30);
-	harness.component.handleInput("s");
+	harness.component.handleInput("/");
 	assert.doesNotMatch(plainRender(harness.component, 30), /Find:/u);
 	harness.component.dispose?.();
 	harness.component.handleInput("q");

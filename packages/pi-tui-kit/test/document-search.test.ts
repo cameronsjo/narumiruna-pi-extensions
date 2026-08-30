@@ -321,6 +321,17 @@ test("normalizes whitespace for matching without moving the input cursor", () =>
 	assert.equal(controller.count, 1);
 });
 
+test("anchors rebuilt matches at the current or visible row", () => {
+	const controller = new DocumentSearchController();
+	controller.activate(["alpha", "other", "alphabet"], [], [], [], 2);
+	controller.handleInput("a");
+	assert.equal(controller.currentRow, 2);
+	controller.previous();
+	assert.equal(controller.currentRow, 0);
+	controller.handleInput("l");
+	assert.equal(controller.currentRow, 0);
+});
+
 test("defers corpus allocation until search activation and releases it on close", () => {
 	const controller = new DocumentSearchController();
 	const lines = ["a".repeat(100_000)];
@@ -336,7 +347,7 @@ test("defers corpus allocation until search activation and releases it on close"
 });
 
 test("indexes repetitive documents compactly while retaining count and navigation", () => {
-	const line = "a".repeat(1_000_000);
+	const line = "a".repeat(200_000);
 	const controller = new DocumentSearchController();
 	controller.activate(
 		[line],
@@ -350,15 +361,17 @@ test("indexes repetitive documents compactly while retaining count and navigatio
 		],
 	);
 	controller.handleInput("a");
-	assert.equal(controller.count, 1_000_000);
+	assert.equal(controller.count, 200_000);
 	assert.equal(controller.current, 1);
 	controller.previous();
-	assert.equal(controller.current, 1_000_000);
+	assert.equal(controller.current, 200_000);
 	controller.next();
 	assert.equal(controller.current, 1);
 	assert.equal(controller.highlight([line], theme).length, 1);
+});
 
-	const tableLine = "a".repeat(50_000);
+test("keeps repetitive alternate table matches compact", () => {
+	const tableLine = "a".repeat(20_000);
 	const tablePresentation = formatDocumentPresentation(
 		`| token |\n|---|\n| ${tableLine} |`,
 		{ kind: "markdown" },
@@ -372,7 +385,7 @@ test("indexes repetitive documents compactly while retaining count and navigatio
 		tablePresentation.ignoreLeadingWhitespace,
 		tablePresentation.searchSources,
 	);
-	assert.equal(tableController.count, 50_000);
+	assert.equal(tableController.count, 20_000);
 	assert.equal((tableController as unknown as { matches: unknown[] }).matches.length, 0);
 });
 

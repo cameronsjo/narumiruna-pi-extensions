@@ -19,7 +19,7 @@ import {
 	RPC_DOCUMENT_LINE_WIDTH,
 	RPC_DOCUMENT_PAGE_SIZE,
 } from "./document-formatting.js";
-import { DocumentSearchController } from "./document-search.js";
+import { DOCUMENT_SEARCH_ACTIVATE_KEY, DocumentSearchController } from "./document-search.js";
 import {
 	componentRows,
 	fitCompactHintSegments,
@@ -166,9 +166,7 @@ export function createReviewComponent<ScreenId extends string, ActionId extends 
 						moveTo(scrollOffset - lastViewportSize);
 					} else if (options.keybindings.matches(outsidePaste, "tui.select.pageDown")) {
 						moveTo(scrollOffset + lastViewportSize);
-					} else if (matchesKey(outsidePaste, Key.home)) moveTo(0);
-					else if (matchesKey(outsidePaste, Key.end)) moveTo(lastMaximumScroll);
-					else {
+					} else {
 						if (search.handleInput(outsidePaste)) moveToMatch(search.currentRow);
 						options.tui.requestRender();
 					}
@@ -195,12 +193,13 @@ export function createReviewComponent<ScreenId extends string, ActionId extends 
 			else if (matchesKey(data, Key.end)) moveTo(lastMaximumScroll);
 			else if (options.screen.confirm && options.keybindings.matches(data, "tui.select.confirm")) {
 				options.onEvent({ kind: "activate", itemId: options.screen.confirm.id });
-			} else if (search && options.keybindings.matches(data, "tui.altScreen.search")) {
+			} else if (search && data === DOCUMENT_SEARCH_ACTIVATE_KEY) {
 				search.activate(
 					lastLines,
 					lastSoftWrapAfter,
 					lastIgnoreLeadingWhitespace,
 					lastSearchSources,
+					scrollOffset,
 				);
 				options.tui.requestRender();
 			}
@@ -441,7 +440,7 @@ function reviewHint(
 		].join(" · ");
 	}
 	const base = menuHint(keybindings, destination, confirmAction);
-	const search = searchEnabled ? reviewBindingText(keybindings, "tui.altScreen.search") : "";
+	const search = searchEnabled ? DOCUMENT_SEARCH_ACTIVATE_KEY : "";
 	return [base, ...(search ? [`${search} search`] : [])].filter(Boolean).join(" · ");
 }
 
@@ -469,7 +468,7 @@ function compactReviewHint(
 	const cancel = reviewBindingText(keybindings, "tui.select.cancel", "ctrl+c");
 	const up = reviewBindingText(keybindings, "tui.select.up");
 	const down = reviewBindingText(keybindings, "tui.select.down");
-	const search = searchEnabled ? reviewBindingText(keybindings, "tui.altScreen.search") : "";
+	const search = searchEnabled ? DOCUMENT_SEARCH_ACTIVATE_KEY : "";
 	return fitCompactHintSegments(
 		[
 			...(cancel ? [`${cancel} ${destination}`] : []),

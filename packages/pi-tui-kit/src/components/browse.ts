@@ -19,7 +19,7 @@ import {
 	RPC_DOCUMENT_LINE_WIDTH,
 	RPC_DOCUMENT_PAGE_SIZE,
 } from "./document-formatting.js";
-import { DocumentSearchController } from "./document-search.js";
+import { DOCUMENT_SEARCH_ACTIVATE_KEY, DocumentSearchController } from "./document-search.js";
 import {
 	componentRows,
 	handleSearchInput,
@@ -292,9 +292,6 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 							0,
 							detailMaximumScroll,
 						);
-					} else if (matchesKey(outsidePaste, Key.home)) detailScrollOffset = 0;
-					else if (matchesKey(outsidePaste, Key.end)) {
-						detailScrollOffset = detailMaximumScroll;
 					} else if (detailSearch.handleInput(outsidePaste)) {
 						moveToDetailMatch(detailSearch.currentRow);
 					}
@@ -336,12 +333,13 @@ export function createBrowseComponent<ScreenId extends string, ActionId extends 
 					);
 				} else if (matchesKey(data, Key.home)) detailScrollOffset = 0;
 				else if (matchesKey(data, Key.end)) detailScrollOffset = detailMaximumScroll;
-				else if (detailSearch && options.keybindings.matches(data, "tui.altScreen.search")) {
+				else if (detailSearch && data === DOCUMENT_SEARCH_ACTIVATE_KEY) {
 					detailSearch.activate(
 						lastDetailLines,
 						lastDetailSoftWrapAfter,
 						lastDetailIgnoreLeadingWhitespace,
 						lastDetailSearchSources,
+						detailScrollOffset,
 					);
 				}
 			} else if (options.keybindings.matches(data, "tui.select.up")) move(-1);
@@ -623,9 +621,7 @@ function detailHint(keybindings: MenuKeybindings, searchEnabled: boolean, search
 			: [
 					{ bindings: ["tui.select.up", "tui.select.down"], label: "scroll" },
 					{ bindings: ["tui.select.pageUp", "tui.select.pageDown"], label: "page" },
-					...(searchEnabled
-						? [{ bindings: ["tui.altScreen.search"] as const, label: "search" }]
-						: []),
+					...(searchEnabled ? [{ keys: [DOCUMENT_SEARCH_ACTIVATE_KEY], label: "search" }] : []),
 					{
 						bindings: ["tui.select.cancel"],
 						excludeKeys: ["ctrl+c"],

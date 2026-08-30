@@ -16,6 +16,7 @@ const PASTE_END = "\u001b[201~";
 const MAX_HIGHLIGHTED_MATCHES = 1_000;
 const MAX_SEARCH_QUERY_LENGTH = 4_096;
 const MAX_PASTE_BUFFER_LENGTH = MAX_SEARCH_QUERY_LENGTH * 16;
+export const DOCUMENT_SEARCH_ACTIVATE_KEY = "/";
 
 type SearchTheme = Pick<Theme, "bold" | "fg"> &
 	Partial<Pick<Theme, "bg" | "inverse" | "underline">>;
@@ -143,6 +144,7 @@ export class DocumentSearchController implements Focusable {
 	private currentIndex = 0;
 	private pasting = false;
 	private pasteBuffer = "";
+	private anchorRow = 0;
 
 	get focused() {
 		return this.parentFocused;
@@ -170,8 +172,10 @@ export class DocumentSearchController implements Focusable {
 		softWrapAfter: readonly boolean[] = [],
 		ignoreLeadingWhitespace: readonly boolean[] = [],
 		searchSources: readonly DocumentSearchSource[] = [],
+		anchorRow = 0,
 	) {
 		this.active = true;
+		this.anchorRow = Math.max(0, anchorRow);
 		this.updateLines(lines, softWrapAfter, ignoreLeadingWhitespace, searchSources);
 		this.ensureCorpus();
 		this.syncFocus();
@@ -182,6 +186,7 @@ export class DocumentSearchController implements Focusable {
 		this.input.setValue("");
 		this.releaseCorpus();
 		this.currentIndex = 0;
+		this.anchorRow = 0;
 		this.pasting = false;
 		this.pasteBuffer = "";
 		this.syncFocus();
@@ -205,6 +210,7 @@ export class DocumentSearchController implements Focusable {
 		this.softWrapAfter = [...softWrapAfter];
 		this.ignoreLeadingWhitespace = [...ignoreLeadingWhitespace];
 		this.searchSources = searchSources.map((source) => source.map((segment) => ({ ...segment })));
+		this.anchorRow = this.currentRow ?? this.anchorRow;
 		this.releaseCorpus();
 		if (this.active) this.ensureCorpus();
 		return true;
@@ -259,6 +265,7 @@ export class DocumentSearchController implements Focusable {
 
 	next() {
 		if (this.count > 0) this.currentIndex = (this.currentIndex + 1) % this.count;
+		this.anchorRow = this.currentRow ?? this.anchorRow;
 		return this.currentRow;
 	}
 
@@ -266,6 +273,7 @@ export class DocumentSearchController implements Focusable {
 		if (this.count > 0) {
 			this.currentIndex = (this.currentIndex - 1 + this.count) % this.count;
 		}
+		this.anchorRow = this.currentRow ?? this.anchorRow;
 		return this.currentRow;
 	}
 
@@ -333,6 +341,7 @@ export class DocumentSearchController implements Focusable {
 			this.ensureCorpus();
 			return;
 		}
+		this.anchorRow = this.currentRow ?? this.anchorRow;
 		const query = normalizeQuery(this.input.getValue());
 		this.compactMatchOffsets = undefined;
 		this.matches = [];
@@ -351,7 +360,20 @@ export class DocumentSearchController implements Focusable {
 				(match, index) => this.primaryInsertionIndex(match) + index,
 			);
 		}
-		this.currentIndex = Math.min(this.currentIndex, Math.max(0, this.count - 1));
+		this.currentIndex = this.matchIndexAtOrAfter(this.anchorRow);
+		this.anchorRow = this.currentRow ?? this.anchorRow;
+	}
+
+	private matchIndexAtOrAfter(row: number) {
+		let low = 0;
+		let high = this.count;
+		while (low < high) {
+			const middle = Math.floor((low + high) / 2);
+			const middleRow = this.matchAt(middle)?.ranges[0]?.row ?? Number.POSITIVE_INFINITY;
+			if (middleRow < row) low = middle + 1;
+			else high = middle;
+		}
+		return low < this.count ? low : 0;
 	}
 
 	private primaryMatch(index: number) {
