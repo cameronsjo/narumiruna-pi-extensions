@@ -17,6 +17,7 @@ import { normalizeKimiCodingUsagePayload } from "./providers/kimi-coding.js";
 import { normalizeMoonshotBalancePayload } from "./providers/moonshot.js";
 import { normalizeOpenCodeZenPayload } from "./providers/opencode-zen.js";
 import { normalizeOpenRouterKeyPayload } from "./providers/openrouter.js";
+import { normalizeVercelAIGatewayCreditsPayload } from "./providers/vercel-ai-gateway.js";
 import { normalizeXaiBillingPayload } from "./providers/xai.js";
 import { normalizeZaiQuotaPayload } from "./providers/zai.js";
 import type {
@@ -34,6 +35,7 @@ import type {
 	UsageProviderAdapter,
 	UsageQuerySettings,
 	UsageReport,
+	VercelAIGatewayCreditsPayload,
 	XaiBillingPayload,
 	XaiUserPayload,
 	ZaiQuotaPayload,
@@ -46,6 +48,7 @@ const FIREWORKS_SPEND_WINDOW_DAYS = 30;
 const FIREWORKS_MAX_ACCOUNT_PAGES = 5;
 const GITHUB_COPILOT_USAGE_URL = "https://api.github.com/copilot_internal/user";
 const OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key";
+const VERCEL_AI_GATEWAY_CREDITS_URL = "https://ai-gateway.vercel.sh/v1/credits";
 const OPENCODE_GO_USAGE_URL = "https://opencode.ai/zen/go/v1/usage";
 const KIMI_CODING_USAGE_URL = "https://api.kimi.com/coding/v1/usages";
 const MOONSHOT_BALANCE_URLS = Object.freeze({
@@ -137,6 +140,27 @@ export const SUPPORTED_ADAPTERS: readonly UsageProviderAdapter[] = [
 				"OpenRouter key endpoint",
 			);
 			return normalizeOpenRouterKeyPayload(payload as OpenRouterKeyPayload, Date.now());
+		},
+	},
+	{
+		id: "vercel-ai-gateway",
+		displayName: "Vercel AI Gateway",
+		semantics: { kind: "api-key", label: "AI Gateway credits and lifetime spend" },
+		async query(auth, signal, timeoutMs, guard) {
+			if (!guard)
+				throw new Error("Vercel AI Gateway usage requires request-boundary revalidation.");
+			const startedAt = Date.now();
+			await guard();
+			const payload = (await fetchProviderJson(
+				VERCEL_AI_GATEWAY_CREDITS_URL,
+				auth,
+				signal,
+				remainingTimeout(timeoutMs, startedAt, "fetching Vercel AI Gateway credits"),
+				"Vercel AI Gateway credits endpoint",
+				{ redirect: "error" },
+			)) as VercelAIGatewayCreditsPayload;
+			await guard();
+			return normalizeVercelAIGatewayCreditsPayload(payload, Date.now());
 		},
 	},
 	{
@@ -798,6 +822,7 @@ function hasOfficialUrlOrigin(value: string, providerId: string): boolean {
 		if (providerId === "deepseek") return url.origin === "https://api.deepseek.com";
 		if (providerId === "fireworks") return url.origin === FIREWORKS_BILLING_SUMMARY_ORIGIN;
 		if (providerId === "openrouter") return url.origin === "https://openrouter.ai";
+		if (providerId === "vercel-ai-gateway") return url.origin === "https://ai-gateway.vercel.sh";
 		if (providerId === "opencode-go") return url.origin === "https://opencode.ai";
 		if (providerId === "kimi-coding") return url.origin === "https://api.kimi.com";
 		if (providerId === "moonshotai") return url.origin === "https://api.moonshot.ai";

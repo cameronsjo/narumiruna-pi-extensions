@@ -126,6 +126,11 @@ export type MoonshotBalancePayload = {
 	status?: unknown;
 };
 
+export type VercelAIGatewayCreditsPayload = {
+	balance?: unknown;
+	total_used?: unknown;
+};
+
 export type OpenCodeZenPayload = {
 	usage?: unknown;
 };

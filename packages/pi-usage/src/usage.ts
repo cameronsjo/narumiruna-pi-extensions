@@ -286,6 +286,7 @@ export default function usageExtension(
 			"fireworks",
 			"moonshotai",
 			"moonshotai-cn",
+			"vercel-ai-gateway",
 			"xai",
 		].includes(adapter.id);
 		const requestContextChanged = () =>
