@@ -18,6 +18,9 @@ type StampAction =
 	| "set-date-context"
 	| "set-response-timing"
 	| "set-assistant-metadata"
+	| "set-exact-timeline"
+	| "set-thinking-level"
+	| "set-compact-abnormal-outcome"
 	| "set-tool-stamps"
 	| "open-locale"
 	| "choose-invariant-locale"
@@ -112,12 +115,37 @@ export function createStampMenu(
 						action: "set-response-timing",
 					},
 					{
+						id: "showExactTimeline",
+						label: "Exact timeline",
+						description: "Show exact UTC and Unix times when transcript details are expanded.",
+						currentValue: visibilityLabel(state.settings.showExactTimeline),
+						values: ["Show", "Hide"],
+						action: "set-exact-timeline",
+					},
+					{
 						id: "assistantMetadata",
 						label: "Assistant metadata",
 						description: "Show no provenance, a compact summary, or expanded reported fields.",
 						currentValue: assistantMetadataLabel(state.settings.assistantMetadata),
 						values: ["Off", "Compact", "Expanded"],
 						action: "set-assistant-metadata",
+					},
+					{
+						id: "showThinkingLevel",
+						label: "Thinking level",
+						description:
+							"Capture and show Pi's effective level when assistant metadata is enabled.",
+						currentValue: visibilityLabel(state.settings.showThinkingLevel),
+						values: ["Show", "Hide"],
+						action: "set-thinking-level",
+					},
+					{
+						id: "showCompactAbnormalOutcome",
+						label: "Compact abnormal outcome",
+						description: "Show length, error, and aborted stop reasons in compact metadata.",
+						currentValue: visibilityLabel(state.settings.showCompactAbnormalOutcome),
+						values: ["Show", "Hide"],
+						action: "set-compact-abnormal-outcome",
 					},
 					{
 						id: "toolStamps",
@@ -227,10 +255,28 @@ export function createStampMenu(
 						"responseTiming",
 					),
 					settingStatus(
+						"Exact timeline",
+						visibilityLabel(state.settings.showExactTimeline),
+						state,
+						"showExactTimeline",
+					),
+					settingStatus(
 						"Assistant metadata",
 						assistantMetadataLabel(state.settings.assistantMetadata),
 						state,
 						"assistantMetadata",
+					),
+					settingStatus(
+						"Thinking level",
+						visibilityLabel(state.settings.showThinkingLevel),
+						state,
+						"showThinkingLevel",
+					),
+					settingStatus(
+						"Compact abnormal outcome",
+						visibilityLabel(state.settings.showCompactAbnormalOutcome),
+						state,
+						"showCompactAbnormalOutcome",
 					),
 					settingStatus(
 						"Tool stamps",
@@ -250,9 +296,9 @@ export function createStampMenu(
 					"The clock shows message creation; response timing ends at assistant message completion.",
 					"First content is Pi's first non-empty text, thinking, or tool-call stream update.",
 					"First n/a means no meaningful update was observed; no other boundary is substituted.",
-					"Assistant metadata and Pi's effective Thinking level are captured only when enabled.",
-					"Compact metadata labels length, error, and aborted outcomes; normal stops stay quiet.",
-					"Expand details for exact UTC/Unix times, response IDs, and diagnostic type/name/code.",
+					"Thinking level capture requires both assistant metadata and its own setting to be enabled.",
+					"Compact abnormal labels require their setting; normal stops always stay quiet there.",
+					"Expanded exact UTC/Unix rows require Exact timeline; debug metadata remains separate.",
 					"Tool stamps pair start/end by ID, exclude tool data, and appear after the complete block.",
 					"Assistant timing excludes tool execution and is unavailable on legacy stamp entries.",
 					"Day changes compare the previous recorded message stamp in the selected time zone.",
@@ -293,6 +339,14 @@ export function createStampMenu(
 					value === "Detailed" ? "detailed" : value === "Duration" ? "duration" : "off";
 				return savePatch(runtime, ctx, signal, { responseTiming }, `Response timing: ${value}.`);
 			},
+			"set-exact-timeline": ({ ctx, value, signal }) =>
+				savePatch(
+					runtime,
+					ctx,
+					signal,
+					{ showExactTimeline: value === "Show" },
+					`Exact timeline: ${value}.`,
+				),
 			"set-assistant-metadata": ({ ctx, value, signal }) => {
 				const assistantMetadata: StampAssistantMetadataMode =
 					value === "Expanded" ? "expanded" : value === "Compact" ? "compact" : "off";
@@ -304,6 +358,22 @@ export function createStampMenu(
 					`Assistant metadata: ${value}.`,
 				);
 			},
+			"set-thinking-level": ({ ctx, value, signal }) =>
+				savePatch(
+					runtime,
+					ctx,
+					signal,
+					{ showThinkingLevel: value === "Show" },
+					`Thinking level: ${value}.`,
+				),
+			"set-compact-abnormal-outcome": ({ ctx, value, signal }) =>
+				savePatch(
+					runtime,
+					ctx,
+					signal,
+					{ showCompactAbnormalOutcome: value === "Show" },
+					`Compact abnormal outcome: ${value}.`,
+				),
 			"set-tool-stamps": ({ ctx, value, signal }) =>
 				savePatch(runtime, ctx, signal, { toolStamps: value === "Show" }, `Tool stamps: ${value}.`),
 			"open-locale": async () => {
@@ -432,7 +502,10 @@ function formatCompactStatus(state: StampSettingsState): string {
 		localeLabel(state.settings.locale),
 		timeZoneLabel(state.settings.timeZone),
 		`Timing ${responseTimingLabel(state.settings.responseTiming).toLowerCase()}`,
+		`Timeline ${state.settings.showExactTimeline ? "shown" : "hidden"}`,
 		`Metadata ${assistantMetadataLabel(state.settings.assistantMetadata).toLowerCase()}`,
+		`Thinking ${state.settings.showThinkingLevel ? "shown" : "hidden"}`,
+		`Abnormal ${state.settings.showCompactAbnormalOutcome ? "shown" : "hidden"}`,
 		`Tool stamps ${state.settings.toolStamps ? "shown" : "hidden"}`,
 	].join(" · ");
 }
@@ -469,8 +542,12 @@ function assistantMetadataLabel(value: StampAssistantMetadataMode): string {
 	return "Off";
 }
 
-function toolStampsLabel(value: boolean): string {
+function visibilityLabel(value: boolean): string {
 	return value ? "Show" : "Hide";
+}
+
+function toolStampsLabel(value: boolean): string {
+	return visibilityLabel(value);
 }
 
 function safeTerminalText(value: string): string {

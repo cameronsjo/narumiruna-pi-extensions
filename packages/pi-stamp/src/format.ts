@@ -23,6 +23,9 @@ export interface StampSettings {
 	timeZone: StampTimeZone;
 	responseTiming: StampResponseTimingMode;
 	assistantMetadata: StampAssistantMetadataMode;
+	showExactTimeline: boolean;
+	showThinkingLevel: boolean;
+	showCompactAbnormalOutcome: boolean;
 	toolStamps: boolean;
 }
 
@@ -34,6 +37,9 @@ export const DEFAULT_STAMP_SETTINGS: Readonly<StampSettings> = Object.freeze({
 	timeZone: "local",
 	responseTiming: "off",
 	assistantMetadata: "off",
+	showExactTimeline: true,
+	showThinkingLevel: true,
+	showCompactAbnormalOutcome: true,
 	toolStamps: false,
 });
 

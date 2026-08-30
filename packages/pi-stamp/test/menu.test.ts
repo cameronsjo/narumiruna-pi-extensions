@@ -35,12 +35,18 @@ test("stamp menu exposes Main, Settings, Status, Help, and read-only invalid sta
 			["locale", "Invariant"],
 			["timeZone", "Local"],
 			["responseTiming", "Off"],
+			["showExactTimeline", "Show"],
 			["assistantMetadata", "Off"],
+			["showThinkingLevel", "Show"],
+			["showCompactAbnormalOutcome", "Show"],
 			["toolStamps", "Hide"],
 		],
 	);
 	assert.match((main.lines ?? []).join("\n"), /Timing off/u);
+	assert.match((main.lines ?? []).join("\n"), /Timeline shown/u);
 	assert.match((main.lines ?? []).join("\n"), /Metadata off/u);
+	assert.match((main.lines ?? []).join("\n"), /Thinking shown/u);
+	assert.match((main.lines ?? []).join("\n"), /Abnormal shown/u);
 	assert.match((main.lines ?? []).join("\n"), /Tool stamps hidden/u);
 
 	const status = resolveMenuScreen(menu, "status", state);
@@ -48,7 +54,10 @@ test("stamp menu exposes Main, Settings, Status, Help, and read-only invalid sta
 	if (status.kind !== "detail") assert.fail("Expected detail screen");
 	assert.match(status.lines.join("\n"), /24-hour.*Built-in/u);
 	assert.match(status.lines.join("\n"), /Response timing: Off · Built-in/u);
+	assert.match(status.lines.join("\n"), /Exact timeline: Show · Built-in/u);
 	assert.match(status.lines.join("\n"), /Assistant metadata: Off · Built-in/u);
+	assert.match(status.lines.join("\n"), /Thinking level: Show · Built-in/u);
+	assert.match(status.lines.join("\n"), /Compact abnormal outcome: Show · Built-in/u);
 	assert.match(status.lines.join("\n"), /Tool stamps: Hide · Built-in/u);
 	assert.match(status.lines.join("\n"), /\/tmp\/pi-stamp\.json/u);
 
@@ -119,12 +128,39 @@ test("bounded setting actions persist exact patches", async () => {
 		itemId: "responseTiming",
 		value: "Off",
 	});
+	for (const value of ["Show", "Hide"] as const) {
+		await menu.actions["set-exact-timeline"]({
+			ctx,
+			state: runtime.get(),
+			signal: new AbortController().signal,
+			itemId: "showExactTimeline",
+			value,
+		});
+	}
 	for (const value of ["Compact", "Expanded", "Off"] as const) {
 		await menu.actions["set-assistant-metadata"]({
 			ctx,
 			state: runtime.get(),
 			signal: new AbortController().signal,
 			itemId: "assistantMetadata",
+			value,
+		});
+	}
+	for (const value of ["Show", "Hide"] as const) {
+		await menu.actions["set-thinking-level"]({
+			ctx,
+			state: runtime.get(),
+			signal: new AbortController().signal,
+			itemId: "showThinkingLevel",
+			value,
+		});
+	}
+	for (const value of ["Show", "Hide"] as const) {
+		await menu.actions["set-compact-abnormal-outcome"]({
+			ctx,
+			state: runtime.get(),
+			signal: new AbortController().signal,
+			itemId: "showCompactAbnormalOutcome",
 			value,
 		});
 	}
@@ -144,9 +180,15 @@ test("bounded setting actions persist exact patches", async () => {
 		{ responseTiming: "duration" },
 		{ responseTiming: "detailed" },
 		{ responseTiming: "off" },
+		{ showExactTimeline: true },
+		{ showExactTimeline: false },
 		{ assistantMetadata: "compact" },
 		{ assistantMetadata: "expanded" },
 		{ assistantMetadata: "off" },
+		{ showThinkingLevel: true },
+		{ showThinkingLevel: false },
+		{ showCompactAbnormalOutcome: true },
+		{ showCompactAbnormalOutcome: false },
 		{ toolStamps: true },
 		{ toolStamps: false },
 	]);
@@ -247,7 +289,7 @@ test("RPC custom input retries a rejected value before saving", async () => {
 		{
 			kind: "select",
 			title:
-				"Stamp\n24-hour · seconds · Day changes · Invariant · Local · Timing off · Metadata off · Tool stamps hidden",
+				"Stamp\n24-hour · seconds · Day changes · Invariant · Local · Timing off · Timeline shown · Metadata off · Thinking shown · Abnormal shown · Tool stamps hidden",
 			options: ["Settings", "Status", "Help", "Close"],
 			response: "Settings",
 		},
@@ -261,7 +303,10 @@ test("RPC custom input retries a rejected value before saving", async () => {
 				"Locale (Invariant)",
 				"Time zone (Local)",
 				"Response timing (Off)",
+				"Exact timeline (Show)",
 				"Assistant metadata (Off)",
+				"Thinking level (Show)",
+				"Compact abnormal outcome (Show)",
 				"Tool stamps (Hide)",
 				"Back",
 			],
@@ -295,7 +340,10 @@ test("RPC custom input retries a rejected value before saving", async () => {
 				"Locale (en-US)",
 				"Time zone (Local)",
 				"Response timing (Off)",
+				"Exact timeline (Show)",
 				"Assistant metadata (Off)",
+				"Thinking level (Show)",
+				"Compact abnormal outcome (Show)",
 				"Tool stamps (Hide)",
 				"Back",
 			],
@@ -304,7 +352,7 @@ test("RPC custom input retries a rejected value before saving", async () => {
 		{
 			kind: "select",
 			title:
-				"Stamp\n24-hour · seconds · Day changes · en-US · Local · Timing off · Metadata off · Tool stamps hidden",
+				"Stamp\n24-hour · seconds · Day changes · en-US · Local · Timing off · Timeline shown · Metadata off · Thinking shown · Abnormal shown · Tool stamps hidden",
 			options: ["Settings", "Status", "Help", "Close"],
 			response: "Close",
 		},
@@ -389,6 +437,9 @@ function memorySettingsRuntime(
 			timeZone: "built-in",
 			responseTiming: "built-in",
 			assistantMetadata: "built-in",
+			showExactTimeline: "built-in",
+			showThinkingLevel: "built-in",
+			showCompactAbnormalOutcome: "built-in",
 			toolStamps: "built-in",
 		},
 		canSave: true,

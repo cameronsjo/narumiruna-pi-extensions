@@ -79,6 +79,9 @@ const SETTING_FIELDS = [
 	"timeZone",
 	"responseTiming",
 	"assistantMetadata",
+	"showExactTimeline",
+	"showThinkingLevel",
+	"showCompactAbnormalOutcome",
 	"toolStamps",
 ] as const satisfies readonly StampSettingsField[];
 const SETTING_FIELD_SET = new Set<string>(SETTING_FIELDS);
@@ -142,6 +145,21 @@ export function normalizeStampSettingsDocument(
 		}
 		settings.assistantMetadata = value.assistantMetadata as StampSettings["assistantMetadata"];
 		sources.assistantMetadata = "user";
+	}
+	if (Object.hasOwn(value, "showExactTimeline")) {
+		if (typeof value.showExactTimeline !== "boolean") return undefined;
+		settings.showExactTimeline = value.showExactTimeline;
+		sources.showExactTimeline = "user";
+	}
+	if (Object.hasOwn(value, "showThinkingLevel")) {
+		if (typeof value.showThinkingLevel !== "boolean") return undefined;
+		settings.showThinkingLevel = value.showThinkingLevel;
+		sources.showThinkingLevel = "user";
+	}
+	if (Object.hasOwn(value, "showCompactAbnormalOutcome")) {
+		if (typeof value.showCompactAbnormalOutcome !== "boolean") return undefined;
+		settings.showCompactAbnormalOutcome = value.showCompactAbnormalOutcome;
+		sources.showCompactAbnormalOutcome = "user";
 	}
 	if (Object.hasOwn(value, "toolStamps")) {
 		if (typeof value.toolStamps !== "boolean") return undefined;
@@ -383,6 +401,9 @@ function builtInSources(): Record<StampSettingsField, StampSettingsSource> {
 		timeZone: "built-in",
 		responseTiming: "built-in",
 		assistantMetadata: "built-in",
+		showExactTimeline: "built-in",
+		showThinkingLevel: "built-in",
+		showCompactAbnormalOutcome: "built-in",
 		toolStamps: "built-in",
 	};
 }

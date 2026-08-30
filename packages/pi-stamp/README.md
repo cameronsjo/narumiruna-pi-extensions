@@ -57,7 +57,7 @@ Run `/stamp` to open the presentation menu:
 
 ```text
 Stamp
-24-hour · seconds · Day changes · Invariant · Local · Timing off · Metadata off · Tool stamps hidden
+24-hour · seconds · Day changes · Invariant · Local · Timing off · Timeline shown · Metadata off · Thinking shown · Abnormal shown · Tool stamps hidden
 
 Settings
 Status
@@ -85,7 +85,10 @@ The `/stamp` Settings screen provides these controls:
 | `locale` | `"invariant"`, `"system"`, or one BCP 47 tag | `"invariant"` | Controls localized date/time presentation. |
 | `timeZone` | `"local"` or one supported IANA zone | `"local"` | Controls time and day-boundary interpretation; `UTC` is accepted. |
 | `responseTiming` | `"off"`, `"duration"`, `"detailed"` | `"off"` | Keeps timestamps minimal, adds total assistant duration, or labels first-content and total timing. |
+| `showExactTimeline` | boolean | `true` | Shows exact UTC and Unix observation times when transcript details are expanded. |
 | `assistantMetadata` | `"off"`, `"compact"`, `"expanded"` | `"off"` | Captures and shows no assistant metadata, a compact model/Thinking-level/total/cost summary, or all supported provenance and usage fields. |
+| `showThinkingLevel` | boolean | `true` | Captures and shows Pi's effective turn Thinking level when assistant metadata is enabled. |
+| `showCompactAbnormalOutcome` | boolean | `true` | Shows `length`, `error`, and `aborted` stop reasons in compact assistant metadata. |
 | `toolStamps` | boolean | `false` | Records and shows duration plus success/error for newly observed tools. |
 
 The compatibility defaults produce local `HH:mm:ss` for ordinary same-day messages.
@@ -100,7 +103,7 @@ The canonical user file is:
 
 Pi's configured agent directory replaces `~/.pi/agent` when applicable.
 The file is a partial JSON object.
-This example shows 12-hour Taipei time without seconds, compact assistant metadata, and tool stamps:
+This example shows 12-hour Taipei time without seconds, compact assistant metadata without Thinking or compact abnormal labels, an exact expanded timeline, and tool stamps:
 
 ```json
 {
@@ -108,7 +111,10 @@ This example shows 12-hour Taipei time without seconds, compact assistant metada
   "showSeconds": false,
   "timeZone": "Asia/Taipei",
   "responseTiming": "duration",
+  "showExactTimeline": true,
   "assistantMetadata": "compact",
+  "showThinkingLevel": false,
+  "showCompactAbnormalOutcome": false,
   "toolStamps": true
 }
 ```
@@ -160,7 +166,7 @@ It is not a provider-server timestamp or guaranteed time to first token.
 Use Pi's transcript expansion action (`app.tools.expand`, `Ctrl+O` by default) to show an exact timeline after each compatible stamp.
 Each available creation, first-content, completion, tool-start, or tool-completion observation appears as UTC ISO 8601 plus its original Unix millisecond value.
 Legacy entries show only boundaries that their persisted version retained.
-These rows are hidden in the collapsed transcript and require no new session data.
+These rows are hidden in the collapsed transcript, require no new session data, and can be disabled with `showExactTimeline`.
 
 Timing labels are local Pi lifecycle observations, not provider latency telemetry.
 They require no network request or refresh task.
@@ -169,7 +175,7 @@ Relative labels such as `3m ago` remain unavailable because they would require p
 ## 🧾 Assistant provenance and usage
 
 Assistant metadata is captured when the stamp is finalized and only when `assistantMetadata` is `"compact"` or `"expanded"`.
-When Pi exposes an effective Thinking level for that turn, the stamp records it as Pi provenance rather than provider-reported reasoning behavior.
+When `showThinkingLevel` and assistant metadata are enabled and Pi exposes an effective Thinking level for that turn, the stamp records it as Pi provenance rather than provider-reported reasoning behavior.
 A compact stamp can look like:
 
 ```text
@@ -183,7 +189,9 @@ When Pi reports a response model different from the requested model, compact mod
 requested-alias → provider-response-model · 842 tok
 ```
 
-Compact mode adds `stop length`, `stop error`, or `stop aborted` for abnormal outcomes while keeping normal `stop` and `toolUse` outcomes quiet.
+With `showCompactAbnormalOutcome: true`, compact mode adds `stop length`, `stop error`, or `stop aborted` for abnormal outcomes while keeping normal `stop` and `toolUse` outcomes quiet.
+This compact control does not remove the complete stop reason from expanded assistant metadata.
+Disabling `showThinkingLevel` prevents new Thinking-level capture and hides that field on compatible persisted stamps without rewriting them.
 Expanded mode adds labeled rows for API, provider, requested model, provider-reported response model, effective Pi Thinking level, stop reason, and each individually reported input/output/reasoning/cache-read/cache-write/total token or estimated-cost field.
 Missing values stay absent; `pi-stamp` never derives a Thinking level, token total, response model, cost, or diagnostic message.
 
