@@ -516,6 +516,112 @@ test("restored todo boundaries survive reload and stay branch-local", async () =
 	assert.equal(await reloadedHarness.context(sibling, current.ctx), sibling);
 });
 
+test("preserves version 1 restored boundaries after updates, clears, and tree restoration", async () => {
+	const legacyItems = [{ text: "before schema migration", status: "in_progress" as const }];
+	const branch: SessionEntry[] = [
+		toolResultEntry({ version: 1, items: legacyItems }, "todo_widget", "initial", null),
+		{
+			type: "compaction",
+			id: "compaction",
+			parentId: "initial",
+			timestamp: new Date(0).toISOString(),
+			summary: "Earlier work was compacted.",
+			firstKeptEntryId: "kept",
+			tokensBefore: 100,
+		} as SessionEntry,
+	];
+	const summaries: ContextEvent["messages"] = [
+		{
+			role: "compactionSummary",
+			summary: "Earlier work was compacted.",
+			tokensBefore: 100,
+			timestamp: 0,
+		},
+	];
+	const firstHarness = createHarness();
+	const current = createContext({ branch });
+	await firstHarness.emit("session_start", current.ctx);
+	await firstHarness.context(summaries, current.ctx);
+	const persisted = firstHarness.entries[0];
+	assert.ok(persisted);
+	assert.equal(persisted.customType, TODO_RESTORED_BOUNDARY_ENTRY_TYPE);
+	assert.ok(
+		typeof persisted.data === "object" && persisted.data !== null && !Array.isArray(persisted.data),
+	);
+	const legacyContent = `[PI TODO STATUS v1]\nCurrent todo list as JSON data:\n${JSON.stringify(legacyItems)}`;
+	branch.push(
+		customEntry(
+			persisted.customType,
+			{ ...(persisted.data as Record<string, unknown>), content: legacyContent },
+			"boundary",
+			"compaction",
+		),
+	);
+
+	const updatedTodos: Todo[] = [{ step: "after schema migration", status: "completed" }];
+	const updateCall = todoToolCallMessage(updatedTodos);
+	const updateResult = todoToolResultMessage({
+		version: TODO_DETAILS_VERSION,
+		todos: updatedTodos,
+	});
+	branch.push(
+		{
+			type: "message",
+			id: "update-call",
+			parentId: "boundary",
+			timestamp: new Date(1).toISOString(),
+			message: updateCall,
+		} as SessionEntry,
+		{
+			type: "message",
+			id: "update-result",
+			parentId: "update-call",
+			timestamp: new Date(2).toISOString(),
+			message: updateResult,
+		} as SessionEntry,
+	);
+
+	const reloadedHarness = createHarness();
+	await reloadedHarness.emit("session_start", current.ctx);
+	const afterReload = await reloadedHarness.context(
+		[...summaries, updateCall, updateResult],
+		current.ctx,
+	);
+	assert.equal(
+		afterReload[1]?.role === "custom" ? afterReload[1].content : undefined,
+		legacyContent,
+	);
+	assert.equal(reloadedHarness.entries.length, 0, "reload must reuse the version 1 boundary");
+
+	const clearCall = todoToolCallMessage([]);
+	const clearResult = todoToolResultMessage({ version: TODO_DETAILS_VERSION, todos: [] });
+	branch.push(
+		{
+			type: "message",
+			id: "clear-call",
+			parentId: "update-result",
+			timestamp: new Date(3).toISOString(),
+			message: clearCall,
+		} as SessionEntry,
+		{
+			type: "message",
+			id: "clear-result",
+			parentId: "clear-call",
+			timestamp: new Date(4).toISOString(),
+			message: clearResult,
+		} as SessionEntry,
+	);
+	await reloadedHarness.emit("session_tree", current.ctx);
+	const afterTreeChange = await reloadedHarness.context(
+		[...summaries, updateCall, updateResult, clearCall, clearResult],
+		current.ctx,
+	);
+	assert.equal(
+		afterTreeChange[1]?.role === "custom" ? afterTreeChange[1].content : undefined,
+		legacyContent,
+	);
+});
+
 test("renders completed, current, and pending todos with themed semantic symbols", () => {
 	const { calls, theme } = identityTheme();
 	const lines = renderTodoWidget(
