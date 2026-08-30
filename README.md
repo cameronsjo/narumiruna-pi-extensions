@@ -86,6 +86,7 @@ The deprecated combined `pi-workflow` package has no atomic Plan-to-Goal replace
 | --- | --- | --- |
 | [`pi-chat`](./packages/pi-chat) | Join ephemeral peer-to-peer chat rooms that stay separate from Pi sessions, prompts, and model context. | `pi install npm:@narumitw/pi-chat` |
 | [`pi-fleet`](./packages/pi-fleet) | Start a separate Pi process in a terminal split and connect explicit local Pi sessions for bounded messages and one-turn requests. | `pi install npm:@narumitw/pi-fleet` |
+| [`pi-herdr`](./packages/pi-herdr) | Report Pi lifecycle state to Herdr and bundle safe Herdr terminal-orchestration guidance. | `pi install npm:@narumitw/pi-herdr` |
 
 ### Accounts and data
 

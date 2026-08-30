@@ -22,6 +22,7 @@
 			"./packages/pi-fleet/src/index.ts",
 			"./packages/pi-github-pr/src/index.ts",
 			"./packages/pi-goal/src/index.ts",
+			"./packages/pi-herdr/src/index.ts",
 			"./packages/pi-langfuse/src/index.ts",
 			"./packages/pi-lsp/src/index.ts",
 			"./packages/pi-plan-mode/src/index.ts",
@@ -39,7 +40,8 @@
 			"./packages/pi-worktree/src/index.ts"
 		],
 		"skills": [
-			"./packages/pi-cbmem/skills"
+			"./packages/pi-cbmem/skills",
+			"./packages/pi-herdr/skills"
 		]
 	},
 	"scripts": {
