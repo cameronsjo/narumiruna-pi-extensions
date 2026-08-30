@@ -34,6 +34,10 @@ export {
 export { formatProviderStates, formatUsageReport, formatUsageStatusline } from "./format.js";
 export { normalizeCodexBackendPayload } from "./providers/codex.js";
 export { normalizeDeepSeekBalancePayload } from "./providers/deepseek.js";
+export {
+	normalizeFireworksAccountsPayload,
+	normalizeFireworksBillingSummaryPayload,
+} from "./providers/fireworks.js";
 export { normalizeGitHubCopilotUsagePayload } from "./providers/github-copilot.js";
 export { normalizeKimiCodingUsagePayload } from "./providers/kimi-coding.js";
 export { normalizeOpenCodeZenPayload } from "./providers/opencode-zen.js";
@@ -64,6 +68,8 @@ export {
 } from "./settings.js";
 export type {
 	DeepSeekBalancePayload,
+	FireworksAccountsPayload,
+	FireworksBillingSummaryPayload,
 	KimiCodingUsagePayload,
 	ProviderUsageState,
 	ResolvedUsageAuth,
@@ -72,6 +78,7 @@ export type {
 	UsageMetric,
 	UsageModel,
 	UsageProviderAdapter,
+	UsageQuerySettings,
 	UsageReport,
 	UsageSemantics,
 	UsageSemanticsKind,

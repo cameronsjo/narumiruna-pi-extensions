@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { chmod, mkdir, open, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { isFireworksAccountId } from "./providers/fireworks.js";
 
 export const USAGE_SETTINGS_FILE = "pi-usage.json";
 export const MAX_USAGE_SETTINGS_BYTES = 64 * 1024;
@@ -10,6 +11,7 @@ export const MAX_USAGE_SETTINGS_BYTES = 64 * 1024;
 export interface UsageSettings {
 	codexFastMode: boolean;
 	codexStatusResetCountdown: boolean;
+	fireworksAccountId?: string;
 }
 
 export const DEFAULT_USAGE_SETTINGS: Readonly<UsageSettings> = Object.freeze({
@@ -60,6 +62,12 @@ export function normalizeUsageSettings(value: unknown): UsageSettings | undefine
 	) {
 		return undefined;
 	}
+	if (
+		Object.hasOwn(value, "fireworksAccountId") &&
+		!isFireworksAccountId(value.fireworksAccountId)
+	) {
+		return undefined;
+	}
 	return {
 		codexFastMode:
 			typeof value.codexFastMode === "boolean"
@@ -69,6 +77,9 @@ export function normalizeUsageSettings(value: unknown): UsageSettings | undefine
 			typeof value.codexStatusResetCountdown === "boolean"
 				? value.codexStatusResetCountdown
 				: DEFAULT_USAGE_SETTINGS.codexStatusResetCountdown,
+		...(isFireworksAccountId(value.fireworksAccountId)
+			? { fireworksAccountId: value.fireworksAccountId }
+			: {}),
 	};
 }
 
@@ -172,7 +183,11 @@ async function saveUsageSettingsPatch(
 	if (latest.kind === "invalid") {
 		throw new Error("Cannot overwrite an invalid pi-usage.json; repair it and reload first");
 	}
-	const document = { ...latest.document, ...patch };
+	const document = { ...latest.document };
+	for (const [key, value] of Object.entries(patch)) {
+		if (value === undefined) delete document[key];
+		else document[key] = value;
+	}
 	const settings = normalizeUsageSettings(document);
 	if (!settings) throw new Error("Refusing to save invalid pi-usage settings");
 	const directory = dirname(path);

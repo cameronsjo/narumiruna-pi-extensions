@@ -12,13 +12,18 @@ const VALUE_COLUMN = 29;
 export function formatUsageReport(report: UsageReport, displayState: UsageDisplayState): string {
 	const stateLabel = displayState === "current" ? "Current" : "Configured";
 	const title =
-		report.providerId === "deepseek" ? "DeepSeek API Balance" : `${report.providerName} Usage`;
+		report.providerId === "deepseek"
+			? "DeepSeek API Balance"
+			: report.providerId === "fireworks"
+				? "Fireworks API Spend"
+				: `${report.providerName} Usage`;
 	const lines = [`${title} · ${stateLabel}`];
 	if (report.accountLabel) lines.push(`Account: ${report.accountLabel}`);
 	lines.push(`Semantics: ${report.semantics.label}`, "");
 
 	if (report.providerId === "openai-codex") formatCodexReport(lines, report);
 	else if (report.providerId === "deepseek") formatDeepSeekReport(lines, report);
+	else if (report.providerId === "fireworks") formatFireworksReport(lines, report);
 	else if (report.providerId === "github-copilot") formatGitHubCopilotReport(lines, report);
 	else if (report.providerId === "openrouter") formatOpenRouterReport(lines, report);
 	else if (report.providerId === "opencode-go") formatOpenCodeZenReport(lines, report);
@@ -44,6 +49,7 @@ export function formatUsageStatusline(
 		return formatCodexStatusline(report, model, now, showCodexResetCountdown);
 	}
 	if (report.providerId === "deepseek") return formatDeepSeekStatusline(report);
+	if (report.providerId === "fireworks") return formatFireworksStatusline(report);
 	if (report.providerId === "github-copilot") return formatGitHubCopilotStatusline(report);
 	if (report.providerId === "openrouter") {
 		const limit = report.buckets.find((bucket) => bucket.id === "key-limit");
@@ -123,6 +129,32 @@ function formatDeepSeekStatusline(report: UsageReport): string {
 		return metric ? [`${currency} ${metric.value}`] : [];
 	});
 	return totals.length > 0 ? `deepseek ${totals.join(" · ")}` : "deepseek balance unavailable";
+}
+
+function formatFireworksReport(lines: string[], report: UsageReport): void {
+	lines.push(`${"Spend window:".padEnd(VALUE_COLUMN)}Last 30 days (rated)`);
+	for (const currency of fireworksCurrencies(report)) {
+		lines.push("", `${currency} rated spend:`);
+		for (const metric of report.metrics) {
+			if (metric.currency !== currency) continue;
+			lines.push(`${`${metric.label}:`.padEnd(VALUE_COLUMN)}${currency} ${metric.value}`);
+		}
+	}
+}
+
+function formatFireworksStatusline(report: UsageReport): string {
+	const totals = report.metrics.filter((metric) => metric.id.endsWith("-total"));
+	if (totals.length === 0) return "fireworks no rated usage";
+	return `fireworks ${totals.map((metric) => `${metric.currency} ${metric.value}`).join(" · ")}`;
+}
+
+function fireworksCurrencies(report: UsageReport): string[] {
+	const currencies: string[] = [];
+	for (const metric of report.metrics) {
+		if (!metric.currency || currencies.includes(metric.currency)) continue;
+		currencies.push(metric.currency);
+	}
+	return currencies;
 }
 
 function formatGitHubCopilotReport(lines: string[], report: UsageReport): void {

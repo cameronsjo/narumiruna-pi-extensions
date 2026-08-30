@@ -7,6 +7,11 @@ import {
 } from "./oauth-credential-source.js";
 import { normalizeCodexBackendPayload } from "./providers/codex.js";
 import { normalizeDeepSeekBalancePayload } from "./providers/deepseek.js";
+import {
+	isFireworksAccountId,
+	normalizeFireworksAccountsPayload,
+	normalizeFireworksBillingSummaryPayload,
+} from "./providers/fireworks.js";
 import { normalizeGitHubCopilotUsagePayload } from "./providers/github-copilot.js";
 import { normalizeKimiCodingUsagePayload } from "./providers/kimi-coding.js";
 import { normalizeOpenCodeZenPayload } from "./providers/opencode-zen.js";
@@ -16,6 +21,8 @@ import { normalizeZaiQuotaPayload } from "./providers/zai.js";
 import type {
 	CodexBackendPayload,
 	DeepSeekBalancePayload,
+	FireworksAccountsPayload,
+	FireworksBillingSummaryPayload,
 	GitHubCopilotUsagePayload,
 	KimiCodingUsagePayload,
 	OpenCodeZenPayload,
@@ -23,6 +30,7 @@ import type {
 	PiModel,
 	ResolvedUsageAuth,
 	UsageProviderAdapter,
+	UsageQuerySettings,
 	UsageReport,
 	XaiBillingPayload,
 	XaiUserPayload,
@@ -31,6 +39,9 @@ import type {
 
 const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 const DEEPSEEK_BALANCE_URL = "https://api.deepseek.com/user/balance";
+const FIREWORKS_BILLING_SUMMARY_ORIGIN = "https://api.fireworks.ai";
+const FIREWORKS_SPEND_WINDOW_DAYS = 30;
+const FIREWORKS_MAX_ACCOUNT_PAGES = 5;
 const GITHUB_COPILOT_USAGE_URL = "https://api.github.com/copilot_internal/user";
 const OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key";
 const OPENCODE_GO_USAGE_URL = "https://opencode.ai/zen/go/v1/usage";
@@ -120,6 +131,35 @@ export const SUPPORTED_ADAPTERS: readonly UsageProviderAdapter[] = [
 				"OpenRouter key endpoint",
 			);
 			return normalizeOpenRouterKeyPayload(payload as OpenRouterKeyPayload, Date.now());
+		},
+	},
+	{
+		id: "fireworks",
+		displayName: "Fireworks",
+		semantics: { kind: "api-key", label: "Fireworks API spend" },
+		async query(auth, signal, timeoutMs, guard, settings) {
+			if (!guard) throw new Error("Fireworks API spend requires request-boundary revalidation.");
+			const startedAt = Date.now();
+			await guard();
+			const accountId = await resolveFireworksAccountId(
+				auth,
+				signal,
+				remainingTimeout(timeoutMs, startedAt, "resolving the Fireworks account"),
+				guard,
+				settings?.fireworksAccountId,
+			);
+			await guard();
+			const billingWindowAt = Date.now();
+			const payload = (await fetchProviderJson(
+				fireworksBillingSummaryUrl(accountId, billingWindowAt),
+				auth,
+				signal,
+				remainingTimeout(timeoutMs, startedAt, "fetching Fireworks rated spend"),
+				"Fireworks billing summary endpoint",
+				{ redirect: "error" },
+			)) as FireworksBillingSummaryPayload;
+			await guard();
+			return normalizeFireworksBillingSummaryPayload(payload, accountId, Date.now());
 		},
 	},
 	{
@@ -370,9 +410,10 @@ export async function queryProviderUsage(
 	signal: AbortSignal,
 	timeoutMs: number,
 	guard?: UsageRequestGuard,
+	settings?: Readonly<UsageQuerySettings>,
 ): Promise<UsageReport> {
 	try {
-		return await adapter.query(auth, signal, timeoutMs, guard);
+		return await adapter.query(auth, signal, timeoutMs, guard, settings);
 	} catch (error) {
 		if (isStaleExtensionContextError(error) || isAbortError(error)) throw error;
 		throw new Error(redactUsageError(errorMessage(error), auth.secrets));
@@ -733,6 +774,7 @@ function hasOfficialUrlOrigin(value: string, providerId: string): boolean {
 		const url = new URL(value);
 		if (providerId === "openai-codex") return url.origin === "https://chatgpt.com";
 		if (providerId === "deepseek") return url.origin === "https://api.deepseek.com";
+		if (providerId === "fireworks") return url.origin === FIREWORKS_BILLING_SUMMARY_ORIGIN;
 		if (providerId === "openrouter") return url.origin === "https://openrouter.ai";
 		if (providerId === "opencode-go") return url.origin === "https://opencode.ai";
 		if (providerId === "kimi-coding") return url.origin === "https://api.kimi.com";
@@ -771,10 +813,106 @@ function validatedXaiUserId(value: unknown): string {
 	return value;
 }
 
-function remainingTimeout(timeoutMs: number, startedAt: number): number {
+function remainingTimeout(
+	timeoutMs: number,
+	startedAt: number,
+	description = "fetching xAI consumer usage",
+): number {
 	const remaining = timeoutMs - (Date.now() - startedAt);
-	if (remaining <= 0) throw new Error("Timed out while fetching xAI consumer usage.");
+	if (remaining <= 0) throw new Error(`Timed out while ${description}.`);
 	return remaining;
+}
+
+// Fireworks requires an account slug for its billing endpoints; discover it through the
+// documented account listing, requiring an explicit slug when a key can see several accounts.
+async function resolveFireworksAccountId(
+	auth: ResolvedUsageAuth,
+	signal: AbortSignal,
+	timeoutMs: number,
+	guard: () => Promise<void>,
+	configuredAccountId: string | undefined,
+): Promise<string> {
+	if (configuredAccountId !== undefined && !isFireworksAccountId(configuredAccountId)) {
+		throw new Error("The Fireworks account setting was not a safe account slug.");
+	}
+	const startedAt = Date.now();
+	const accounts: string[] = [];
+	let pageToken: string | undefined;
+	for (let page = 0; page < FIREWORKS_MAX_ACCOUNT_PAGES; page += 1) {
+		await guard();
+		const payload = (await fetchProviderJson(
+			fireworksAccountsUrl(pageToken),
+			auth,
+			signal,
+			remainingTimeout(timeoutMs, startedAt, "fetching Fireworks accounts"),
+			"Fireworks accounts endpoint",
+			{ redirect: "error" },
+		)) as FireworksAccountsPayload;
+		for (const accountId of normalizeFireworksAccountsPayload(
+			payload as FireworksAccountsPayload,
+		)) {
+			if (accounts.includes(accountId)) {
+				throw new Error(`Fireworks accounts listing repeated ${accountId}.`);
+			}
+			accounts.push(accountId);
+			if (configuredAccountId === accountId) return accountId;
+		}
+		pageToken = fireworksNextPageToken(payload.nextPageToken);
+		if (!pageToken) break;
+	}
+	if (pageToken) {
+		throw new Error(
+			configuredAccountId
+				? `The configured Fireworks account was not found within the first ${FIREWORKS_MAX_ACCOUNT_PAGES} listing pages.`
+				: `Fireworks account listing exceeded ${FIREWORKS_MAX_ACCOUNT_PAGES} pages; set fireworksAccountId in pi-usage.json to an account returned in those pages.`,
+		);
+	}
+	if (accounts.length === 0) {
+		throw new Error("Fireworks account discovery returned no accounts for this API key.");
+	}
+	if (configuredAccountId) {
+		throw new Error(
+			"The configured Fireworks account does not match an account visible to this API key.",
+		);
+	}
+	if (accounts.length === 1) return accounts[0] as string;
+	const preview = accounts.slice(0, 8).join(", ");
+	const suffix = accounts.length > 8 ? ` …and ${accounts.length - 8} more` : "";
+	throw new Error(
+		`The Fireworks key can see ${accounts.length} accounts (${preview}${suffix}); set fireworksAccountId in pi-usage.json to one of them.`,
+	);
+}
+
+function fireworksAccountsUrl(pageToken: string | undefined): string {
+	const url = new URL("/v1/accounts", FIREWORKS_BILLING_SUMMARY_ORIGIN);
+	url.searchParams.set("pageSize", "200");
+	if (pageToken !== undefined) url.searchParams.set("pageToken", pageToken);
+	return url.toString();
+}
+
+function fireworksNextPageToken(value: unknown): string | undefined {
+	if (value === undefined || value === null) return undefined;
+	if (typeof value !== "string" || !value || value.length > 512) {
+		throw new Error("Fireworks accounts listing returned an invalid page token.");
+	}
+	return value;
+}
+
+function fireworksBillingSummaryUrl(accountId: string, startedAt: number): string {
+	const dayMs = 24 * 60 * 60 * 1000;
+	const dayFloor = (time: number) => `${new Date(time).toISOString().slice(0, 10)}T00:00:00Z`;
+	const url = new URL(
+		`/v1/accounts/${accountId}/billing/summary`,
+		FIREWORKS_BILLING_SUMMARY_ORIGIN,
+	);
+	// The endpoint aggregates by UTC date; endTime is exclusive, so the window includes today
+	// plus the preceding 29 dates.
+	url.searchParams.set(
+		"startTime",
+		dayFloor(startedAt - (FIREWORKS_SPEND_WINDOW_DAYS - 1) * dayMs),
+	);
+	url.searchParams.set("endTime", dayFloor(startedAt + dayMs));
+	return url.toString();
 }
 
 function zaiMonitorUrl(baseUrl: string | undefined): string {

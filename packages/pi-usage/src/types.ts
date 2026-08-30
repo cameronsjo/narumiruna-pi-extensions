@@ -55,6 +55,10 @@ export interface ResolvedUsageAuth {
 	model: PiModel;
 }
 
+export interface UsageQuerySettings {
+	fireworksAccountId?: string;
+}
+
 export interface UsageProviderAdapter {
 	id: string;
 	displayName: string;
@@ -65,6 +69,7 @@ export interface UsageProviderAdapter {
 		signal: AbortSignal,
 		timeoutMs: number,
 		guard?: () => Promise<void>,
+		settings?: Readonly<UsageQuerySettings>,
 	): Promise<UsageReport>;
 }
 
@@ -87,6 +92,15 @@ export type ProviderUsageState =
 export type DeepSeekBalancePayload = {
 	is_available?: unknown;
 	balance_infos?: unknown;
+};
+
+export type FireworksAccountsPayload = {
+	accounts?: unknown;
+	nextPageToken?: unknown;
+};
+
+export type FireworksBillingSummaryPayload = {
+	lineItems?: unknown;
 };
 
 export type GitHubCopilotUsagePayload = {
