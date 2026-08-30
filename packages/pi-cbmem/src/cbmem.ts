@@ -10,6 +10,11 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "@earendil-works/pi-coding-agent";
 import { sanitizeTerminalText } from "@narumitw/pi-tui-kit/terminal-text";
+import {
+	type DaemonEnsurer,
+	ensureCodebaseMemoryDaemon,
+	registerDaemonLifecycle,
+} from "./daemon.js";
 import { renderCodebaseMemoryResult } from "./render-result.js";
 import { type BridgeToolDefinition, TOOL_DEFINITIONS, type ToolName } from "./tool-definitions.js";
 import {
@@ -193,7 +198,9 @@ export default function cbmem(
 	pi: ExtensionAPI,
 	binary = BIN,
 	projectResolutionService = defaultProjectResolutionService,
+	ensureDaemon: DaemonEnsurer = ensureCodebaseMemoryDaemon,
 ): void {
+	registerDaemonLifecycle(pi, binary, ensureDaemon);
 	for (const definition of TOOL_DEFINITIONS) {
 		registerBridgeTool(pi, definition, binary, projectResolutionService);
 	}
