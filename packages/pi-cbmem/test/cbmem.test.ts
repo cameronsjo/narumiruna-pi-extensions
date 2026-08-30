@@ -1,3 +1,5 @@
+// This integration suite intentionally shares one serial daemon fixture and lifecycle harness so
+// process environment mutations, cancellation handshakes, and child cleanup cannot race across files.
 import assert from "node:assert/strict";
 import { watch } from "node:fs";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -18,10 +20,16 @@ import cbmem, {
 	readLineRange,
 	TOOL_NAMES,
 } from "../src/cbmem.js";
-import { type DaemonEnsurer, ensureCodebaseMemoryDaemon } from "../src/daemon.js";
+import {
+	type DaemonEnsurer,
+	ensureCodebaseMemoryDaemon,
+	verifyCodebaseMemoryDaemonClient,
+} from "../src/daemon.js";
+import type { CodebaseMemorySession, CodebaseMemorySessionFactory } from "../src/mcp-session.js";
 import type { ProjectResolution, ProjectResolutionService } from "../src/worktree-project.js";
 
 const packageDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const toolSessionManager = {};
 let fixtureDirectory: string;
 let fixtureBinary: string;
 
@@ -46,7 +54,10 @@ if (process.argv[2] === "daemon") {
       fs.renameSync(waitReadyPath + ".tmp", waitReadyPath);
       setInterval(() => {}, 1000);
     } else if (statePath && fs.existsSync(statePath)) {
+      const clients = (process.env.CBMEM_TEST_COMMITTED_PIDS || "").split(",").filter(Boolean);
       process.stdout.write("daemon: active (permanent)\\n");
+      process.stdout.write("  committed clients: " + clients.length + "\\n");
+      for (const pid of clients) process.stdout.write("    - pid " + pid + "\\n");
     } else {
       process.stdout.write("daemon: not running\\n");
       process.exitCode = 1;
@@ -170,6 +181,42 @@ test("cbmem registers complete Pi tool definitions and daemon lifecycle", () => 
 	}
 });
 
+test("tools reuse sessions by session manager and isolate concurrent managers", async () => {
+	const handlers = new Map<string, LifecycleHandler[]>();
+	const tools: ToolDefinition[] = [];
+	let nextPid = 200;
+	const api = {
+		on(event: string, handler: LifecycleHandler) {
+			handlers.set(event, [...(handlers.get(event) ?? []), handler]);
+		},
+		registerTool(tool: ToolDefinition) {
+			tools.push(tool);
+		},
+	} as unknown as ExtensionAPI;
+	cbmem(
+		api,
+		fixtureBinary,
+		undefined,
+		async () => ({ started: false }),
+		async (_binary, cwd) => mockSession(cwd, () => {}, ++nextPid),
+		async () => {},
+	);
+	const first = lifecycleContext("print", {});
+	const second = lifecycleContext("print", {});
+	for (const handler of handlers.get("session_start") ?? []) {
+		await Promise.all([handler({} as never, first.ctx), handler({} as never, second.ctx)]);
+	}
+	const firstCall = await executeTool(tools, "list_projects", {}, first.ctx);
+	const repeated = await executeTool(tools, "list_projects", {}, first.ctx);
+	const isolated = await executeTool(tools, "list_projects", {}, second.ctx);
+	const firstPid = (firstCall.details as CbmemToolDetails).bridge.serverPid;
+	assert.equal((repeated.details as CbmemToolDetails).bridge.serverPid, firstPid);
+	assert.notEqual((isolated.details as CbmemToolDetails).bridge.serverPid, firstPid);
+	for (const handler of handlers.get("session_shutdown") ?? []) {
+		await Promise.all([handler({} as never, first.ctx), handler({} as never, second.ctx)]);
+	}
+});
+
 test("daemon controller starts only when status reports no active daemon", async () => {
 	const statePath = path.join(fixtureDirectory, `daemon-state-${Date.now()}`);
 	const logPath = path.join(fixtureDirectory, `daemon-log-${Date.now()}`);
@@ -228,6 +275,34 @@ test("daemon controller reports bounded start failures", async () => {
 	});
 });
 
+test("daemon client verification requires the MCP child PID", async () => {
+	const statePath = path.join(fixtureDirectory, `daemon-client-state-${Date.now()}`);
+	const logPath = path.join(fixtureDirectory, `daemon-client-log-${Date.now()}`);
+	await withDaemonFixture(statePath, logPath, async () => {
+		await writeFile(statePath, "active", "utf8");
+		process.env.CBMEM_TEST_COMMITTED_PIDS = "123,456";
+		try {
+			await verifyCodebaseMemoryDaemonClient(
+				fixtureBinary,
+				fixtureDirectory,
+				456,
+				new AbortController().signal,
+			);
+			await assert.rejects(
+				verifyCodebaseMemoryDaemonClient(
+					fixtureBinary,
+					fixtureDirectory,
+					789,
+					new AbortController().signal,
+				),
+				/MCP child 789 is not committed/u,
+			);
+		} finally {
+			delete process.env.CBMEM_TEST_COMMITTED_PIDS;
+		}
+	});
+});
+
 test("daemon lifecycle notifies only when it starts the permanent daemon", async () => {
 	const started = createLifecycleHarness(async () => ({ started: true }));
 	const startedContext = lifecycleContext("tui");
@@ -238,6 +313,32 @@ test("daemon lifecycle notifies only when it starts the permanent daemon", async
 	const existingContext = lifecycleContext("rpc");
 	await existing.emit("session_start", existingContext.ctx);
 	assert.deepEqual(existingContext.notifications, []);
+});
+
+test("session lifecycle closes ready sessions once during replacement and shutdown", async () => {
+	const closeCounts: number[] = [];
+	const harness = createLifecycleHarness(
+		async () => ({ started: false }),
+		async (_binary, cwd) => {
+			const index = closeCounts.push(0) - 1;
+			const session = mockSession(cwd);
+			return {
+				...session,
+				async close() {
+					closeCounts[index] = (closeCounts[index] ?? 0) + 1;
+				},
+			};
+		},
+	);
+	const sessionManager = {};
+	const first = lifecycleContext("print", sessionManager);
+	const replacement = lifecycleContext("print", sessionManager);
+	await harness.emit("session_start", first.ctx);
+	await harness.emit("session_start", replacement.ctx);
+	assert.deepEqual(closeCounts, [1, 0]);
+	await harness.emit("session_shutdown", replacement.ctx);
+	await harness.emit("session_shutdown", replacement.ctx);
+	assert.deepEqual(closeCounts, [1, 1]);
 });
 
 test("daemon lifecycle waits for stale startup cleanup during replacement", async () => {
@@ -385,13 +486,13 @@ test("daemon lifecycle exposes startup failures safely in UI and non-UI modes", 
 	const tui = lifecycleContext("tui");
 	await harness.emit("session_start", tui.ctx);
 	assert.deepEqual(tui.notifications, [
-		["Could not start the Codebase Memory daemon: failed badly", "warning"],
+		["Could not start the Codebase Memory session: failed badly", "warning"],
 	]);
 
 	const print = lifecycleContext("print");
 	await assert.rejects(
 		harness.emit("session_start", print.ctx),
-		/Could not start the Codebase Memory daemon: failed badly/u,
+		/Could not start the Codebase Memory session: failed badly/u,
 	);
 	assert.deepEqual(print.notifications, []);
 });
@@ -405,7 +506,7 @@ test("@current routes read-only graph tools and annotates the resolved project",
 		headSha: "a".repeat(40),
 	};
 	let revalidated = 0;
-	const tools = registerTools(
+	const tools = await registerTools(
 		fixtureBinary,
 		resolutionService(resolution, async () => {
 			revalidated += 1;
@@ -431,7 +532,7 @@ test("@current routes read-only graph tools and annotates the resolved project",
 
 test("@current rejects filesystem-bound and mutating tools before resolution", async () => {
 	let resolved = false;
-	const tools = registerTools(
+	const tools = await registerTools(
 		path.join(fixtureDirectory, "missing-binary"),
 		resolutionService(
 			{
@@ -482,7 +583,7 @@ test("borrowed snippets are read from and point to the current worktree", async 
 		sourceRoot,
 		headSha: "a".repeat(40),
 	};
-	const tools = registerTools(fixtureBinary, resolutionService(resolution));
+	const tools = await registerTools(fixtureBinary, resolutionService(resolution));
 	const result = await executeTool(
 		tools,
 		"get_code_snippet",
@@ -528,7 +629,7 @@ test("project resolution refuses to corrupt JSON when metadata exceeds output bo
 		sourceRoot: fixtureDirectory,
 		headSha: "a".repeat(40),
 	};
-	const tools = registerTools(fixtureBinary, resolutionService(resolution));
+	const tools = await registerTools(fixtureBinary, resolutionService(resolution));
 	await assert.rejects(
 		executeTool(
 			tools,
@@ -556,7 +657,7 @@ test("borrowed results are discarded when post-call revalidation fails", async (
 		sourceRoot: "/source",
 		headSha: "a".repeat(40),
 	};
-	const tools = registerTools(
+	const tools = await registerTools(
 		fixtureBinary,
 		resolutionService(resolution, async () => {
 			throw new Error("snapshot changed during call");
@@ -574,7 +675,7 @@ test("borrowed results are discarded when post-call revalidation fails", async (
 });
 
 test("destructive tools require observable confirmation before spawning", async () => {
-	const tools = registerTools(fixtureBinary);
+	const tools = await registerTools(fixtureBinary);
 	const confirmations: Array<{ title: string; message: string }> = [];
 	const acceptedContext = toolContext(async (title, message) => {
 		confirmations.push({ title, message });
@@ -601,7 +702,7 @@ test("destructive tools require observable confirmation before spawning", async 
 		assert.doesNotMatch(`${confirmation.title}\n${confirmation.message}`, /\u001b|\u202e/u);
 	}
 
-	const unavailableTools = registerTools(path.join(fixtureDirectory, "missing-binary"));
+	const unavailableTools = await registerTools(path.join(fixtureDirectory, "missing-binary"));
 	const declinedContext = toolContext(async () => false);
 	for (const [name, params] of [
 		["delete_project", { project: "demo" }],
@@ -639,8 +740,8 @@ test("destructive tools require observable confirmation before spawning", async 
 	);
 });
 
-test("tool result rendering sanitizes display text without changing model-visible output", () => {
-	const tool = registerTools(fixtureBinary).find(({ name }) => name === "search_graph");
+test("tool result rendering sanitizes display text without changing model-visible output", async () => {
+	const tool = (await registerTools(fixtureBinary)).find(({ name }) => name === "search_graph");
 	assert.ok(tool?.renderResult);
 	const raw =
 		"safe \u001b[31mred\u001b[0m \u001b]8;;https://example.invalid\u0007link\u001b]8;;\u0007 \u009b31mcyan\u009b0m \u202espoof";
@@ -663,27 +764,26 @@ test("tool result rendering sanitizes display text without changing model-visibl
 	assert.doesNotMatch(display, /\u001b|\u009b|\u202e/u);
 });
 
-test("CLI calls use the session cwd and preserve split UTF-8 output", async () => {
+test("MCP results preserve UTF-8 output and daemon-backed bridge evidence", async () => {
 	const cwd = await mkdtemp(path.join(fixtureDirectory, "cwd-"));
 	const result = await callCodebaseMemory(
+		mockSession(cwd),
 		"list_projects",
 		{ testMode: "splitUtf8" },
 		undefined,
-		cwd,
-		fixtureBinary,
 	);
 
 	assert.deepEqual(JSON.parse(resultText(result)), { cwd, text: "你好🙂" });
 	assert.equal(result.details.truncated, false);
+	assert.deepEqual(result.details.bridge, bridgeEvidence);
 });
 
-test("validated CLI output is bounded by Pi's line limit", async () => {
+test("validated MCP output is bounded by Pi's line limit", async () => {
 	const result = await callCodebaseMemory(
+		mockSession(fixtureDirectory),
 		"query_graph",
 		{ testMode: "manyLines" },
 		undefined,
-		fixtureDirectory,
-		fixtureBinary,
 	);
 	const text = resultText(result);
 	assert.equal(result.details.truncated, true);
@@ -692,95 +792,52 @@ test("validated CLI output is bounded by Pi's line limit", async () => {
 	assert.ok(countLines(text) <= DEFAULT_MAX_LINES);
 });
 
-test("byte-oversized stdout rejects before returning partial JSON", async () => {
+test("byte-oversized MCP content rejects before returning partial JSON", async () => {
 	for (const testMode of ["large", "largeMalformed"]) {
 		await assert.rejects(
-			callCodebaseMemory("query_graph", { testMode }, undefined, fixtureDirectory, fixtureBinary),
-			/exceeded 50(?:\.0)?KB before a complete JSON response could be validated/,
+			callCodebaseMemory(mockSession(fixtureDirectory), "query_graph", { testMode }, undefined),
+			/exceeded 50(?:\.0)?KB before a complete JSON response could be returned/,
 		);
 	}
 });
 
-test("CLI spawn, exit, and response failures reject", async () => {
+test("MCP protocol, tool, and response failures reject", async () => {
 	await assert.rejects(
-		callCodebaseMemory(
-			"list_projects",
-			{},
-			undefined,
-			fixtureDirectory,
-			path.join(fixtureDirectory, "missing-binary"),
-		),
+		callCodebaseMemory(failingSession(new Error("ENOENT")), "list_projects", {}, undefined),
 		/ENOENT/,
 	);
-
 	await assert.rejects(
 		callCodebaseMemory(
+			mockSession(fixtureDirectory),
 			"list_projects",
-			{ testMode: "stderr" },
+			{ testMode: "toolError" },
 			undefined,
-			fixtureDirectory,
-			fixtureBinary,
 		),
-		(error: Error) => {
-			assert.match(error.message, /exited with code 7/);
-			assert.match(error.message, /important failure/);
-			assert.match(error.message, /earlier stderr omitted/);
-			assert.ok(Buffer.byteLength(error.message, "utf8") < 9 * 1024);
-			return true;
-		},
+		/codebase-memory-mcp list_projects failed: important failure/,
 	);
-
 	await assert.rejects(
 		callCodebaseMemory(
+			mockSession(fixtureDirectory),
 			"list_projects",
 			{ testMode: "noJson" },
 			undefined,
-			fixtureDirectory,
-			fixtureBinary,
 		),
-		/no JSON response/,
+		/returned invalid JSON/,
 	);
 });
 
-test("pre-aborted calls reject before spawning", async () => {
+test("pre-aborted calls reject before sending an MCP request", async () => {
 	const controller = new AbortController();
 	controller.abort();
+	let calls = 0;
+	const session = mockSession(fixtureDirectory, () => {
+		calls += 1;
+	});
 	await assert.rejects(
-		callCodebaseMemory(
-			"delete_project",
-			{},
-			controller.signal,
-			fixtureDirectory,
-			path.join(fixtureDirectory, "missing-binary"),
-		),
+		callCodebaseMemory(session, "delete_project", {}, controller.signal),
 		(error: Error) => error.name === "AbortError",
 	);
-});
-
-test("aborting a running call terminates its child", async () => {
-	const readyPath = path.join(fixtureDirectory, `ready-${Date.now()}`);
-	const controller = new AbortController();
-	const watcher = watch(fixtureDirectory);
-	const ready = new Promise<void>((resolve) => {
-		watcher.on("change", (_event, filename) => {
-			if (filename === path.basename(readyPath)) resolve();
-		});
-	});
-	const pending = callCodebaseMemory(
-		"index_repository",
-		{ testMode: "wait", readyPath },
-		controller.signal,
-		fixtureDirectory,
-		fixtureBinary,
-	);
-
-	await ready;
-	watcher.close();
-	const pid = Number(await readFile(readyPath, "utf8"));
-	assert.ok(Number.isSafeInteger(pid) && pid > 0, `expected a valid child PID, received ${pid}`);
-	controller.abort();
-	await assert.rejects(pending, (error: Error) => error.name === "AbortError");
-	await waitForProcessExit(pid);
+	assert.equal(calls, 0);
 });
 
 test("bundled skill enforces graph-first evidence and valid project-scoped calls", async () => {
@@ -838,7 +895,10 @@ test("bundled skill enforces graph-first evidence and valid project-scoped calls
 	);
 });
 
-function createLifecycleHarness(ensureDaemon: DaemonEnsurer) {
+function createLifecycleHarness(
+	ensureDaemon: DaemonEnsurer,
+	createSession: CodebaseMemorySessionFactory = async (_binary, cwd) => mockSession(cwd),
+) {
 	const handlers = new Map<string, LifecycleHandler[]>();
 	const api = {
 		on(event: string, handler: LifecycleHandler) {
@@ -846,7 +906,7 @@ function createLifecycleHarness(ensureDaemon: DaemonEnsurer) {
 		},
 		registerTool() {},
 	} as unknown as ExtensionAPI;
-	cbmem(api, fixtureBinary, undefined, ensureDaemon);
+	cbmem(api, fixtureBinary, undefined, ensureDaemon, createSession, async () => {});
 	return {
 		async emit(event: string, ctx: ExtensionContext) {
 			for (const handler of handlers.get(event) ?? []) await handler({} as never, ctx);
@@ -897,18 +957,30 @@ async function withDaemonFixture(
 	}
 }
 
-function registerTools(
+async function registerTools(
 	binary: string,
 	projectResolutionService?: ProjectResolutionService,
-): ToolDefinition[] {
+): Promise<ToolDefinition[]> {
 	const tools: ToolDefinition[] = [];
+	const handlers = new Map<string, LifecycleHandler[]>();
 	const api = {
-		on() {},
+		on(event: string, handler: LifecycleHandler) {
+			handlers.set(event, [...(handlers.get(event) ?? []), handler]);
+		},
 		registerTool(tool: ToolDefinition) {
 			tools.push(tool);
 		},
 	} as unknown as ExtensionAPI;
-	cbmem(api, binary, projectResolutionService);
+	cbmem(
+		api,
+		binary,
+		projectResolutionService,
+		async () => ({ started: false }),
+		async (_binary, cwd) => mockSession(cwd),
+		async () => {},
+	);
+	const ctx = toolContext(async () => true);
+	for (const handler of handlers.get("session_start") ?? []) await handler({} as never, ctx);
 	return tools;
 }
 
@@ -934,6 +1006,7 @@ function toolContext(
 		cwd: fixtureDirectory,
 		mode,
 		hasUI: mode === "tui" || mode === "rpc",
+		sessionManager: toolSessionManager,
 		ui: { confirm },
 	} as unknown as ExtensionContext;
 }
@@ -948,6 +1021,86 @@ async function executeTool(
 	const tool = tools.find((candidate) => candidate.name === name);
 	assert.ok(tool, `expected registered tool ${name}`);
 	return await tool.execute("test-call", params, signal, undefined, ctx);
+}
+
+const bridgeEvidence = {
+	transport: "mcp-stdio" as const,
+	daemonBacked: true as const,
+	serverPid: 123,
+};
+
+function mockSession(
+	cwd: string,
+	onCall: () => void = () => {},
+	serverPid = bridgeEvidence.serverPid,
+): CodebaseMemorySession {
+	const bridge = { ...bridgeEvidence, serverPid };
+	return {
+		bridge,
+		async callTool(tool, args, signal) {
+			signal?.throwIfAborted();
+			onCall();
+			let text: string;
+			let isError = false;
+			switch (args.testMode) {
+				case "splitUtf8":
+					text = JSON.stringify({ cwd, text: "你好🙂" });
+					break;
+				case "large":
+					text = JSON.stringify({ payload: "界".repeat(30_000), tail: "must-not-appear" });
+					break;
+				case "largeMalformed":
+					text = "not-json".repeat(10_000);
+					break;
+				case "nearLimit":
+					text = JSON.stringify({ payload: "x".repeat(51_000) });
+					break;
+				case "manyLines":
+					text = JSON.stringify(
+						{ rows: Array.from({ length: 2_500 }, (_, index) => index) },
+						null,
+						2,
+					);
+					break;
+				case "toolError":
+					text = "important failure";
+					isError = true;
+					break;
+				case "noJson":
+					text = "not a JSON response";
+					break;
+				case "snippet":
+					text = JSON.stringify({
+						name: "answer",
+						qualified_name: "source-project.example.answer",
+						label: "Variable",
+						file_path: args.sourcePath,
+						start_line: 2,
+						end_line: 2,
+						source: "source copy\n",
+					});
+					break;
+				default:
+					text = JSON.stringify({ ok: true, args, tool });
+			}
+			return {
+				content: [{ type: "text", text }],
+				isError,
+				bridge,
+			};
+		},
+		async close() {},
+	};
+}
+
+function failingSession(error: Error): CodebaseMemorySession {
+	return {
+		bridge: bridgeEvidence,
+		async callTool() {
+			throw error;
+		},
+		async close() {},
+	};
 }
 
 function resultText(result: { content: readonly unknown[] }): string {
