@@ -5,33 +5,45 @@ import {
 	type ExtensionAPI,
 	type ExtensionContext,
 	type SessionEntry,
-	type Theme,
 } from "@earendil-works/pi-coding-agent";
-import { stripTerminalSequences, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import {
+	DEFAULT_TODO_SETTINGS,
+	loadTodoSettings,
+	type TodoSettings,
+	type TodoSettingsLoadResult,
+} from "./settings.js";
+import { renderCompletionSummary, renderTodoWidget, sanitizeTodoText } from "./widget-renderer.js";
 
 export const TOOL_NAME = "update_todo_list";
 export const WIDGET_KEY = "todo";
 export const TODO_CONTEXT_MESSAGE_TYPE = "todo-list-status";
-export const TODO_CONTEXT_VERSION = 2;
-export const TODO_DETAILS_VERSION = 2;
+export const TODO_CONTEXT_VERSION = 3;
+export const TODO_DETAILS_VERSION = 3;
 export const TODO_RESTORED_BOUNDARY_ENTRY_TYPE = "todo-restored-context-boundary";
-const TODO_RESTORED_BOUNDARY_VERSION = 1;
-const LEGACY_TODO_CONTEXT_VERSION = 1;
-const LEGACY_TODO_DETAILS_VERSION = 1;
 export const MAX_TODOS = 50;
 export const MAX_TODO_STEP_LENGTH = 300;
+export const MAX_TODO_REASON_LENGTH = 200;
+export const COMPLETION_SUMMARY_MS = 3_000;
 
+const TODO_RESTORED_BOUNDARY_VERSION = 1;
+const PREVIOUS_TODO_CONTEXT_VERSION = 2;
+const PREVIOUS_TODO_DETAILS_VERSION = 2;
+const LEGACY_TODO_CONTEXT_VERSION = 1;
+const LEGACY_TODO_DETAILS_VERSION = 1;
 const WIDGET_OPTIONS = { placement: "aboveEditor" } as const;
 const LEGACY_TOOL_NAME = "todo_widget";
-const TODO_STATUSES = ["pending", "in_progress", "completed"] as const;
-const BIDI_CONTROLS = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu;
+const TODO_STATUSES = ["pending", "in_progress", "completed", "blocked"] as const;
+const PREVIOUS_TODO_STATUSES = ["pending", "in_progress", "completed"] as const;
+const RESUBMIT_GUIDANCE = "Fix the input and resubmit the complete todos array.";
 
 type TodoStatus = (typeof TODO_STATUSES)[number];
+type PreviousTodoStatus = (typeof PREVIOUS_TODO_STATUSES)[number];
 
 export interface Todo {
 	step: string;
 	status: TodoStatus;
+	reason?: string;
 }
 
 export interface TodoDetails {
@@ -39,9 +51,20 @@ export interface TodoDetails {
 	todos: Todo[];
 }
 
+interface PreviousTodo {
+	step: string;
+	status: PreviousTodoStatus;
+}
+
 interface LegacyTodoItem {
 	text: string;
-	status: TodoStatus;
+	status: PreviousTodoStatus;
+}
+
+export interface TodoWidgetDependencies {
+	loadSettings?: typeof loadTodoSettings;
+	setTimeout?: typeof globalThis.setTimeout;
+	clearTimeout?: typeof globalThis.clearTimeout;
 }
 
 const TodoParameters = Type.Object({
@@ -55,6 +78,13 @@ const TodoParameters = Type.Object({
 			status: StringEnum(TODO_STATUSES, {
 				description: "The step's current status",
 			}),
+			reason: Type.Optional(
+				Type.String({
+					minLength: 1,
+					maxLength: MAX_TODO_REASON_LENGTH,
+					description: "Required only for blocked todos; explain what must unblock the step",
+				}),
+			),
 		}),
 		{
 			maxItems: MAX_TODOS,
@@ -63,53 +93,117 @@ const TodoParameters = Type.Object({
 	),
 });
 
-export default function todoWidgetExtension(pi: ExtensionAPI): void {
+export default function todoWidgetExtension(
+	pi: ExtensionAPI,
+	dependencies: TodoWidgetDependencies = {},
+): void {
+	const readSettings = dependencies.loadSettings ?? loadTodoSettings;
+	const scheduleTimeout = dependencies.setTimeout ?? globalThis.setTimeout;
+	const cancelTimeout = dependencies.clearTimeout ?? globalThis.clearTimeout;
 	let activeSession: ExtensionContext["sessionManager"] | undefined;
 	let todos: Todo[] = [];
+	let settings = cloneDefaultSettings();
 	let restoredBoundary: { summaryEpoch: string; content: string } | undefined;
+	let settingsController = new AbortController();
+	let generation = 0;
+	let completionTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
+	let completionToken = 0;
+	let completionSummaryHidden = false;
 
 	const ownsSession = (ctx: ExtensionContext): boolean => ctx.sessionManager === activeSession;
 
+	const cancelCompletionSummary = (): void => {
+		completionToken += 1;
+		if (completionTimer !== undefined) cancelTimeout(completionTimer);
+		completionTimer = undefined;
+	};
+
 	const publish = (ctx: ExtensionContext): void => {
 		if (!ownsSession(ctx) || ctx.mode !== "tui") return;
-		if (todos.length === 0) {
+		if (!settings.widget.enabled || todos.length === 0 || completionSummaryHidden) {
 			ctx.ui.setWidget(WIDGET_KEY, undefined);
 			return;
 		}
 
 		const snapshot = cloneTodos(todos);
+		const widgetSettings = { ...settings.widget };
 		ctx.ui.setWidget(
 			WIDGET_KEY,
-			(_tui, theme) => ({
-				render: (width) => renderTodoWidget(snapshot, theme, width),
+			(tui, theme) => ({
+				render: (width) =>
+					renderTodoWidget(snapshot, theme, width, {
+						settings: widgetSettings,
+						terminalRows: tui.terminal.rows,
+					}),
 				invalidate: () => {},
 			}),
 			WIDGET_OPTIONS,
 		);
 	};
 
+	const publishCompletionSummary = (ctx: ExtensionContext): void => {
+		cancelCompletionSummary();
+		completionSummaryHidden = false;
+		if (!ownsSession(ctx) || ctx.mode !== "tui" || !settings.widget.enabled) {
+			publish(ctx);
+			return;
+		}
+
+		const total = todos.length;
+		ctx.ui.setWidget(
+			WIDGET_KEY,
+			(_tui, theme) => ({
+				render: (width) => renderCompletionSummary(total, theme, width),
+				invalidate: () => {},
+			}),
+			WIDGET_OPTIONS,
+		);
+		const ownerSession = activeSession;
+		const token = completionToken;
+		completionTimer = scheduleTimeout(() => {
+			if (
+				completionToken !== token ||
+				activeSession !== ownerSession ||
+				ctx.sessionManager !== ownerSession ||
+				!settings.widget.enabled ||
+				!allTodosCompleted(todos)
+			) {
+				return;
+			}
+			completionTimer = undefined;
+			completionSummaryHidden = true;
+			ctx.ui.setWidget(WIDGET_KEY, undefined);
+		}, COMPLETION_SUMMARY_MS);
+	};
+
 	pi.registerTool({
 		name: TOOL_NAME,
 		label: "Todo List",
 		description:
-			"Replace the current session todo list with the complete supplied todos. Call update_todo_list whenever actual step state changes; keep at most one todo in_progress and send an empty todos array to clear it.",
+			"Replace the current session todo list with the complete supplied todos. Call update_todo_list whenever actual step state changes; keep at most one todo in_progress, require a reason for each blocked todo, and send an empty todos array to clear it.",
 		promptSnippet: "Maintain the complete session todo list as multi-step work progresses",
 		promptGuidelines: [
 			"Use update_todo_list to track work with multiple meaningful steps; skip it for simple, single-step tasks.",
 			"Use update_todo_list to keep the list aligned with actual work: mark a step in_progress before starting it, mark it completed as soon as it finishes, and revise the list before continuing when the plan changes.",
+			"Use blocked with a concise reason only when progress depends on an external action or condition; blocked does not mean completed.",
 			"Before a progress report or final response, call update_todo_list to reconcile every todo with actual work; do not report completion while the list is stale.",
 			"On every update_todo_list call, send the complete current todos array, keep at most one todo in_progress, and send an empty array when no tracked work remains.",
 		],
 		parameters: TodoParameters,
+		prepareArguments: validateTodoArguments,
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			signal?.throwIfAborted();
 			if (!ownsSession(ctx)) {
 				throw new Error("Cannot update the todo list because the session changed.");
 			}
-			validateTodos(params.todos);
-
-			todos = cloneTodos(params.todos);
-			publish(ctx);
+			const nextTodos = validateTodoArguments(params).todos;
+			const wasComplete = allTodosCompleted(todos);
+			cancelCompletionSummary();
+			completionSummaryHidden = false;
+			todos = cloneTodos(nextTodos);
+			const becameComplete = todos.length > 0 && allTodosCompleted(todos) && !wasComplete;
+			if (becameComplete) publishCompletionSummary(ctx);
+			else publish(ctx);
 
 			const details: TodoDetails = {
 				version: TODO_DETAILS_VERSION,
@@ -124,11 +218,16 @@ export default function todoWidgetExtension(pi: ExtensionAPI): void {
 
 			const completed = todos.filter((todo) => todo.status === "completed").length;
 			const inProgress = todos.some((todo) => todo.status === "in_progress");
+			const blocked = todos.filter((todo) => todo.status === "blocked").length;
+			const suffixes = [
+				...(inProgress ? ["1 in progress"] : []),
+				...(blocked > 0 ? [`${blocked} blocked`] : []),
+			];
 			return {
 				content: [
 					{
 						type: "text",
-						text: `Todo list updated: ${completed} of ${todos.length} complete${inProgress ? "; 1 in progress" : ""}.`,
+						text: `Todo list updated: ${completed} of ${todos.length} complete${suffixes.length > 0 ? `; ${suffixes.join("; ")}` : ""}.`,
 					},
 				],
 				details,
@@ -142,9 +241,45 @@ export default function todoWidgetExtension(pi: ExtensionAPI): void {
 		restoredBoundary = reconstructRestoredTodoBoundary(branch);
 	};
 
-	pi.on("session_start", (_event, ctx) => {
+	pi.on("session_start", async (_event, ctx) => {
+		settingsController.abort();
+		settingsController = new AbortController();
+		const ownerController = settingsController;
+		generation += 1;
+		const ownerGeneration = generation;
 		activeSession = ctx.sessionManager;
+		cancelCompletionSummary();
+		completionSummaryHidden = false;
+		settings = cloneDefaultSettings();
 		restoreBranchState(ctx);
+		if (ctx.mode === "tui") ctx.ui.setWidget(WIDGET_KEY, undefined);
+
+		let loaded: TodoSettingsLoadResult;
+		try {
+			loaded = await readSettings(undefined, ownerController.signal);
+		} catch (error) {
+			if (ownerController.signal.aborted || ownerGeneration !== generation || !ownsSession(ctx)) {
+				return;
+			}
+			loaded = {
+				kind: "invalid",
+				path: "pi-todo.json",
+				settings: cloneDefaultSettings(),
+				issue: error instanceof Error ? error.message : String(error),
+			};
+		}
+		if (ownerController.signal.aborted || ownerGeneration !== generation || !ownsSession(ctx)) {
+			return;
+		}
+		settings = cloneSettings(loaded.settings);
+		if (loaded.kind === "invalid" && ctx.hasUI) {
+			ctx.ui.notify(
+				sanitizeTodoText(
+					`Invalid pi-todo settings at ${loaded.path}; using defaults. ${loaded.issue}`,
+				),
+				"warning",
+			);
+		}
 		publish(ctx);
 	});
 
@@ -168,55 +303,27 @@ export default function todoWidgetExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_tree", (_event, ctx) => {
 		if (!ownsSession(ctx)) return;
+		cancelCompletionSummary();
+		completionSummaryHidden = false;
 		restoreBranchState(ctx);
 		publish(ctx);
 	});
 
 	pi.on("session_shutdown", (_event, ctx) => {
 		if (!ownsSession(ctx)) return;
+		settingsController.abort();
+		generation += 1;
+		cancelCompletionSummary();
 		if (ctx.mode === "tui") ctx.ui.setWidget(WIDGET_KEY, undefined);
 		todos = [];
+		settings = cloneDefaultSettings();
 		restoredBoundary = undefined;
+		completionSummaryHidden = false;
 		activeSession = undefined;
 	});
 }
 
-export function renderTodoWidget(todos: readonly Todo[], theme: Theme, width: number): string[] {
-	const completed = todos.filter((todo) => todo.status === "completed").length;
-	const divider = theme.fg("borderMuted", "─".repeat(Math.max(0, width)));
-	const lines = [divider, theme.fg("muted", `Todo · ${completed}/${todos.length} complete`)];
-
-	const renderWidth = Math.max(0, width);
-	for (const todo of todos) {
-		const step = sanitizeTodoStep(todo.step);
-		let prefix: string;
-		let styledStep: string;
-		switch (todo.status) {
-			case "completed":
-				prefix = theme.fg("success", "✓ ");
-				styledStep = theme.fg("muted", theme.strikethrough(step));
-				break;
-			case "in_progress":
-				prefix = theme.fg("accent", "▶ ");
-				styledStep = theme.fg("accent", theme.bold(step));
-				break;
-			case "pending":
-				prefix = theme.fg("dim", "○ ");
-				styledStep = theme.fg("text", step);
-				break;
-		}
-
-		if (renderWidth <= 2) {
-			lines.push(prefix);
-			continue;
-		}
-
-		const wrappedStep = wrapTextWithAnsi(styledStep, renderWidth - 2);
-		lines.push(...wrappedStep.map((line, index) => `${index === 0 ? prefix : "  "}${line}`));
-	}
-
-	return lines.map((line) => truncateToWidth(line, renderWidth, ""));
-}
+export { renderTodoWidget, sanitizeTodoText as sanitizeTodoStep };
 
 export function reconcileTodoContext(
 	messages: ContextEvent["messages"],
@@ -257,14 +364,57 @@ export function reconcileTodoContext(
 	];
 }
 
-export function sanitizeTodoStep(value: string): string {
-	let step = "";
-	for (const character of stripTerminalSequences(value).replace(BIDI_CONTROLS, "")) {
-		const codePoint = character.codePointAt(0) ?? 0;
-		const isControl = codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f);
-		step += isControl ? " " : character;
+export function validateTodoArguments(value: unknown): { todos: Todo[] } {
+	if (!isRecord(value)) rejectTodos("input must be an object with a todos array.");
+	if (!Array.isArray(value.todos)) rejectTodos("todos must be an array.");
+	if (value.todos.length > MAX_TODOS) {
+		rejectTodos(`todos contains ${value.todos.length} items; the maximum is ${MAX_TODOS}.`);
 	}
-	return step.replace(/\s+/gu, " ").trim();
+
+	const todos: Todo[] = [];
+	const inProgressIndices: number[] = [];
+	for (const [index, entry] of value.todos.entries()) {
+		const item = index + 1;
+		if (!isRecord(entry)) rejectTodos(`item ${item} must be an object.`);
+		if (typeof entry.step !== "string") rejectTodos(`item ${item} step must be a string.`);
+		if (entry.step.trim().length === 0) {
+			rejectTodos(`item ${item} step must contain non-whitespace text.`);
+		}
+		if (characterLength(entry.step) > MAX_TODO_STEP_LENGTH) {
+			rejectTodos(`item ${item} step exceeds ${MAX_TODO_STEP_LENGTH} characters.`);
+		}
+		if (!TODO_STATUSES.includes(entry.status as TodoStatus)) {
+			rejectTodos(`item ${item} status must be pending, in_progress, completed, or blocked.`);
+		}
+		const status = entry.status as TodoStatus;
+		if (status === "in_progress") inProgressIndices.push(item);
+
+		if (status === "blocked") {
+			if (typeof entry.reason !== "string" || entry.reason.trim().length === 0) {
+				rejectTodos(`item ${item} is blocked and requires a non-whitespace reason.`);
+			}
+			if (characterLength(entry.reason) > MAX_TODO_REASON_LENGTH) {
+				rejectTodos(`item ${item} reason exceeds ${MAX_TODO_REASON_LENGTH} characters.`);
+			}
+			todos.push({ step: entry.step, status, reason: entry.reason });
+			continue;
+		}
+		if (Object.hasOwn(entry, "reason")) {
+			rejectTodos(`item ${item} may include reason only when status is blocked.`);
+		}
+		todos.push({ step: entry.step, status });
+	}
+
+	if (inProgressIndices.length > 1) {
+		rejectTodos(
+			`items ${inProgressIndices.join(" and ")} are in_progress; keep at most one in_progress item.`,
+		);
+	}
+	return { todos };
+}
+
+function rejectTodos(message: string): never {
+	throw new Error(`Todo list rejected: ${message} ${RESUBMIT_GUIDANCE}`);
 }
 
 function todoContextContent(todos: readonly Todo[]): string {
@@ -291,27 +441,44 @@ function isRestoredTodoBoundaryData(
 	value: unknown,
 	summaryEpoch: string,
 ): value is { version: number; summaryEpoch: string; content: string } {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-	const data = value as Record<string, unknown>;
+	if (!isRecord(value)) return false;
 	if (
-		data.version !== TODO_RESTORED_BOUNDARY_VERSION ||
-		data.summaryEpoch !== summaryEpoch ||
-		typeof data.content !== "string"
+		value.version !== TODO_RESTORED_BOUNDARY_VERSION ||
+		value.summaryEpoch !== summaryEpoch ||
+		typeof value.content !== "string"
 	) {
 		return false;
 	}
-	return isCanonicalTodoContextContent(data.content);
+	return isCanonicalTodoContextContent(value.content);
 }
 
 function isCanonicalTodoContextContent(content: string): boolean {
 	const currentPrefix = todoContextPrefix(TODO_CONTEXT_VERSION);
 	if (content.startsWith(currentPrefix)) {
 		try {
-			const restoredTodos = todosFromToolArguments(JSON.parse(content.slice(currentPrefix.length)));
+			const restoredTodos = currentTodosFromToolArguments(
+				JSON.parse(content.slice(currentPrefix.length)),
+			);
 			return (
 				restoredTodos !== undefined &&
 				restoredTodos.length > 0 &&
 				todoContextContent(restoredTodos) === content
+			);
+		} catch {
+			return false;
+		}
+	}
+
+	const previousPrefix = todoContextPrefix(PREVIOUS_TODO_CONTEXT_VERSION);
+	if (content.startsWith(previousPrefix)) {
+		try {
+			const restoredTodos = previousTodoDataFromToolArguments(
+				JSON.parse(content.slice(previousPrefix.length)),
+			);
+			return (
+				restoredTodos !== undefined &&
+				restoredTodos.length > 0 &&
+				previousTodoContextContent(restoredTodos) === content
 			);
 		} catch {
 			return false;
@@ -334,6 +501,11 @@ function isCanonicalTodoContextContent(content: string): boolean {
 
 function todoContextPrefix(version: number): string {
 	return `[PI TODO STATUS v${version}]\nCurrent todo list as JSON data:\n`;
+}
+
+function previousTodoContextContent(todos: readonly PreviousTodo[]): string {
+	const canonicalTodos = todos.map((todo) => ({ step: todo.step, status: todo.status }));
+	return `${todoContextPrefix(PREVIOUS_TODO_CONTEXT_VERSION)}${JSON.stringify({ todos: canonicalTodos })}`;
 }
 
 function legacyTodoContextContent(items: readonly LegacyTodoItem[]): string {
@@ -375,11 +547,24 @@ function hasModelVisibleTodoState(
 }
 
 function todosFromToolArguments(value: unknown): Todo[] | undefined {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-	const record = value as Record<string, unknown>;
-	if (isTodos(record.todos)) return cloneTodos(record.todos);
-	if (isLegacyTodoItems(record.items)) return migrateLegacyItems(record.items);
+	return currentTodosFromToolArguments(value) ?? previousTodosFromToolArguments(value);
+}
+
+function currentTodosFromToolArguments(value: unknown): Todo[] | undefined {
+	if (!isRecord(value)) return undefined;
+	if (isTodos(value.todos)) return cloneTodos(value.todos);
+	if (isLegacyTodoItems(value.items)) return migrateLegacyItems(value.items);
 	return undefined;
+}
+
+function previousTodosFromToolArguments(value: unknown): Todo[] | undefined {
+	const previous = previousTodoDataFromToolArguments(value);
+	return previous ? migratePreviousTodos(previous) : undefined;
+}
+
+function previousTodoDataFromToolArguments(value: unknown): PreviousTodo[] | undefined {
+	if (!isRecord(value) || !isPreviousTodos(value.todos)) return undefined;
+	return value.todos.map((todo) => ({ step: todo.step, status: todo.status }));
 }
 
 type TodoContextMessage = Extract<ContextEvent["messages"][number], { role: "custom" }> & {
@@ -393,12 +578,7 @@ function isTodoContextMessage(
 }
 
 function hasTodoContextVersion(message: TodoContextMessage): boolean {
-	return (
-		typeof message.details === "object" &&
-		message.details !== null &&
-		!Array.isArray(message.details) &&
-		(message.details as Record<string, unknown>).version === TODO_CONTEXT_VERSION
-	);
+	return isRecord(message.details) && message.details.version === TODO_CONTEXT_VERSION;
 }
 
 function leadingSummaryEpoch(messages: ContextEvent["messages"]): string | undefined {
@@ -416,19 +596,6 @@ function leadingSummaryBoundary(messages: ContextEvent["messages"]): number {
 	return index;
 }
 
-function validateTodos(todos: readonly Todo[]): void {
-	for (const [index, todo] of todos.entries()) {
-		if (todo.step.trim().length === 0) {
-			throw new Error(`Todo ${index + 1} must contain a non-whitespace step.`);
-		}
-	}
-
-	const currentCount = todos.filter((todo) => todo.status === "in_progress").length;
-	if (currentCount > 1) {
-		throw new Error("Todo list can contain at most one in_progress todo.");
-	}
-}
-
 function reconstructTodos(entries: readonly SessionEntry[]): Todo[] {
 	let restored: Todo[] = [];
 	for (const entry of entries) {
@@ -436,6 +603,7 @@ function reconstructTodos(entries: readonly SessionEntry[]): Todo[] {
 		const message = entry.message;
 		if (
 			message.role !== "toolResult" ||
+			message.isError ||
 			(message.toolName !== TOOL_NAME && message.toolName !== LEGACY_TOOL_NAME)
 		) {
 			continue;
@@ -447,54 +615,89 @@ function reconstructTodos(entries: readonly SessionEntry[]): Todo[] {
 }
 
 function todosFromDetails(value: unknown): Todo[] | undefined {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-	const record = value as Record<string, unknown>;
-	if (record.version === TODO_DETAILS_VERSION && isTodos(record.todos)) {
-		return cloneTodos(record.todos);
+	if (!isRecord(value)) return undefined;
+	if (value.version === TODO_DETAILS_VERSION && isTodos(value.todos)) {
+		return cloneTodos(value.todos);
 	}
-	if (record.version === LEGACY_TODO_DETAILS_VERSION && isLegacyTodoItems(record.items)) {
-		return migrateLegacyItems(record.items);
+	if (value.version === PREVIOUS_TODO_DETAILS_VERSION && isPreviousTodos(value.todos)) {
+		return migratePreviousTodos(value.todos);
+	}
+	if (value.version === LEGACY_TODO_DETAILS_VERSION && isLegacyTodoItems(value.items)) {
+		return migrateLegacyItems(value.items);
 	}
 	return undefined;
 }
 
 function isTodos(value: unknown): value is Todo[] {
-	return hasValidTodoShape(value, "step");
-}
-
-function isLegacyTodoItems(value: unknown): value is LegacyTodoItem[] {
-	return hasValidTodoShape(value, "text");
-}
-
-function hasValidTodoShape(value: unknown, stepProperty: "step" | "text"): boolean {
 	if (!Array.isArray(value) || value.length > MAX_TODOS) return false;
-
-	let currentCount = 0;
+	let inProgressCount = 0;
 	for (const entry of value) {
-		if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return false;
-		const record = entry as Record<string, unknown>;
-		const step = record[stepProperty];
+		if (!isRecord(entry)) return false;
 		if (
-			typeof step !== "string" ||
-			step.length === 0 ||
-			step.length > MAX_TODO_STEP_LENGTH ||
-			step.trim().length === 0 ||
-			!TODO_STATUSES.includes(record.status as TodoStatus)
+			typeof entry.step !== "string" ||
+			entry.step.trim().length === 0 ||
+			characterLength(entry.step) > MAX_TODO_STEP_LENGTH ||
+			!TODO_STATUSES.includes(entry.status as TodoStatus)
 		) {
 			return false;
 		}
-		if (record.status === "in_progress") currentCount += 1;
+		if (entry.status === "in_progress") inProgressCount += 1;
+		if (entry.status === "blocked") {
+			if (
+				typeof entry.reason !== "string" ||
+				entry.reason.trim().length === 0 ||
+				characterLength(entry.reason) > MAX_TODO_REASON_LENGTH
+			) {
+				return false;
+			}
+		} else if (Object.hasOwn(entry, "reason")) {
+			return false;
+		}
 	}
-	return currentCount <= 1;
+	return inProgressCount <= 1;
+}
+
+function isPreviousTodos(value: unknown): value is PreviousTodo[] {
+	return hasPreviousTodoShape(value, "step");
+}
+
+function isLegacyTodoItems(value: unknown): value is LegacyTodoItem[] {
+	return hasPreviousTodoShape(value, "text");
+}
+
+function hasPreviousTodoShape(value: unknown, stepProperty: "step" | "text"): boolean {
+	if (!Array.isArray(value) || value.length > MAX_TODOS) return false;
+	let inProgressCount = 0;
+	for (const entry of value) {
+		if (!isRecord(entry) || Object.hasOwn(entry, "reason")) return false;
+		const step = entry[stepProperty];
+		if (
+			typeof step !== "string" ||
+			step.trim().length === 0 ||
+			characterLength(step) > MAX_TODO_STEP_LENGTH ||
+			!PREVIOUS_TODO_STATUSES.includes(entry.status as PreviousTodoStatus)
+		) {
+			return false;
+		}
+		if (entry.status === "in_progress") inProgressCount += 1;
+	}
+	return inProgressCount <= 1;
 }
 
 function todosEqual(left: readonly Todo[], right: readonly Todo[]): boolean {
 	return (
 		left.length === right.length &&
 		left.every(
-			(todo, index) => todo.step === right[index]?.step && todo.status === right[index]?.status,
+			(todo, index) =>
+				todo.step === right[index]?.step &&
+				todo.status === right[index]?.status &&
+				todo.reason === right[index]?.reason,
 		)
 	);
+}
+
+function migratePreviousTodos(todos: readonly PreviousTodo[]): Todo[] {
+	return todos.map((todo) => ({ step: todo.step, status: todo.status }));
 }
 
 function migrateLegacyItems(items: readonly LegacyTodoItem[]): Todo[] {
@@ -502,5 +705,29 @@ function migrateLegacyItems(items: readonly LegacyTodoItem[]): Todo[] {
 }
 
 function cloneTodos(todos: readonly Todo[]): Todo[] {
-	return todos.map((todo) => ({ step: todo.step, status: todo.status }));
+	return todos.map((todo) => ({
+		step: todo.step,
+		status: todo.status,
+		...(todo.reason === undefined ? {} : { reason: todo.reason }),
+	}));
+}
+
+function allTodosCompleted(value: readonly Todo[]): boolean {
+	return value.length > 0 && value.every((todo) => todo.status === "completed");
+}
+
+function characterLength(value: string): number {
+	return [...value].length;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function cloneDefaultSettings(): TodoSettings {
+	return { widget: { ...DEFAULT_TODO_SETTINGS.widget } };
+}
+
+function cloneSettings(value: Readonly<TodoSettings>): TodoSettings {
+	return { widget: { ...value.widget } };
 }

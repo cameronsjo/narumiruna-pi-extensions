@@ -176,6 +176,7 @@ test("generated runtime is loadable by Pi's Jiti resource loader", async () => {
 		assert.equal(loaded.extensions.length, 1);
 		const extension = loaded.extensions[0];
 		assert.ok(extension?.tools.has("update_todo_list"));
+		assert.equal(extension?.commands.size, 0);
 		assert.ok(extension?.handlers.has("session_start"));
 		assert.ok(extension?.handlers.has("context"));
 		assert.ok(extension?.handlers.has("session_tree"));
