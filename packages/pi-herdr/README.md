@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-herdr)](https://www.npmjs.com/package/@narumitw/pi-herdr) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-Connect Pi's interactive lifecycle to Herdr and bundle the operating guidance needed to control Herdr safely.
+Connect Pi's interactive lifecycle to Herdr and bootstrap the operating guidance supplied by the installed Herdr CLI.
 
 ## ✨ Features
 
@@ -12,7 +12,8 @@ Connect Pi's interactive lifecycle to Herdr and bundle the operating guidance ne
 - Updates the widget from Herdr pane lifecycle and agent-status events without polling the CLI.
 - Coalesces rapid state changes and retries short-lived local socket failures without interrupting Pi.
 - Derives blocked state from Pi's public `ui_prompt_start` and `ui_prompt_end` lifecycle events.
-- Bundles the `herdr` skill for explicit Herdr inspection and control requests.
+- Bundles a thin `herdr` bootstrap skill for explicit Herdr inspection and control requests.
+- Loads version-matched operating guidance from the installed `herdr --skill` command.
 - Keeps extension and skill installation in one Pi package.
 
 ## 📦 Install
@@ -44,6 +45,7 @@ Start Pi inside a Herdr-managed pane after installing the package.
 The extension activates automatically when `HERDR_ENV=1`, `HERDR_SOCKET_PATH`, and `HERDR_PANE_ID` are present.
 When the current Herdr workspace contains another recognized agent, Pi shows its state in a widget above the editor.
 Ask Pi to use Herdr, or invoke `/skill:herdr`, when you want it to inspect or control the current Herdr session.
+Before the first control command, the bootstrap loads `herdr --skill` once and reuses those instructions while they remain in the current context.
 
 If the standalone integration and skill are already installed, remove them after installing this package to avoid duplicate state reports and skill-name collisions:
 
@@ -124,10 +126,11 @@ The subscription can deliver matching pane events from other workspaces in the s
 The extension filters presentation to the current workspace, strips terminal controls at the display boundary, and never reads sibling terminal output for the widget.
 The package does not authenticate the endpoint, so trust the environment that launches Pi and controls these variables.
 
-The bundled skill can direct Pi to inspect terminals, create panes, start agents, send input, and run commands through the local `herdr` CLI.
+The bundled bootstrap loads operating guidance from the local `herdr --skill` command only after an explicit user request involving Herdr.
+The returned CLI-owned skill can direct Pi to inspect terminals, create panes, start agents, send input, and run commands through the local `herdr` CLI.
 Those commands execute with the same user permissions as Pi and can affect live terminal sessions.
-The skill requires an explicit user request involving Herdr and stops when `HERDR_ENV` is not `1`.
-It treats a startup-blocked agent as not ready, refuses to prompt an already blocked agent, requires inspecting the blocked UI, and requires asking the user before answering an approval or question dialog.
+The bootstrap stops when `HERDR_ENV` is not `1`, when the CLI is unavailable, or when `herdr --skill` fails.
+Command recipes, approval handling, and other operating safety rules come from the installed Herdr version instead of being duplicated by this package.
 
 ## 🚧 Limitations
 
@@ -136,6 +139,7 @@ It treats a startup-blocked agent as not ready, refuses to prompt an already blo
 - The widget cannot show blocked prompt text because Herdr does not expose it through public pane responses.
 - Herdr exposes no rename event, so agent and pane renames appear after the next topology refresh, reconnect, Pi `/reload`, or session start rather than immediately.
 - Integration requires a running compatible Herdr session and valid injected environment variables.
+- Model control requires an installed Herdr CLI that supports `herdr --skill`.
 - Socket failures are intentionally silent after the bounded retry.
 - The package does not install, start, update, or configure Herdr itself.
 
@@ -144,7 +148,7 @@ It treats a startup-blocked agent as not ready, refuses to prompt an already blo
 ```text
 packages/pi-herdr/
 ├── skills/herdr/
-│   └── SKILL.md              # Herdr control workflow and safety rules
+│   └── SKILL.md              # Thin bootstrap for CLI-owned operating guidance
 ├── src/
 │   ├── index.ts              # Thin Pi entrypoint
 │   ├── herdr-agent-state.ts  # Pi lifecycle and integration ownership

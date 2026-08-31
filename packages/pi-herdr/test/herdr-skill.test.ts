@@ -8,25 +8,28 @@ async function readSkill(): Promise<string> {
 	return readFile(skillUrl, "utf8");
 }
 
-test("protects blocked agent startup and prompting contracts", async () => {
+test("bootstraps the authoritative skill through one guarded shell call", async () => {
 	const skill = await readSkill();
 	for (const contract of [
-		"the command returns `agent_not_ready` immediately but keeps the name available for `agent read` and `agent send-keys`",
-		"Wait until the agent becomes idle before prompting it.",
-		"with `agent_blocked` before sending any input",
-		"Inspect the blocked UI and ask the user before answering it.",
+		"Before the first Herdr control command in a session",
+		`test "\${HERDR_ENV:-}" = 1`,
+		"herdr --skill",
+		"If the environment check or command fails, report the error and stop.",
+		"authoritative operating instructions for the installed Herdr version",
 	]) {
-		assert.ok(skill.includes(contract), `missing safety contract: ${contract}`);
+		assert.ok(skill.includes(contract), `missing bootstrap contract: ${contract}`);
 	}
 });
 
-test("protects stalled prompting and logical-key contracts", async () => {
+test("reuses retained guidance without duplicating Herdr command recipes", async () => {
 	const skill = await readSkill();
+	assert.match(skill, /If it is present, reuse it and do not load it again\./u);
 	assert.match(
 		skill,
-		/A prompt sent from a non-working state must produce an observed lifecycle change within five seconds\. Otherwise Herdr returns `agent_prompt_stalled`/u,
+		/Run it again only after compaction removes those instructions or when the user explicitly asks to refresh them\./u,
 	);
-	assert.match(skill, /Use logical keys for interactive agent UI controls:/u);
-	assert.match(skill, /herdr agent send-keys reviewer esc/u);
-	assert.match(skill, /Herdr validates all keys before writing any bytes\./u);
+	assert.deepEqual(
+		skill.split("\n").filter((line) => line.startsWith("herdr ")),
+		["herdr --skill"],
+	);
 });
