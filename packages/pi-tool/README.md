@@ -48,8 +48,8 @@ Run:
 /tool
 ```
 
-1. Choose **Browse tools** to search the catalog and inspect a tool.
-2. Choose **Active tool status** to turn the widget on or off.
+- Choose **Browse tools** to search the catalog and inspect a tool.
+- Choose **Active tool status** to turn the widget on or off.
 
 The widget remains off until you enable it.
 The command works in TUI and RPC modes.
