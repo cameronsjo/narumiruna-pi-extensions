@@ -1,5 +1,5 @@
 ---
-description: Investigate, plan, and resolve a GitHub issue
+description: Investigate a GitHub issue and propose an implementation plan
 argument-hint: "<issue URL or number>"
 ---
 
