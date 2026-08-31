@@ -55,7 +55,8 @@ Do not remove supported behavior, compatibility guidance, or safety details mere
 ## Content rules
 
 Write user-facing prose in English.
-Put each prose sentence on its own source line.
+Group narrative text into concise Markdown paragraphs, keeping related source lines together without blank lines between every sentence.
+Use lists when independent items, choices, steps, or references are easier to scan separately.
 Keep the introduction and Features section concise enough to scan before installation.
 Document only commands, tools, settings, modes, and guarantees implemented by the package.
 Treat model IDs, paths, session text, and pasted text shown in examples as untrusted terminal input where relevant.

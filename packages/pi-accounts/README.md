@@ -146,7 +146,6 @@ It applies the returned API key, headers, and endpoint, then verifies the effect
 If refresh, conversion, provider overlay, or verification fails, the extension installs a non-secret failing runtime credential and aborts turns for that provider.
 It does not silently fall back to Pi's built-in login, an environment API key, or another named account.
 Other providers remain independent and usable.
-
 Selecting `default` removes the package-owned runtime override and restores the exact provider registration that existed before activation.
 Pi's built-in credentials are never deleted.
 

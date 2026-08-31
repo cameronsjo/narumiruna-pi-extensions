@@ -97,7 +97,6 @@ The saved-message TUI has three flat display views:
 The view uses Pi's injected `app.tree.filter.cycleForward` and `app.tree.filter.cycleBackward` bindings, which default to `Ctrl+O` and `Ctrl+Shift+O`.
 Pi Recall reserves `Ctrl+D` for deletion instead of reusing `/tree`'s direct filter bindings.
 The picker shows the active view, filtered count, cursor position, and configured cycle keys.
-
 Scope, view, query, and selection survive record opening and deletion attempts within one `/recall` flow.
 After successful deletion, selection moves to a neighboring visible record.
 RPC asks for scope explicitly and shows the complete scoped list without TUI-only view or search shortcuts.
@@ -140,7 +139,6 @@ This provenance is shown locally but is excluded from generated quote payloads e
 
 Pi Recall creates no settings, session custom entries, tools, background work, or automatic model context.
 It reads storage only while `/recall` needs it.
-
 Save and delete operations acquire one cross-process lock, reread canonical storage under that lock, and publish a complete JSONL replacement through a unique same-directory `0600` temporary file.
 Lock waiting is abort-aware.
 The canonical file is required to be a regular non-symlink file and is kept at `0600`.

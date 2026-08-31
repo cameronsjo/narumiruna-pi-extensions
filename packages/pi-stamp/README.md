@@ -130,7 +130,6 @@ Missing settings do not create a file or directory.
 Updates preserve unknown fields and publish through a private temporary file plus atomic rename.
 Malformed or invalid files become read-only and are never overwritten; fix the reported file and run `/reload`.
 A fresh process uses defaults while the file is invalid, and a running process retains its last valid settings.
-
 Reads and writes are serialized within one Pi process.
 Separate Pi processes do not share a lock, so concurrent saves are last-writer-wins even though each process rereads immediately before atomic publication.
 

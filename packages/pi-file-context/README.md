@@ -102,7 +102,6 @@ Diff context is never attached automatically.
 ## ⚙️ Settings
 
 File Context reads optional user settings from `~/.pi/agent/pi-file-context.json`, or the equivalent file under Pi's configured agent directory.
-
 Using the defaults does not create the file.
 
 Open `/file-context`, choose **Settings**, then choose **Open shortcut** to change or disable it.

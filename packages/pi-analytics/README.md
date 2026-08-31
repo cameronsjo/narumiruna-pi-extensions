@@ -131,7 +131,6 @@ Linked storage roots, markers, and writer files are rejected.
 
 Stored fields are limited to timestamps and durations; extension-generated record IDs; provider/model IDs and thinking level; tool and skill names; user/model skill source; counts, outcomes, and completion states; HTTP status codes; and classified provider-error categories.
 Provider-supplied tool-call IDs are replaced with local ordinals before publication.
-
 The extension does **not** store prompts, responses, thinking content, tool arguments or results, raw error messages, HTTP headers, cwd/project/file paths, session names or IDs, or credentials.
 
 Each finalized response cycle is one versioned, newline-terminated frame.

@@ -3,7 +3,6 @@
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-worktree)](https://www.npmjs.com/package/@narumitw/pi-worktree) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 Create, inspect, switch, remove, and prune Git worktrees through one guarded `/worktree` manager.
-
 Because `cd` cannot change Pi's parent process directory, switching prepares a Pi session whose cwd is the selected worktree and carries over the active conversation when possible.
 
 ## ✨ Features

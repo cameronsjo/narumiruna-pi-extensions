@@ -5,7 +5,6 @@
 Join ephemeral peer-to-peer chat rooms without leaving Pi.
 Chat messages stay out of prompts, model context, repositories, and agent output.
 Pi Chat is not an anonymous or reliable messaging service.
-
 Pi Chat uses Hyperswarm and HyperDHT for peer discovery and encrypted Noise streams for direct connections.
 
 ## ✨ Features
