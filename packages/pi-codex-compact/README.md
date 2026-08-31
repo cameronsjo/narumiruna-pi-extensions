@@ -198,7 +198,7 @@ It never treats nominal Pi 20K and Codex 20K settings as equal information capac
 Preview its exploratory diagnostic without making a provider request:
 
 ```bash
-just benchmark-codex-compact
+npm run benchmark:codex-compact
 ```
 
 A live run requires `--live`, review of the request and cost exposure, OpenAI Codex OAuth, and Remote V2 entitlement.
@@ -214,7 +214,7 @@ From the repository root:
 ```bash
 npm --workspace @narumitw/pi-codex-compact run check
 npm test
-just pack codex-compact
+npm run package:pack -- codex-compact
 ```
 
 See [`docs/implementation-notes/codex-compaction-mechanism.md`](../../docs/implementation-notes/codex-compaction-mechanism.md) for the underlying Codex mechanism research and the extension boundary.

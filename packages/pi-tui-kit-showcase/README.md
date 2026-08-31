@@ -29,7 +29,7 @@ pi --no-extensions --no-skills --no-session -e ./packages/pi-tui-kit-showcase
 The repository shortcut runs the same build before opening the showcase:
 
 ```bash
-just showcase-tui-kit
+npm run showcase:tui-kit
 ```
 
 ## 🚀 Quick start

@@ -145,13 +145,13 @@ Its provider-free request, cost, and fixture review is in
 From the repository root, preview the default exploratory diagnostic without provider calls:
 
 ```bash
-just benchmark-codex-compact
+npm run benchmark:codex-compact
 ```
 
 Preview calibration with repeated evaluator probes:
 
 ```bash
-just benchmark-codex-compact \
+npm run benchmark:codex-compact -- \
   --suite calibration \
   --repetitions 1 \
   --probes-per-artifact 3
@@ -160,7 +160,7 @@ just benchmark-codex-compact \
 Preview a committed protocol:
 
 ```bash
-just benchmark-codex-compact \
+npm run benchmark:codex-compact -- \
   --protocol packages/pi-codex-compact/benchmark/protocols/<protocol>.json
 ```
 
@@ -193,7 +193,7 @@ A candidate with eight seeds, two densities, and three repetitions makes 240 req
 Run calibration only after reviewing its count and cost guard:
 
 ```bash
-just benchmark-codex-compact \
+npm run benchmark:codex-compact -- \
   --live \
   --suite calibration \
   --repetitions 1 \
@@ -214,7 +214,7 @@ After calibration:
 A live protocol command is:
 
 ```bash
-just benchmark-codex-compact \
+npm run benchmark:codex-compact -- \
   --live \
   --protocol packages/pi-codex-compact/benchmark/protocols/<protocol>.json \
   --max-cost-usd <approved-amount> \

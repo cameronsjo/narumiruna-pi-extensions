@@ -66,7 +66,7 @@ The $100 guard is checked between fixtures and is not a strict invoice cap becau
 Do not run this command until the user separately approves all 240 requests and the $100 between-fixture guard.
 
 ```bash
-just benchmark-codex-compact \
+npm run benchmark:codex-compact -- \
   --live \
   --protocol packages/pi-codex-compact/benchmark/protocols/matched-tail-confirmatory-v3-2026-08-14.json \
   --max-cost-usd 100 \

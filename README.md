@@ -172,30 +172,31 @@ npm run check
 
 `npm test` typechecks the test sources and runs the root and workspace suites with Vitest.
 
-Build generated entries before loading local packages, and use the generic Just pack recipe with an unscoped package name:
+Build generated entries before loading local packages, and use the generic npm pack workflow with an unscoped package name:
 
 ```bash
 npm --workspace @narumitw/pi-goal run build --if-present
 pi -e ./packages/pi-goal
-just pack goal
+npm run package:pack -- goal
 
-# Another build-backed package uses the same local flow and pack recipe
+# Another build-backed package uses the same local flow and pack workflow
 npm --workspace @narumitw/pi-file-context run build --if-present
 pi -e ./packages/pi-file-context
-just pack file-context
+npm run package:pack -- file-context
 
-# Libraries use the same generic pack recipe
-just pack tui-kit
+# Libraries use the same generic pack workflow
+npm run package:pack -- tui-kit
 ```
 
-Run `just --list` to see all development, install, pack, and release recipes. Pull requests that
-change published package behavior should add release intent with `npm run changeset`; packages version
-independently.
+Run `npm run` to see all development, install, pack, and release workflows.
+Pull requests that change published package behavior should add release intent with `npm run changeset`.
+Packages version independently.
 
 <details>
 <summary>Publishing a new scoped package</summary>
 
-`just npm-public @narumitw/pi-new-extension` only changes visibility for an existing npm package. If npm returns 404 for a brand-new package, publish it once with public access:
+`npm run package:public -- @narumitw/pi-new-extension` only changes visibility for an existing npm package.
+If npm returns 404 for a brand-new package, publish it once with public access:
 
 ```bash
 npm publish --workspace @narumitw/pi-new-extension --access public

@@ -38,7 +38,7 @@ The cost guard is not a strict invoice cap because one in-flight fixture may fin
 Do not run this command until the user separately approves the 33 requests and $20 between-fixture guard.
 
 ```bash
-just benchmark-codex-compact \
+npm run benchmark:codex-compact -- \
   --live \
   --suite calibration \
   --repetitions 1 \
