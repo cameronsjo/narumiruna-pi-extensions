@@ -30,8 +30,7 @@
 
 ## Commands
 
-Run commands from the repository root unless a command says otherwise.
-
+- Run commands from the repository root unless a command says otherwise.
 - Run `npm install` to install dependencies.
 - Run `npm run format` to format with Biome.
 - Run `npm run typecheck` to typecheck every workspace.
