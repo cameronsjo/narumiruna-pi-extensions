@@ -62,11 +62,14 @@ Create a project skill under `.pi/skills/<your-skill>/SKILL.md` or a global skil
 Choose a name, trigger description, tool policy, task format, and verification workflow for your own use case.
 The repository-only [`using-pi-subagents` example](https://github.com/narumiruna/pi-extensions/tree/main/packages/pi-subagents/skills/using-pi-subagents) demonstrates one possible design without imposing it on installed users.
 
-1. The call returns a `jobId` immediately, and the job continues in the background.
-2. Continue useful main-agent work until the result is required or a completion arrives.
-3. Call `subagent_send` with `recipient: jobId` to ask an active child a question.
-4. If `subagent_wait` returns `reason: "subagent_message"`, handle the visible request or response and wait for the job again only when needed.
-5. Answer a child-originated request by calling `subagent_send` with its `requestId`.
+The call returns a `jobId` immediately, and the job continues in the background.
+Continue useful main-agent work until the result is required or a completion arrives.
+
+Use messaging only when needed:
+
+- Call `subagent_send` with `recipient: jobId` to ask an active child a question.
+- If `subagent_wait` returns `reason: "subagent_message"`, handle the visible request or response and wait for the job again only when needed.
+- Answer a child-originated request by calling `subagent_send` with its `requestId`.
 
 Completion messages follow Pi's global tool-output expansion state and the `app.tools.expand` binding (`Ctrl+O` by default).
 
