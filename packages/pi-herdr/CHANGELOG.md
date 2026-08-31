@@ -1,5 +1,11 @@
 # @narumitw/pi-herdr
 
+## 0.1.1
+
+### Patch Changes
+
+- f92ea02: Replace the duplicated Herdr operating guide with a thin bootstrap that loads version-matched instructions from `herdr --skill` once per retained context.
+
 ## 0.1.0
 
 ### Minor Changes
