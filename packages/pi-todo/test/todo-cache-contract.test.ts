@@ -146,7 +146,9 @@ test("todo compaction restoration preserves normalized ordinary-request prefixes
 	assert.deepEqual(second.toolDefinitions, first.toolDefinitions);
 	assert.deepEqual(second.messages.slice(0, first.messages.length), first.messages);
 
-	const updatedTodos: Todo[] = [{ step: "implement", status: "completed" }];
+	const updatedTodos: Todo[] = [
+		{ step: "implement", status: "blocked", reason: "waiting for approval" },
+	];
 	const updatedRaw = [
 		...secondRaw,
 		todoToolCallMessage(updatedTodos),

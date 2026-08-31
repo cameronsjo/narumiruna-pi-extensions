@@ -1,15 +1,8 @@
 import assert from "node:assert/strict";
-import type {
-	ContextEvent,
-	ExtensionAPI,
-	ExtensionContext,
-	SessionEntry,
-	Theme,
-} from "@earendil-works/pi-coding-agent";
-import type { Component } from "@earendil-works/pi-tui";
+import type { ContextEvent, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { test } from "vitest";
-import todoWidgetExtension, {
+import {
 	renderTodoWidget,
 	sanitizeTodoStep,
 	TODO_CONTEXT_MESSAGE_TYPE,
@@ -21,196 +14,16 @@ import todoWidgetExtension, {
 	type TodoDetails,
 	WIDGET_KEY,
 } from "../src/todo-widget.js";
-
-type Handler = (event: never, ctx: ExtensionContext) => unknown;
-type WidgetFactory = (_tui: never, theme: Theme) => Component;
-
-interface RegisteredTool {
-	name: string;
-	label: string;
-	description: string;
-	promptSnippet: string;
-	promptGuidelines: string[];
-	parameters: unknown;
-	execute(
-		toolCallId: string,
-		params: { todos: Todo[] },
-		signal: AbortSignal | undefined,
-		onUpdate: undefined,
-		ctx: ExtensionContext,
-	): Promise<{ content: Array<{ type: string; text: string }>; details: TodoDetails }>;
-}
-
-function createHarness() {
-	const handlers = new Map<string, Handler[]>();
-	const entries: Array<{ customType: string; data: unknown }> = [];
-	let tool: RegisteredTool | undefined;
-	const pi = {
-		on(event: string, handler: Handler) {
-			handlers.set(event, [...(handlers.get(event) ?? []), handler]);
-		},
-		registerTool(definition: RegisteredTool) {
-			tool = definition;
-		},
-		appendEntry(customType: string, data: unknown) {
-			entries.push({ customType, data: structuredClone(data) });
-		},
-	} as unknown as ExtensionAPI;
-	todoWidgetExtension(pi);
-
-	return {
-		entries,
-		get tool(): RegisteredTool {
-			assert.ok(tool);
-			return tool;
-		},
-		async emit(event: string, ctx: ExtensionContext) {
-			for (const handler of handlers.get(event) ?? []) await handler({} as never, ctx);
-		},
-		async context(messages: ContextEvent["messages"], ctx: ExtensionContext) {
-			let current = messages;
-			for (const handler of handlers.get("context") ?? []) {
-				const result = (await handler({ messages: current } as never, ctx)) as
-					| { messages?: ContextEvent["messages"] }
-					| undefined;
-				current = result?.messages ?? current;
-			}
-			return current;
-		},
-	};
-}
-
-function createContext(options: { mode?: ExtensionContext["mode"]; branch?: SessionEntry[] } = {}) {
-	const widgets: Array<{
-		key: string;
-		content: WidgetFactory | undefined;
-		options: { placement: "aboveEditor" } | undefined;
-	}> = [];
-	const branch = options.branch ?? [];
-	const sessionManager = {
-		getBranch: () => branch,
-	} as unknown as ExtensionContext["sessionManager"];
-	const ctx = {
-		mode: options.mode ?? "tui",
-		hasUI: options.mode !== "print" && options.mode !== "json",
-		sessionManager,
-		ui: {
-			setWidget(
-				key: string,
-				content: WidgetFactory | undefined,
-				widgetOptions?: { placement: "aboveEditor" },
-			) {
-				widgets.push({ key, content, options: widgetOptions });
-			},
-		},
-	} as unknown as ExtensionContext;
-	return { branch, ctx, widgets };
-}
-
-function identityTheme() {
-	const calls: Array<[string, string]> = [];
-	const theme = {
-		fg(role: string, text: string) {
-			calls.push(["fg", role]);
-			return text;
-		},
-		bold(text: string) {
-			calls.push(["style", "bold"]);
-			return text;
-		},
-		strikethrough(text: string) {
-			calls.push(["style", "strikethrough"]);
-			return text;
-		},
-	} as unknown as Theme;
-	return { calls, theme };
-}
-
-function todoToolResultMessage(
-	details: unknown,
-	toolName = TOOL_NAME,
-	isError = false,
-): ContextEvent["messages"][number] {
-	return {
-		role: "toolResult",
-		toolCallId: "todo-call",
-		toolName,
-		content: [{ type: "text", text: "updated" }],
-		details,
-		isError,
-		timestamp: 0,
-	};
-}
-
-function todoToolCallMessage(
-	todos: unknown,
-	toolName = TOOL_NAME,
-	argumentName: "todos" | "items" = "todos",
-): ContextEvent["messages"][number] {
-	return {
-		role: "assistant",
-		content: [
-			{
-				type: "toolCall",
-				id: "todo-call",
-				name: toolName,
-				arguments: { [argumentName]: todos },
-			},
-		],
-		api: "openai-responses",
-		provider: "test",
-		model: "test",
-		usage: {
-			input: 0,
-			output: 0,
-			cacheRead: 0,
-			cacheWrite: 0,
-			totalTokens: 0,
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-		},
-		stopReason: "toolUse",
-		timestamp: 0,
-	};
-}
-
-function toolResultEntry(
-	details: unknown,
-	toolName = TOOL_NAME,
-	id = "tool-result",
-	parentId: string | null = null,
-): SessionEntry {
-	return {
-		type: "message",
-		id,
-		parentId,
-		timestamp: new Date(0).toISOString(),
-		message: todoToolResultMessage(details, toolName),
-	} as SessionEntry;
-}
-
-function customEntry(
-	customType: string,
-	data: unknown,
-	id: string,
-	parentId: string | null,
-): SessionEntry {
-	return {
-		type: "custom",
-		id,
-		parentId,
-		timestamp: new Date(0).toISOString(),
-		customType,
-		data,
-	} as SessionEntry;
-}
-
-async function setTodos(
-	harness: ReturnType<typeof createHarness>,
-	ctx: ExtensionContext,
-	todos: Todo[],
-) {
-	return harness.tool.execute("todo-call", { todos }, undefined, undefined, ctx);
-}
+import {
+	createContext,
+	createHarness,
+	customEntry,
+	identityTheme,
+	setTodos,
+	todoToolCallMessage,
+	todoToolResultMessage,
+	toolResultEntry,
+} from "./todo-harness.js";
 
 test("registers the todos-by-step schema and concise maintenance guidance", () => {
 	const { tool } = createHarness();
@@ -218,10 +31,12 @@ test("registers the todos-by-step schema and concise maintenance guidance", () =
 	assert.equal(tool.name, "update_todo_list");
 	assert.equal(tool.label, "Todo List");
 	assert.match(tool.description, /whenever actual step state changes/u);
+	assert.match(tool.description, /require a reason for each blocked todo/u);
 	assert.match(tool.promptSnippet, /multi-step work progresses/u);
 	assert.deepEqual(tool.promptGuidelines, [
 		"Use update_todo_list to track work with multiple meaningful steps; skip it for simple, single-step tasks.",
 		"Use update_todo_list to keep the list aligned with actual work: mark a step in_progress before starting it, mark it completed as soon as it finishes, and revise the list before continuing when the plan changes.",
+		"Use blocked with a concise reason only when progress depends on an external action or condition; blocked does not mean completed.",
 		"Before a progress report or final response, call update_todo_list to reconcile every todo with actual work; do not report completion while the list is stale.",
 		"On every update_todo_list call, send the complete current todos array, keep at most one todo in_progress, and send an empty array when no tracked work remains.",
 	]);
@@ -238,7 +53,7 @@ test("registers the todos-by-step schema and concise maintenance guidance", () =
 	};
 	assert.equal(todosSchema.maxItems, 50);
 	assert.deepEqual(todosSchema.items?.required, ["step", "status"]);
-	assert.deepEqual(Object.keys(todosSchema.items?.properties ?? {}), ["step", "status"]);
+	assert.deepEqual(Object.keys(todosSchema.items?.properties ?? {}), ["step", "status", "reason"]);
 	assert.deepEqual(todosSchema.items?.properties?.step, {
 		description: "A concise, action-oriented step",
 		type: "string",
@@ -247,8 +62,14 @@ test("registers the todos-by-step schema and concise maintenance guidance", () =
 	});
 	assert.deepEqual(todosSchema.items?.properties?.status, {
 		type: "string",
-		enum: ["pending", "in_progress", "completed"],
+		enum: ["pending", "in_progress", "completed", "blocked"],
 		description: "The step's current status",
+	});
+	assert.deepEqual(todosSchema.items?.properties?.reason, {
+		description: "Required only for blocked todos; explain what must unblock the step",
+		type: "string",
+		minLength: 1,
+		maxLength: 200,
 	});
 });
 
@@ -721,7 +542,7 @@ test("tool replaces the complete list, updates the widget, clears it, and reject
 	assert.deepEqual(widget?.options, { placement: "aboveEditor" });
 	assert.equal(typeof widget?.content, "function");
 	const { theme } = identityTheme();
-	assert.deepEqual(widget?.content?.(undefined as never, theme).render(80), [
+	assert.deepEqual(widget?.content?.(current.tui, theme).render(80), [
 		"─".repeat(80),
 		"Todo · 1/3 complete",
 		"✓ task 1",
@@ -738,7 +559,7 @@ test("tool replaces the complete list, updates the widget, clears it, and reject
 	);
 	await assert.rejects(
 		setTodos(harness, current.ctx, [{ step: " \n ", status: "pending" }]),
-		/non-whitespace step/u,
+		/step must contain non-whitespace/u,
 	);
 
 	const cleared = await setTodos(harness, current.ctx, []);
@@ -760,13 +581,11 @@ test("restores current and legacy branch-local state on startup and tree navigat
 	await harness.emit("session_start", current.ctx);
 
 	const { theme } = identityTheme();
-	assert.deepEqual(
-		current.widgets
-			.at(-1)
-			?.content?.(undefined as never, theme)
-			.render(80),
-		["─".repeat(80), "Todo · 0/1 complete", "▶ restored"],
-	);
+	assert.deepEqual(current.widgets.at(-1)?.content?.(current.tui, theme).render(80), [
+		"─".repeat(80),
+		"Todo · 0/1 complete",
+		"▶ restored",
+	]);
 
 	const migratedContext = await harness.context(
 		[
@@ -791,13 +610,11 @@ test("restores current and legacy branch-local state on startup and tree navigat
 		}),
 	);
 	await harness.emit("session_tree", current.ctx);
-	assert.deepEqual(
-		current.widgets
-			.at(-1)
-			?.content?.(undefined as never, theme)
-			.render(80),
-		["─".repeat(80), "Todo · 0/1 complete", "▶ restored from current tool name"],
-	);
+	assert.deepEqual(current.widgets.at(-1)?.content?.(current.tui, theme).render(80), [
+		"─".repeat(80),
+		"Todo · 0/1 complete",
+		"▶ restored from current tool name",
+	]);
 
 	current.branch.push(
 		toolResultEntry({
@@ -806,13 +623,11 @@ test("restores current and legacy branch-local state on startup and tree navigat
 		}),
 	);
 	await harness.emit("session_tree", current.ctx);
-	assert.deepEqual(
-		current.widgets
-			.at(-1)
-			?.content?.(undefined as never, theme)
-			.render(80),
-		["─".repeat(80), "Todo · 1/1 complete", "✓ finished branch"],
-	);
+	assert.deepEqual(current.widgets.at(-1)?.content?.(current.tui, theme).render(80), [
+		"─".repeat(80),
+		"Todo · 1/1 complete",
+		"✓ finished branch",
+	]);
 });
 
 test("guards component widgets to TUI mode and ignores stale session shutdown", async () => {
