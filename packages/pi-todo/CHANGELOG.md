@@ -1,5 +1,11 @@
 # @narumitw/pi-todo
 
+## 0.3.0
+
+### Minor Changes
+
+- b301911: Add adaptive widget layouts, transient completion summaries, actionable validation, read-only display settings, and blocked todos with versioned session migration.
+
 ## 0.2.0
 
 ### Minor Changes
