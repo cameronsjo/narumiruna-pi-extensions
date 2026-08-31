@@ -1,5 +1,5 @@
 ---
-description: Investigate, plan, and resolve a GitHub issue
+description: Investigate a GitHub issue and propose an implementation plan
 argument-hint: "<issue URL or number>"
 ---
 
@@ -15,18 +15,7 @@ Follow this workflow:
    - For a bug, reproduce it safely when practical, compare expected and actual behavior, and identify the root cause.
    - For a feature, identify the users, use cases, constraints, compatibility needs, and measurable acceptance criteria.
 5. Define the scope, expected outcome, implementation approach, risks, and verification plan.
-6. Present a concise implementation plan and wait for explicit approval.
+6. Present a concise implementation plan.
 
-Do not modify files, branches, or issue metadata before approval.
-
-After approval:
-
-1. Implement the smallest complete solution that addresses the root cause or accepted requirements.
-2. Preserve unrelated behavior and follow all repository conventions.
-3. Add or update tests that would fail without the solution.
-4. Run focused verification and the repository's required checks.
-5. If a reproduced issue is genuinely a bug and the repository uses a `bug` label, add that label when permitted.
-6. Recheck the acceptance criteria and inspect the final diff for unintended changes.
-7. Summarize the solution, verification evidence, and any remaining risks or unverified paths.
-
-Do not claim reproduction, completion, or passing checks without evidence.
+This work does not modify files, branches, or issue metadata.
+Do not claim reproduction or passing checks without evidence.
