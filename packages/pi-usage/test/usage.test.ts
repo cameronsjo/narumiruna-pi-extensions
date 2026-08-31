@@ -1586,6 +1586,84 @@ test("Codex reset countdown repaints locally and stops across replacement and sh
 	assert.equal(fetches, 2);
 });
 
+test("Codex reset countdown ignores a stale extension context", async (t) => {
+	const originalFetch = globalThis.fetch;
+	vi.useFakeTimers();
+	t.onTestFinished(() => {
+		globalThis.fetch = originalFetch;
+		vi.useRealTimers();
+	});
+	const now = Date.parse("2026-08-29T00:00:00Z");
+	vi.setSystemTime(now);
+	let fetches = 0;
+	globalThis.fetch = async () => {
+		fetches += 1;
+		return new Response(
+			JSON.stringify({
+				rate_limit: {
+					primary_window: {
+						used_percent: 20,
+						limit_window_seconds: 18_000,
+						reset_at: (now + 150_000) / 1_000,
+					},
+				},
+			}),
+			{ status: 200 },
+		);
+	};
+	const settings = memorySettingsRuntime({ codexStatusResetCountdown: true });
+	const mock = createMockPi();
+	usageExtension(mock.pi, { settingsRuntime: settings.runtime });
+	const { ctx, statuses } = createMockContext({
+		model: codexModel,
+		modelRegistry: {
+			getProviderAuth: async () => ({ auth: { apiKey: codexToken } }),
+			getAvailable: () => [codexModel],
+			getAll: () => [codexModel],
+			getProviderAuthStatus: () => ({ configured: true }),
+			getProviderDisplayName: (provider: string) => provider,
+		},
+	});
+
+	await mock.events.get("session_start")?.[0]?.({}, ctx);
+	await vi.advanceTimersByTimeAsync(0);
+	assert.equal(statuses.get("usage"), "codex 80% ↻ 3m");
+	assert.equal(fetches, 1);
+
+	const staleError = new Error(
+		"This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload().",
+	);
+	let staleModelReads = 0;
+	let staleUiReads = 0;
+	Object.defineProperties(ctx, {
+		model: {
+			configurable: true,
+			get() {
+				staleModelReads += 1;
+				throw staleError;
+			},
+		},
+		ui: {
+			configurable: true,
+			get() {
+				staleUiReads += 1;
+				throw staleError;
+			},
+		},
+	});
+
+	await vi.advanceTimersByTimeAsync(60_000);
+	assert.equal(staleModelReads, 0);
+	assert.equal(staleUiReads, 1);
+	assert.equal(statuses.get("usage"), "codex 80% ↻ 3m");
+	assert.equal(fetches, 1);
+
+	await vi.advanceTimersByTimeAsync(60_000);
+	assert.equal(staleModelReads, 0);
+	assert.equal(staleUiReads, 1);
+	assert.equal(fetches, 1);
+});
+
 test("a slow command cannot overwrite status after the selected model changes", async (t) => {
 	const originalFetch = globalThis.fetch;
 	t.onTestFinished(() => {
