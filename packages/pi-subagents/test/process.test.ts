@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, test, vi } from "vitest";
@@ -16,15 +16,22 @@ import type { ChildControl, ChildRequest } from "../src/types.js";
 
 let directory: string;
 let previousPackageDirectory: string | undefined;
+let previousExecPath: string;
+let previousBunVersion: string | undefined;
 
 beforeEach(() => {
 	directory = mkdtempSync(path.join(os.tmpdir(), "pi-subagents-process-"));
 	previousPackageDirectory = process.env.PI_PACKAGE_DIR;
+	previousExecPath = process.execPath;
+	previousBunVersion = process.versions.bun;
 });
 
 afterEach(() => {
 	if (previousPackageDirectory === undefined) delete process.env.PI_PACKAGE_DIR;
 	else process.env.PI_PACKAGE_DIR = previousPackageDirectory;
+	process.execPath = previousExecPath;
+	if (previousBunVersion === undefined) delete process.versions.bun;
+	else process.versions.bun = previousBunVersion;
 	rmSync(directory, { recursive: true, force: true });
 	vi.useRealTimers();
 	vi.restoreAllMocks();
@@ -65,6 +72,24 @@ test("buildPiArgs isolates the RPC child and preserves selected communication to
 
 	const noWorkTools = buildPiArgs(childRequest({ tools: [] }));
 	assert.equal(noWorkTools[noWorkTools.indexOf("--tools") + 1], "subagent_send,subagent_wait");
+});
+
+test("runChild uses a bundled Pi executable when its manifest CLI is absent", async () => {
+	installFakePi(
+		`
+async function handle(command) {
+  if (command.type !== "prompt") return;
+  respond(command);
+  event(message("bundled Pi child completed"));
+  event({ type: "agent_settled" });
+}
+`,
+		{ bundled: true },
+	);
+
+	const result = await runChild(childRequest());
+	assert.equal(result.state, "completed");
+	assert.equal(result.result, "bundled Pi child completed");
 });
 
 test("runChild classifies completed and partial RPC output", async () => {
@@ -440,12 +465,14 @@ function childRequest(overrides: Partial<ChildRequest> = {}): ChildRequest {
 	};
 }
 
-function installFakePi(source: string): void {
+function installFakePi(source: string, options: { bundled?: boolean } = {}): void {
 	const packageDirectory = path.join(directory, "pi-core");
+	const executableName = options.bundled ? "pi" : "fake-pi.mjs";
+	const executablePath = path.join(packageDirectory, executableName);
 	mkdirSync(packageDirectory, { recursive: true });
 	writeFileSync(
-		path.join(packageDirectory, "fake-pi.mjs"),
-		`import fs from "node:fs";
+		executablePath,
+		`${options.bundled ? "#!/usr/bin/env node\n" : ""}import fs from "node:fs";
 const brokerCredentials = JSON.parse(fs.readFileSync(3, "utf8"));
 const event = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
 const respond = (command, success = true, error) => event({
@@ -474,12 +501,17 @@ process.stdin.on("data", (chunk) => {
 });
 `,
 	);
+	if (options.bundled) chmodSync(executablePath, 0o755);
 	writeFileSync(
 		path.join(packageDirectory, "package.json"),
 		JSON.stringify({
 			name: "@earendil-works/pi-coding-agent",
-			bin: { pi: "./fake-pi.mjs" },
+			bin: { pi: options.bundled ? "./dist/bundle/cli.js" : "./fake-pi.mjs" },
 		}),
 	);
 	process.env.PI_PACKAGE_DIR = packageDirectory;
+	if (options.bundled) {
+		process.execPath = executablePath;
+		process.versions.bun = "1.3.0";
+	}
 }
