@@ -36,7 +36,6 @@ pi --no-extensions -e ./packages/pi-ticker
 ```
 
 The package declares `dist/index.ts`, so an unbuilt local checkout must run the build before Pi loads the package directory.
-
 Pi loads the generated TypeScript entrypoint through Jiti while menu code remains in lazy JavaScript chunks.
 
 Extensions run with Pi's permissions, so install only trusted packages.
@@ -50,29 +49,20 @@ Open the ticker manager in TUI mode:
 ```
 
 Choose **Add custom ticker…** and enter a Yahoo Finance symbol such as `MSFT`, `SPY`, or `BTC-USD`.
-
 The widget appears after the settings save and the first quote request completes.
 
 ## 🧭 Ticker manager
 
 `/ticker` opens **Manage tickers** in TUI and RPC modes.
-
 In TUI mode, one screen provides search, symbol removal, direct add, widget visibility, and refresh actions.
-
 The configured confirm binding or Space activates the focused row.
-
 When a valid search has no match, the add row changes to **Add SYMBOL** for direct addition.
-
 `Shift+Up` and `Shift+Down` reorder the focused ticker when the search field is empty and those keys do not conflict with configured standard bindings.
 
 RPC mode exposes portable dialogs for choosing and moving a ticker.
-
 Each accepted change saves immediately.
-
 If a save fails, the manager restores the previous displayed and effective value.
-
 Removing the final symbol hides the widget and stops polling.
-
 Escape closes transient TUI flows, and `Ctrl+C` remains a hard-close path.
 
 ## 💬 Commands
@@ -84,9 +74,7 @@ Escape closes transient TUI flows, and `Ctrl+C` remains a hard-close path.
 - `/ticker reset` reports that no default symbol list exists and leaves settings unchanged.
 
 Known routes reject trailing arguments.
-
 All command routes support TUI and RPC modes.
-
 Print and JSON modes reject the command before changing settings.
 
 ## ⚙️ Settings
@@ -98,11 +86,8 @@ The canonical user settings file is:
 ```
 
 The normal path is `~/.pi/agent/pi-ticker.json`.
-
 Pi's configured agent directory replaces `~/.pi/agent` when applicable.
-
 Ticker preferences are user-scoped and apply across projects.
-
 The extension does not read project settings or extension-specific environment-variable overrides.
 
 A missing file uses an empty symbol list, keeps the widget enabled, and does not create the file, its parent directory, or a polling task.
@@ -115,7 +100,6 @@ The settings file must contain a JSON object with these optional fields:
 | `widgetEnabled` | boolean | `true` | Controls widget visibility and quote polling. |
 
 Each symbol may contain up to 15 uppercase letters, digits, `.`, `^`, `=`, or `-`.
-
 Lowercase command and menu input is normalized to uppercase.
 
 Example:
@@ -128,38 +112,27 @@ Example:
 ```
 
 Unknown JSON fields are preserved during saves.
-
 Malformed or invalid settings use runtime defaults and leave the file unchanged.
-
 Pi shows a warning when UI is available.
 
 Writes are ordered within one Pi process and published through a temporary file plus atomic rename.
-
 Reload and session replacement wait for accepted writes before loading the next settings snapshot.
-
 Separate Pi processes do not share a cross-process lock.
-
 Settings reload on startup and `/reload`.
 
 ## 🔒 Security and privacy
 
 The extension requests public quote metadata from Yahoo Finance over HTTPS without an API key.
-
 Requested ticker symbols and the host network address are visible to Yahoo Finance.
-
 The user settings file contains only ticker symbols and widget visibility; it stores no credential or secret.
-
 The extension displays ticker symbols and quote data locally without adding them to model context.
 
 ## 🚧 Limitations
 
-Yahoo Finance is an unofficial dependency and may rate-limit, delay, change, or remove the endpoint.
-
-Quotes may be delayed and are not suitable for trading decisions.
-
-Each request times out after 10 seconds, and one symbol failure does not discard successful symbols.
-
-Each Pi session owns its polling queue, and separate Pi processes do not share one.
+- Yahoo Finance is an unofficial dependency and may rate-limit, delay, change, or remove the endpoint.
+- Quotes may be delayed and are not suitable for trading decisions.
+- Each request times out after 10 seconds, and one symbol failure does not discard successful symbols.
+- Each Pi session owns its polling queue, and separate Pi processes do not share one.
 
 ## 🗂️ Package layout
 

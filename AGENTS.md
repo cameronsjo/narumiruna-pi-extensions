@@ -6,7 +6,8 @@
 - Use clear, familiar words and concise, accurate sentences without repetition.
 - Explain the main idea simply before adding technical detail.
 - Make documented rules specific and verifiable.
-- Write one sentence per source line in prose.
+- In human-facing documentation such as README files, use concise paragraphs for narrative text and lists only when separate items are easier to scan.
+- Keep AGENTS.md instructions as bullet lists with one enforceable sentence per bullet.
 
 ## Repository structure
 

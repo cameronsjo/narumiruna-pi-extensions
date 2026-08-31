@@ -3,9 +3,7 @@
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-chrome-devtools)](https://www.npmjs.com/package/@narumitw/pi-chrome-devtools) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 Inspect browser tabs, navigate pages, evaluate JavaScript, and capture screenshots from Pi through the Chrome DevTools Protocol.
-
 Use these native Pi tools for web debugging, UI validation, and browser-assisted investigation without an MCP server.
-
 The design is inspired by [`chrome-devtools-mcp`](https://github.com/ChromeDevTools/chrome-devtools-mcp), but compatibility is not guaranteed.
 
 ## ✨ Features
@@ -206,29 +204,21 @@ It never closes user-started browsers or remote endpoints.
 ### Tool exposure
 
 The extension registers eight tools: one loader, five stable DevTools capabilities, and two fixed experimental WebMCP gateways.
-
 With native deferred-tool support, only `chrome_devtools_load` starts active.
-
 The loader accepts a task-oriented `query`, matches it against the five stable capabilities plus enabled WebMCP gateways, and adds matching available tools without removing any active Pi tool.
-
 Loaded capability tools remain active for the rest of the session unless the user makes them unavailable through `/chrome-devtools`.
 
 Pi uses native deferred tool references on compatible Anthropic models, native additional-tools or tool-search loading on compatible OpenAI and Codex Responses models, and native Kimi loading on compatible OpenAI Chat Completions models.
-
 Kimi-compatible models declare `compat.deferredToolsMode: "kimi"` in Pi's model metadata.
-
 `azure-openai-responses` remains eager because Pi's Azure adapter does not implement native deferred tool-search serialization.
 
 When the selected model/provider lacks native deferred support, the extension activates every capability allowed by settings before the next model request instead of using Pi's cache-invalidating lazy-loading fallback.
-
 After a session enters eager exposure, it stays eager across later model switches to avoid removing tool definitions within that session.
-
 The capability tools omit active-only prompt snippets so native deferred loading does not rebuild the system-prompt prefix.
 
 The saved `tools` array controls which capabilities the extension may expose.
 The `webmcp.enabled` gate takes precedence, so persisted WebMCP names cannot bypass a disabled gate.
 Page-provided tool definitions appear only in list results and never alter Pi's provider-visible tool definitions.
-
 An empty array leaves the loader active but makes every browser capability unavailable.
 
 ### Screenshot files

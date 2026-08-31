@@ -48,14 +48,11 @@ Run:
 /tool
 ```
 
-Choose **Browse tools** to search the catalog and inspect a tool.
-
-Choose **Active tool status** to turn the widget on or off.
+1. Choose **Browse tools** to search the catalog and inspect a tool.
+2. Choose **Active tool status** to turn the widget on or off.
 
 The widget remains off until you enable it.
-
 The command works in TUI and RPC modes.
-
 It rejects arguments, print mode, and JSON mode before opening an interactive flow.
 
 ## 💬 Commands
@@ -65,13 +62,11 @@ It rejects arguments, print mode, and JSON mode before opening an interactive fl
 | `/tool` | Browse configured tools and configure the active-tool widget. |
 
 `/tool` accepts no arguments and never enables, disables, or executes tools.
-
 Its menu provides **Browse tools**, **Active tool status**, **Status**, and **Help**.
 
 ## ⚙️ Settings
 
 The user settings file is `<getAgentDir()>/pi-tool.json`, normally `~/.pi/agent/pi-tool.json`.
-
 The extension does not create the file while the widget remains at its default.
 
 Use this document to enable the widget manually:
@@ -83,45 +78,31 @@ Use this document to enable the widget manually:
 ```
 
 `activeToolStatus` accepts `true` or `false` and defaults to `false` when absent.
-
 Manual edits apply after `/reload` or the next session start.
-
 The `/tool` menu toggle applies changes immediately and persists them through atomic file replacement.
-
 Settings writes preserve unknown fields.
-
 Malformed JSON, invalid values, symbolic links, and non-file settings paths are treated as invalid and remain unchanged.
-
 Pi shows a warning when UI is available.
-
 Writes are ordered within one Pi process, but separate Pi processes do not share a settings lock.
 
 ## ℹ️ Active-tool widget
 
 When enabled, the widget shows every name returned by Pi's public `pi.getActiveTools()` API above the editor.
-
 It refreshes on relevant lifecycle events and polls for changes made by other extensions.
-
 It clears immediately when disabled or when the session is replaced, reloaded, or shut down.
-
 Tool names are sanitized and bounded before terminal rendering.
 
 ## 🔒 Security and privacy
 
 The catalog reads Pi's public tool metadata and displays it through the `/tool` interface.
-
 It does not execute tools, change the active tool set, make network requests, or add catalog data to model context.
-
 Tool metadata can include local paths and prompt text, so review the screen before sharing terminal output.
 
 ## 🚧 Limitations
 
 The catalog shows the name, description, parameter schema, prompt guidelines, and source metadata returned by Pi's public `pi.getAllTools()` API.
-
 It adds effective snippets from `ctx.getSystemPromptOptions()` for the current active tool set.
-
 Pi does not expose an inactive tool's configured snippet, implementation, runtime secrets, or label through these APIs.
-
 Therefore, **None in the current system prompt** does not prove that an inactive tool's full definition has no snippet.
 
 ## 🗂️ Package layout

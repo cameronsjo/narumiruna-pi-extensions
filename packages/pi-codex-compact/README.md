@@ -4,7 +4,6 @@
 
 Use Codex Remote Compaction V2 in Pi for models that use the `openai-codex-responses` API.
 The extension stores an opaque server-generated checkpoint and replays it in later compatible requests instead of generating a local plaintext summary.
-
 Pi still decides when compaction runs and keeps its normal `/compact`, threshold, overflow, and session-publication behavior.
 
 ## ✨ Features
@@ -188,11 +187,8 @@ These hard byte ceilings are intentionally not configurable.
 ## 📊 Benchmark
 
 The repository includes a seeded benchmark that compares uncompressed full context, Pi-native plaintext compaction, and this extension's Remote V2 path.
-
 It keeps history length nearly fixed while varying information density across five state categories and ten history epochs.
-
 Benchmark v3 uses repeated artifacts, isolated evaluator probes, seed-level paired statistics, one Pi SDK estimator for dry and live fixtures, and committed protocol manifests for confirmatory candidates.
-
 It never treats nominal Pi 20K and Codex 20K settings as equal information capacity or automatically claims that protocol-conformant evidence was genuinely held out.
 
 Preview its exploratory diagnostic without making a provider request:
@@ -202,9 +198,7 @@ npm run benchmark:codex-compact
 ```
 
 A live run requires `--live`, review of the request and cost exposure, OpenAI Codex OAuth, and Remote V2 entitlement.
-
 The repository preserves the explicitly labeled v2 matched-tail diagnostic and the v3 calibration evidence, while seeds 301–304 remain consumed and unavailable for future confirmatory protocols.
-
 See the [benchmark guide](https://github.com/narumiruna/pi-extensions/tree/main/packages/pi-codex-compact/benchmark) for manifests, repetitions, commands, privacy, cost semantics, and interpretation limits.
 
 ## 🧪 Development

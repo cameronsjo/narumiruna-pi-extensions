@@ -3,7 +3,6 @@
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-usage)](https://www.npmjs.com/package/@narumitw/pi-usage) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 Inspect usage and DeepSeek API balance for Pi's active provider account, query other configured providers, and toggle Fast mode for supported OpenAI Codex models.
-
 The extension keeps each provider's native quota, allowance, and spending semantics instead of treating unlike values as equivalent.
 xAI OAuth subscription reporting follows the reviewed Grok Build contract and runs only after an explicit `/usage` action.
 
@@ -122,7 +121,6 @@ Submit a blank value from the TUI input, or remove the JSON field and run `/relo
 ### Codex Fast mode
 
 Run `/fast` without arguments to toggle Fast for the active supported Codex model, or use **Turn Fast mode on/off** in `/usage`.
-
 Fast is about 1.5× faster and uses more of your plan allowance.
 The `codexFastMode` preference defaults to Off.
 
@@ -138,7 +136,6 @@ Repair or remove an invalid file, then run `/reload` before trying the toggle ag
 ### Codex statusline reset countdown
 
 The `codexStatusResetCountdown` preference defaults to `true`. It replaces the window labels with the time remaining until each returned limit resets.
-
 Turn **Codex reset countdown** Off in the TUI Settings screen, or set it to `false` in `pi-usage.json` and run `/reload`, to restore the legacy `5h` and `wk` labels:
 
 ```json
@@ -501,7 +498,6 @@ packages/pi-usage/
 ```
 
 `index.ts` is the Pi entrypoint and forwards the default factory from `usage.ts` while retaining the package's named helper exports; other source modules are internal.
-
 The generated runtime is built from the authoritative `src/index.ts` graph and does not import back into `src`.
 
 ## 🔎 Keywords

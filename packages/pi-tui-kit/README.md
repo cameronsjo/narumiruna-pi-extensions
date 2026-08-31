@@ -4,7 +4,6 @@
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Pi TUI Kit provides typed menus and interactions for independently installable [Pi](https://pi.dev) extensions.
-
 It supplies declarative screens, standalone interactions, terminal-display helpers, and interaction lifecycle ownership.
 Consumers reuse its navigation, rendering, cancellation, and mode adaptation instead of rebuilding them.
 
@@ -25,7 +24,6 @@ npm install @narumitw/pi-tui-kit
 ```
 
 The published package contains built ESM and declarations in `dist/`; consumers do not need a TypeScript loader for dependencies.
-
 The package root remains the supported entrypoint for menus and interaction runners.
 When startup does not need the full Kit runtime, import a lightweight display-helper subpath.
 The available subpaths are `editor-status-widget`, `terminal-document`, `terminal-text`, and `interaction-hints` under `@narumitw/pi-tui-kit`.

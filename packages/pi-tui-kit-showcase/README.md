@@ -3,7 +3,6 @@
 [![private](https://img.shields.io/badge/npm-private-lightgrey)](./package.json) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 This local maintainer demo previews the public `@narumitw/pi-tui-kit` screens and standalone interactions in one menu.
-
 All demo state stays in memory, and the showcase writes no settings.
 
 ## ✨ Features
@@ -18,7 +17,6 @@ All demo state stays in memory, and the showcase writes no settings.
 ## 📦 Install
 
 This package is private and is not meant for npm publication.
-
 Build Kit, then load only this extension from a local checkout:
 
 ```bash
@@ -41,19 +39,14 @@ Run this command in Pi TUI mode:
 ```
 
 Choose a row to inspect its screen or interaction pattern.
-
 Questionnaire, task, confirmation, and live-choice rows temporarily close the menu and reopen it after the interaction finishes.
-
 RPC mode reports that the showcase requires TUI mode.
-
 Print and JSON modes reject the command without ad hoc output.
 
 ## ⚙️ Settings
 
 The showcase has no extension-owned settings file.
-
 The **Settings screen** row changes only in-memory demo values.
-
 Those values reset when the command runs again or Pi replaces the session owner.
 
 ## 💬 Commands
@@ -61,9 +54,7 @@ Those values reset when the command runs again or Pi replaces the session owner.
 ### `/tui-kit-showcase`
 
 Opens the showcase menu in TUI mode.
-
 The command accepts no arguments.
-
 Any argument is rejected with `Usage: /tui-kit-showcase`.
 
 ## 🗂️ Package layout

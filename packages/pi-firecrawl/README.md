@@ -95,37 +95,24 @@ The legacy filename is deprecated and will be removed in a future major release.
 ### Tool exposure
 
 The extension registers six tools: one loader and five API capabilities.
-
 With native deferred-tool support, only `firecrawl_load` starts active.
-
 The loader accepts a task-oriented `query`, filters to capabilities allowed by settings, and adds up to three matching tools by default without removing any active Pi tool.
-
 Set `limit` from 1 to 5 to change the maximum number loaded by one call.
-
 A general website-crawl query can load both `firecrawl_crawl` and `firecrawl_crawl_status`, while a status-specific query loads the status capability.
-
 Loaded capability tools remain active for the current session until you make them unavailable through `/firecrawl`.
-
 On reload, resume, or fork, capabilities recorded by `firecrawl_load` on the active branch are restored when the current catalog still allows them.
 
 Pi uses native deferred tool references on compatible Anthropic models, native additional-tools or tool-search loading on compatible OpenAI and Codex Responses models, and native Kimi loading on compatible OpenAI Chat Completions models.
-
 Kimi-compatible models declare `compat.deferredToolsMode: "kimi"` in Pi's model metadata.
-
 `azure-openai-responses` remains eager because Pi's Azure adapter does not implement native deferred tool-search serialization.
-
 When the selected model/provider lacks native deferred support, the extension activates every capability allowed by settings before the next model request instead of using Pi's cache-invalidating lazy-loading fallback.
-
 After a session enters eager exposure, it stays eager across later model switches to avoid removing tool definitions within that session.
-
 The capability tools omit active-only prompt metadata so native deferred loading does not rebuild the system-prompt prefix.
 
 The saved `tools` array controls which capabilities the extension may expose.
-
 An empty array leaves the loader active but makes every Firecrawl API capability unavailable.
 
 `firecrawl_load` performs no network request and does not create response artifacts.
-
 Every API capability fails with a clear configuration error when `FIRECRAWL_API_KEY` is missing, and the always-active loader guidance tells the agent not to retry repeatedly.
 
 Tool output is limited to 50 KB or 2,000 lines, whichever is reached first.
@@ -165,13 +152,10 @@ Direct subcommands are also available:
   The slash command and `firecrawl_load` remain available.
 
 The menu, `tools`, `help`, `config`, `quickstart`, and `status` routes require TUI or RPC mode.
-
 Print and JSON modes reject those routes and unknown commands before entering interactive UI.
-
 The deterministic `enable` and `disable` routes remain available in every mode.
 
 Tool-selector toggles save immediately in user action order.
-
 Done, Escape, or cancellation closes the selector without undoing changes that were already saved.
 
 ## 🔒 Security and privacy
@@ -241,7 +225,6 @@ packages/pi-firecrawl/
 ```
 
 `index.ts` is the Pi entrypoint and forwards to `firecrawl.ts`; the other source modules are internal.
-
 The generated runtime is built from the authoritative `src/index.ts` graph and does not import back into `src`.
 
 ## 🔎 Keywords

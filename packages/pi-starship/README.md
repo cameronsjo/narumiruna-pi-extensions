@@ -713,7 +713,6 @@ The Cargo package lookup is the only ancestor walk and stops after eight parents
 Create `src/modules/<name>.ts` with its format variables, defaults, and runtime value resolver, then register it in display order in `src/modules/catalog.ts`.
 Configuration names, validation variables, defaults, and `$all` ordering are derived from that catalog.
 Add the module to the built-in root format only when it should be visible by default, then document and test its user-facing values.
-
 Keep `extension_status` last in the catalog so arbitrary third-party statuses follow native module output.
 
 ## 🗂️ Package layout

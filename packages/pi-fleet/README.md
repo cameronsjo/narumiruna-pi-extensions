@@ -4,7 +4,6 @@
 
 Launch another Pi process in a terminal split without replacing the current session.
 You can also connect trusted local Pi sessions for bounded notifications and one-turn requests.
-
 Pi Fleet detects tmux, Zellij, or Ghostty automatically, and you can pin a backend when needed.
 
 ## ✨ Features
@@ -39,7 +38,6 @@ pi --no-extensions --no-skills --no-session -e ./packages/pi-fleet
 ```
 
 The package declares `dist/index.ts`, so an unbuilt local checkout must run the build before Pi loads the package directory.
-
 A child started in any supported terminal uses normal Pi extension discovery.
 Install Pi Fleet persistently to test split-and-auto-join because the child does not inherit the parent's temporary `-e` argument.
 
