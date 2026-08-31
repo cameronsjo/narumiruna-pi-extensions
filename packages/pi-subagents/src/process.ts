@@ -498,12 +498,6 @@ function resolvePiInvocation(args: string[]): { command: string; args: string[] 
 	}
 	const declared = manifest.bin.pi;
 	if (path.isAbsolute(declared)) throw new Error("Pi core bin.pi must be package-relative.");
-	const cliPath = fs.realpathSync(path.resolve(packageDirectory, declared));
-	const relative = path.relative(packageDirectory, cliPath);
-	if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-		throw new Error("Pi core bin.pi escapes its package directory.");
-	}
-	if (!fs.statSync(cliPath).isFile()) throw new Error("Pi core bin.pi is not a file.");
 	if (
 		globalThis.process.versions.bun &&
 		/^pi(?:\.exe)?$/iu.test(path.basename(globalThis.process.execPath)) &&
@@ -511,6 +505,12 @@ function resolvePiInvocation(args: string[]): { command: string; args: string[] 
 	) {
 		return { command: globalThis.process.execPath, args };
 	}
+	const cliPath = fs.realpathSync(path.resolve(packageDirectory, declared));
+	const relative = path.relative(packageDirectory, cliPath);
+	if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+		throw new Error("Pi core bin.pi escapes its package directory.");
+	}
+	if (!fs.statSync(cliPath).isFile()) throw new Error("Pi core bin.pi is not a file.");
 	return { command: globalThis.process.execPath, args: [cliPath, ...args] };
 }
 
