@@ -1,5 +1,11 @@
 # @narumitw/pi-subagents
 
+## 3.0.1
+
+### Patch Changes
+
+- 99f0bcc: Start subagent jobs from Pi's bundled executable when the package manifest points to a source-only CLI path.
+
 ## 3.0.0
 
 ### Major Changes
