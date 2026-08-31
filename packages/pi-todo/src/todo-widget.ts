@@ -380,7 +380,7 @@ export function validateTodoArguments(value: unknown): { todos: Todo[] } {
 		if (entry.step.trim().length === 0) {
 			rejectTodos(`item ${item} step must contain non-whitespace text.`);
 		}
-		if (characterLength(entry.step) > MAX_TODO_STEP_LENGTH) {
+		if (!hasMaxGraphemeLength(entry.step, MAX_TODO_STEP_LENGTH)) {
 			rejectTodos(`item ${item} step exceeds ${MAX_TODO_STEP_LENGTH} characters.`);
 		}
 		if (!TODO_STATUSES.includes(entry.status as TodoStatus)) {
@@ -393,7 +393,7 @@ export function validateTodoArguments(value: unknown): { todos: Todo[] } {
 			if (typeof entry.reason !== "string" || entry.reason.trim().length === 0) {
 				rejectTodos(`item ${item} is blocked and requires a non-whitespace reason.`);
 			}
-			if (characterLength(entry.reason) > MAX_TODO_REASON_LENGTH) {
+			if (!hasMaxGraphemeLength(entry.reason, MAX_TODO_REASON_LENGTH)) {
 				rejectTodos(`item ${item} reason exceeds ${MAX_TODO_REASON_LENGTH} characters.`);
 			}
 			todos.push({ step: entry.step, status, reason: entry.reason });
@@ -636,7 +636,7 @@ function isTodos(value: unknown): value is Todo[] {
 		if (
 			typeof entry.step !== "string" ||
 			entry.step.trim().length === 0 ||
-			characterLength(entry.step) > MAX_TODO_STEP_LENGTH ||
+			!hasMaxGraphemeLength(entry.step, MAX_TODO_STEP_LENGTH) ||
 			!TODO_STATUSES.includes(entry.status as TodoStatus)
 		) {
 			return false;
@@ -646,7 +646,7 @@ function isTodos(value: unknown): value is Todo[] {
 			if (
 				typeof entry.reason !== "string" ||
 				entry.reason.trim().length === 0 ||
-				characterLength(entry.reason) > MAX_TODO_REASON_LENGTH
+				!hasMaxGraphemeLength(entry.reason, MAX_TODO_REASON_LENGTH)
 			) {
 				return false;
 			}
@@ -674,7 +674,7 @@ function hasPreviousTodoShape(value: unknown, stepProperty: "step" | "text"): bo
 		if (
 			typeof step !== "string" ||
 			step.trim().length === 0 ||
-			characterLength(step) > MAX_TODO_STEP_LENGTH ||
+			!hasMaxGraphemeLength(step, MAX_TODO_STEP_LENGTH) ||
 			!PREVIOUS_TODO_STATUSES.includes(entry.status as PreviousTodoStatus)
 		) {
 			return false;
@@ -716,8 +716,62 @@ function allTodosCompleted(value: readonly Todo[]): boolean {
 	return value.length > 0 && value.every((todo) => todo.status === "completed");
 }
 
-function characterLength(value: string): number {
-	return [...value].length;
+// Keep this aligned with TypeBox's maxLength guard so custom validation and schema validation agree.
+function hasMaxGraphemeLength(value: string, maximum: number): boolean {
+	let count = 0;
+	let index = 0;
+	while (index < value.length) {
+		index = nextGraphemeClusterIndex(value, index);
+		count += 1;
+		if (count > maximum) return false;
+	}
+	return true;
+}
+
+function nextGraphemeClusterIndex(value: string, clusterStart: number): number {
+	const start = value.codePointAt(clusterStart) ?? 0;
+	let clusterEnd = clusterStart + codePointLength(start);
+	clusterEnd = consumeGraphemeModifiers(value, clusterEnd);
+	while (clusterEnd < value.length - 1 && value.codePointAt(clusterEnd) === 0x200d) {
+		const next = value.codePointAt(clusterEnd + 1) ?? 0;
+		clusterEnd += 1 + codePointLength(next);
+		clusterEnd = consumeGraphemeModifiers(value, clusterEnd);
+	}
+	if (
+		isBetween(start, 0x1f1e6, 0x1f1ff) &&
+		clusterEnd < value.length &&
+		isBetween(value.codePointAt(clusterEnd) ?? 0, 0x1f1e6, 0x1f1ff)
+	) {
+		clusterEnd += codePointLength(value.codePointAt(clusterEnd) ?? 0);
+	}
+	return clusterEnd;
+}
+
+function consumeGraphemeModifiers(value: string, start: number): number {
+	let index = start;
+	while (index < value.length) {
+		const point = value.codePointAt(index) ?? 0;
+		if (!isCombiningMark(point) && !isBetween(point, 0xfe00, 0xfe0f)) break;
+		index += codePointLength(point);
+	}
+	return index;
+}
+
+function isCombiningMark(value: number): boolean {
+	return (
+		isBetween(value, 0x0300, 0x036f) ||
+		isBetween(value, 0x1ab0, 0x1aff) ||
+		isBetween(value, 0x1dc0, 0x1dff) ||
+		isBetween(value, 0xfe20, 0xfe2f)
+	);
+}
+
+function codePointLength(value: number): number {
+	return value > 0xffff ? 2 : 1;
+}
+
+function isBetween(value: number, minimum: number, maximum: number): boolean {
+	return value >= minimum && value <= maximum;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

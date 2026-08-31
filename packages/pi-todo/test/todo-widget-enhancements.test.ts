@@ -89,7 +89,7 @@ test("adapts widget rows, prioritizes active work, and honors display settings",
 	]);
 });
 
-test("bounds a wrapped active todo and sanitizes collapsed raw state without mutation", () => {
+test("bounds wrapped prioritized todos and sanitizes collapsed raw state without mutation", () => {
 	const { theme } = identityTheme();
 	const todos: Todo[] = [
 		{ step: "alpha beta gamma delta epsilon", status: "in_progress" },
@@ -102,6 +102,28 @@ test("bounds a wrapped active todo and sanitizes collapsed raw state without mut
 	assert.match(lines[3] ?? "", /^… 1 more/u);
 	for (const line of lines) assert.ok(visibleWidth(line) <= 10);
 	assert.deepEqual(todos, before);
+
+	for (const [todo, prefix] of [
+		[{ step: "pending task with text that needs several rows", status: "pending" }, /^○ /u],
+		[
+			{
+				step: "blocked task with text that needs several rows",
+				status: "blocked",
+				reason: "waiting for external approval",
+			},
+			/^⚠ /u,
+		],
+	] as const) {
+		const prioritized = renderTodoWidget([todo], theme, 10, { terminalRows: 12 });
+		assert.equal(prioritized.length, 4);
+		assert.match(prioritized[2] ?? "", prefix);
+		assert.equal(
+			prioritized.some((line) => line.includes("… 1 more")),
+			false,
+		);
+		for (const line of prioritized) assert.ok(visibleWidth(line) <= 10);
+	}
+
 	assert.equal(
 		lines.some((line) => line.includes(`${String.fromCharCode(0x1b)}]`)),
 		false,
@@ -228,6 +250,24 @@ test("returns actionable validation errors before schema validation and direct e
 		],
 	];
 	for (const [input, pattern] of cases) assert.throws(() => validateTodoArguments(input), pattern);
+
+	const decomposedStep = "e\u0301".repeat(151);
+	const emojiReason = "👨‍👩‍👧‍👦".repeat(101);
+	assert.deepEqual(
+		validateTodoArguments({
+			todos: [{ step: decomposedStep, status: "blocked", reason: emojiReason }],
+		}),
+		{
+			todos: [{ step: decomposedStep, status: "blocked", reason: emojiReason }],
+		},
+	);
+	assert.throws(
+		() =>
+			validateTodoArguments({
+				todos: [{ step: "e\u0301".repeat(301), status: "pending" }],
+			}),
+		/step exceeds 300/iu,
+	);
 
 	const canonical = validateTodoArguments({
 		todos: [{ step: "wait", status: "blocked", reason: "approval" }],
@@ -429,7 +469,8 @@ test("ignores errored tool results while reconstructing branch state", async () 
 });
 
 test("restores version 2 state and keeps a canonical version 2 summary boundary", async () => {
-	const previousTodos = [{ step: "before blocked support", status: "in_progress" as const }];
+	const previousStep = "e\u0301".repeat(151);
+	const previousTodos = [{ step: previousStep, status: "in_progress" as const }];
 	const branch: SessionEntry[] = [
 		toolResultEntry({ version: 2, todos: previousTodos }, TOOL_NAME, "initial", null),
 		{

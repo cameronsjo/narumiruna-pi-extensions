@@ -164,7 +164,7 @@ function renderCollapsed(
 	const bodyBudget = Math.max(0, rowBudget - header.length);
 	const selected: string[] = [];
 	let selectedItems = 0;
-	let clippedActive = false;
+	let clippedItem = false;
 
 	for (const item of prioritized.slice(0, itemLimit)) {
 		const remainingItems = prioritized.length - selectedItems - 1;
@@ -179,10 +179,10 @@ function renderCollapsed(
 			selectedItems += 1;
 			continue;
 		}
-		if (item.todo.status === "in_progress" && selectedItems === 0) {
+		if (selectedItems === 0) {
 			selected.push(...clipLines(item.lines, available, width));
 			selectedItems += 1;
-			clippedActive = true;
+			clippedItem = true;
 		}
 		break;
 	}
@@ -191,7 +191,7 @@ function renderCollapsed(
 	const footerParts: string[] = [];
 	if (settings.showCompleted && completed > 0) footerParts.push(`✓ ${completed} completed`);
 	if (hidden > 0) footerParts.push(`… ${hidden} more`);
-	if (clippedActive) footerParts.push("active item truncated");
+	if (clippedItem) footerParts.push("item truncated");
 	if (footerParts.length > 0 && selected.length < bodyBudget) {
 		selected.push(theme.fg("dim", footerParts.join(" · ")));
 	}

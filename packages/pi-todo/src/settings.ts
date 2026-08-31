@@ -137,9 +137,7 @@ export async function loadTodoSettings(
 
 		let text: string;
 		try {
-			text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-				buffer.subarray(0, offset),
-			);
+			text = new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, offset));
 		} catch {
 			return invalidResult(path, "settings file is not valid UTF-8");
 		}

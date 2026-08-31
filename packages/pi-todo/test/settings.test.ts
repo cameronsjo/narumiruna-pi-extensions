@@ -105,6 +105,23 @@ test("loads valid settings without rewriting unknown fields", async (t) => {
 	assert.equal(await readFile(path, "utf8"), source);
 });
 
+test("loads UTF-8 BOM settings", async (t) => {
+	const directory = await temporaryDirectory(t);
+	const path = join(directory, "pi-todo.json");
+	const document = Buffer.from('{"widget":{"showProgress":false}}', "utf8");
+	await writeFile(path, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), document]));
+	assert.deepEqual(await loadTodoSettings(path), {
+		kind: "loaded",
+		path,
+		settings: {
+			widget: {
+				...DEFAULT_TODO_SETTINGS.widget,
+				showProgress: false,
+			},
+		},
+	});
+});
+
 test("reports malformed, invalid, oversized, non-regular, and symlink settings", async (t) => {
 	const directory = await temporaryDirectory(t);
 	const path = join(directory, "pi-todo.json");
