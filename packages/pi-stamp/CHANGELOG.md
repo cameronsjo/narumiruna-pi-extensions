@@ -1,5 +1,16 @@
 # @narumitw/pi-stamp
 
+## 0.50.0
+
+### Minor Changes
+
+- 7a7521a: Add independent Settings controls for exact timelines, Thinking level provenance, and compact abnormal outcomes.
+- 182d7c9: Add expansion-only exact timelines, effective Pi Thinking level provenance, and compact abnormal outcome labels.
+
+### Patch Changes
+
+- 430efc5: Load generated lazy chunks through Pi's Jiti runtime so `/stamp` resolves host-provided Pi peers.
+
 ## 0.49.6
 
 ### Patch Changes
