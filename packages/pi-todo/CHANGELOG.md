@@ -1,5 +1,15 @@
 # @narumitw/pi-todo
 
+## 0.2.0
+
+### Minor Changes
+
+- 8b98f19: Replace the `update_todo_list` payload and current result details with `{ todos: [{ step, status }] }` while preserving branch restoration from valid version 1 `{ items: [{ text, status }] }` details.
+
+### Patch Changes
+
+- 37a724d: Preserve version 1 restored todo boundaries across reloads and branch navigation.
+
 ## 0.1.2
 
 ### Patch Changes

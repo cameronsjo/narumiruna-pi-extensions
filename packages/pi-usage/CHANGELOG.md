@@ -1,5 +1,18 @@
 # @narumitw/pi-usage
 
+## 0.59.0
+
+### Minor Changes
+
+- ed425e0: Add MiniMax Global and China Token Plan quota and pay-as-you-go balance reporting with deterministic credential routing.
+- db89cb1: Add Vercel AI Gateway credit reporting with exact remaining balance and lifetime spend from the official credits endpoint.
+- 6a23d01: Add Moonshot AI Global and China API balance reporting with region-bound credentials, shared environment-key safeguards, and native USD or CNY semantics.
+- 0400845: Add trailing 30-day Baseten organization Model APIs spend reporting with credits and net subtotal.
+
+### Patch Changes
+
+- c3947f7: Prevent Codex reset countdown timers from crashing Pi when their captured extension context becomes stale during session replacement.
+
 ## 0.58.0
 
 ### Minor Changes
