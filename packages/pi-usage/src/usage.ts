@@ -207,13 +207,7 @@ export default function usageExtension(
 			const generation = statusGeneration;
 			statusCountdownTimer = setTimeout(() => {
 				statusCountdownTimer = undefined;
-				if (
-					!sessionActive ||
-					generation !== statusGeneration ||
-					modelIdentity(ctx.model) !== modelIdentity(model)
-				) {
-					return;
-				}
+				if (!sessionActive || generation !== statusGeneration) return;
 				publishStatus(ctx, outcome, model, false);
 			}, STATUS_COUNTDOWN_REFRESH_MS);
 			statusCountdownTimer.unref?.();
