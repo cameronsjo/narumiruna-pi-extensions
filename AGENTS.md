@@ -22,7 +22,7 @@
 - Project-local extensions do not require package manifests, Changesets, publication files, or packaged-extension verification gates.
 - Promote a project-local extension into `packages/` only when the user explicitly requests independent installation, reuse, versioning, or publication.
 - Keep deprecated reference packages under `deprecated/`, which active checks exclude.
-- Root files such as `package.json`, `package-lock.json`, `biome.json`, `tsconfig.json`, `justfile`, and `.github/workflows/*` own shared tooling.
+- Root files such as `package.json`, `package-lock.json`, `biome.json`, `tsconfig.json`, and `.github/workflows/*` own shared tooling.
 - Never edit `node_modules/`.
 - Read `node_modules/` to confirm external API types and usage instead of guessing.
 - Keep published files aligned with each manifest's `files` list and `pi.extensions` entry.
@@ -32,12 +32,12 @@
 Run commands from the repository root unless a command says otherwise.
 
 - Run `npm install` to install dependencies.
-- Run `npm run format` or `just format` to format with Biome.
+- Run `npm run format` to format with Biome.
 - Run `npm run typecheck` to typecheck every workspace.
-- Run `just --list` before adding or documenting a workflow command.
-- Put repository workflows intended for manual use in `justfile`, and keep recipes as thin command entrypoints.
-- Put complex Bash or TypeScript workflow implementations under `scripts/`, then invoke them from recipes or automation.
-- Keep npm scripts as composable package and automation primitives.
+- Run `npm run` before adding or documenting a root workflow command.
+- Put repository workflow entrypoints in the root `package.json` scripts and keep them thin.
+- Put complex Bash or TypeScript workflow implementations under `scripts/`, then invoke them from npm scripts or automation.
+- Keep npm scripts as the canonical package, human, agent, and automation entrypoints.
 
 ## Tooling and dependency safety
 
@@ -134,10 +134,10 @@ Run commands from the repository root unless a command says otherwise.
 - Keep archived tests under `deprecated/` and outside active checks.
 - Keep every Vitest test within a 5,000 ms hard timeout, never add a larger per-test override, and split or synchronize a slow test instead of raising the limit.
 - Set the Bash tool timeout to 300 seconds.
-- Run `npm run check` or `just check` for the build, Biome, boundaries, and workspace typechecks.
-- Run `npm test` or `just test` separately for active tests.
+- Run `npm run check` for the build, Biome, boundaries, and workspace typechecks.
+- Run `npm test` separately for active tests.
 - CI must run both gates, and `publish.yml` must not rerun tests or typechecks.
-- Run `just pack <unscoped-name>` and inspect the tarball after package metadata or publishing changes.
+- Run `npm run package:pack -- <unscoped-name>` and inspect the tarball after package metadata or publishing changes.
 - After packaged extension runtime-loading changes, run `npm --workspace @narumitw/pi-<unscoped-name> run build --if-present`, then smoke with `pi -e ./packages/pi-<unscoped-name>`; record why and what remains unverified if the smoke is impractical.
 - After project-local extension changes, smoke it in isolation with `pi --no-extensions -e ./.pi/extensions/<extension>/index.ts`, then verify trusted-project auto-discovery and `/reload` when practical.
 - Start subprocess timing deadlines only after a child readiness handshake.
@@ -155,7 +155,7 @@ Run commands from the repository root unless a command says otherwise.
 - Add a changeset when a pull request changes published package behavior.
 - Repository-only documentation, tests, tooling, and path migrations may omit a changeset.
 - Preserve experimental feature warnings in documentation and runtime behavior.
-- Use `just npm-public <package>` only to change the visibility of an existing package.
+- Use `npm run package:public -- <package>` only to change the visibility of an existing package.
 - Use `npm publish --workspace <package> --access public` only for the explicitly approved first publication of a new scoped package that still returns 404.
 - Except for that initial-publication exception, let `publish.yml` manage the version pull request, package tags, publications, and GitHub releases.
 
@@ -172,6 +172,6 @@ Run commands from the repository root unless a command says otherwise.
 - Prefer `gh --json` for GitHub issue and pull-request links; use web tools only when `gh` cannot expose the required content.
 - Keep a predecessor extension active until an explicit follow-up decision approves deprecation.
 - Keep package versions out of long-lived guidance and derive them from manifests, lockfiles, or workflows.
-- Require a clean worktree before dependency-maintenance recipes.
-- Use Git-based recovery instead of embedding rollback logic in `just` recipes.
-- Make `just` install recipes verify registry visibility first and fall back to the local workspace only when that fixes the current install path.
+- Require a clean worktree before dependency-maintenance workflows.
+- Use Git-based recovery instead of embedding rollback logic in workflow scripts.
+- Make package install workflows verify registry visibility first and fall back to the local workspace only when that fixes the current install path.

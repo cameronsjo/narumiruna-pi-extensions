@@ -274,7 +274,6 @@ Run the opt-in smoke from a local checkout to exercise real local DHT nodes, spa
 npm run smoke:chat-network
 ```
 
-The equivalent Just command is `just smoke-chat-network`.
 This smoke is intentionally excluded from `npm test` and CI because local UDP scheduling can be nondeterministic under parallel load.
 
 ## 🗂️ Package layout
