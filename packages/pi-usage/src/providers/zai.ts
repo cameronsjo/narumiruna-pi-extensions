@@ -1,5 +1,12 @@
 import { sanitizeDisplayText } from "../core.js";
-import type { UsageBucket, UsageMetric, UsageReport, ZaiQuotaPayload } from "../types.js";
+import type {
+	UsageBucket,
+	UsageMetric,
+	UsageReport,
+	ZaiPlanInfo,
+	ZaiQuotaPayload,
+	ZaiSubscriptionPayload,
+} from "../types.js";
 
 const FIVE_HOUR_WINDOW_MINUTES = 300;
 const WEEKLY_WINDOW_MINUTES = 10_080;
@@ -9,6 +16,7 @@ export function normalizeZaiQuotaPayload(
 	providerName: string,
 	payload: ZaiQuotaPayload,
 	capturedAt: number,
+	plan?: ZaiPlanInfo,
 ): UsageReport {
 	const data = asObject(payload.data);
 	if (!data) throw new Error("Z.AI quota response data was not an object.");
@@ -43,7 +51,12 @@ export function normalizeZaiQuotaPayload(
 
 	const notes: string[] = [];
 	const level = asString(data.level);
-	if (level) notes.push(`Plan: ${level}`);
+	const planLabel = plan?.name ?? level;
+	if (planLabel) {
+		notes.push(
+			plan?.renewsAt ? `Plan: ${planLabel} · renews ${plan.renewsAt}` : `Plan: ${planLabel}`,
+		);
+	}
 
 	return {
 		providerId,
@@ -55,6 +68,30 @@ export function normalizeZaiQuotaPayload(
 		metrics,
 		...(notes.length > 0 ? { notes } : {}),
 	};
+}
+
+// The undocumented subscription endpoint returns the purchased Coding Plan products; the first
+// entry with a product name supplies the plan label, and its renewal date is best-effort.
+export function normalizeZaiSubscriptionPayload(
+	payload: ZaiSubscriptionPayload,
+): ZaiPlanInfo | undefined {
+	if (!Array.isArray(payload.data)) return undefined;
+	for (const raw of payload.data) {
+		const entry = asObject(raw);
+		if (!entry) continue;
+		const name = asString(entry.productName);
+		if (!name) continue;
+		const renewsAt = planRenewalDate(entry.nextRenewTime);
+		return { name, ...(renewsAt !== undefined ? { renewsAt } : {}) };
+	}
+	return undefined;
+}
+
+function planRenewalDate(value: unknown): string | undefined {
+	if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}/u.test(value)) return value.slice(0, 10);
+	const millis = asNonnegativeNumber(value);
+	if (millis === undefined || millis === 0) return undefined;
+	return new Date(millis).toISOString().slice(0, 10);
 }
 
 function addPercentBucket(

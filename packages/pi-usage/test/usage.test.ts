@@ -1333,16 +1333,16 @@ test("Z.AI providers publish statusline usage and refresh through /usage", async
 
 	await mock.events.get("session_start")?.[0]?.({}, ctx);
 	await settle();
-	assert.equal(fetches, 1);
+	assert.equal(fetches, 2);
 	assert.equal(statuses.get("usage"), "zai 90% 5h 80% wk");
 
 	mock.events.get("turn_start")?.[0]?.({}, ctx);
 	await settle();
-	assert.equal(fetches, 1);
+	assert.equal(fetches, 2);
 	assert.equal(statuses.get("usage"), "zai 90% 5h 80% wk");
 
 	await command.handler("", ctx);
-	assert.equal(fetches, 1);
+	assert.equal(fetches, 2);
 	assert.match(titles[0] ?? "", /5h window:\s+10% used · 90% left/);
 	assert.equal(statuses.get("usage"), "zai 90% 5h 80% wk");
 });
