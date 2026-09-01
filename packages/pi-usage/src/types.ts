@@ -159,6 +159,7 @@ export type ZaiQuotaPayload = {
 
 export type ZaiSubscriptionPayload = {
 	code?: unknown;
+	success?: unknown;
 	data?: unknown;
 };
 
