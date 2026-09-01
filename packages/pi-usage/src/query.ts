@@ -37,6 +37,7 @@ import type {
 	PiModel,
 	ResolvedUsageAuth,
 	UsageProviderAdapter,
+	UsageQuerySettings,
 	UsageReport,
 	UsageRequestGuard,
 	VercelAIGatewayCreditsPayload,
@@ -46,6 +47,7 @@ import type {
 	ZaiQuotaPayload,
 	ZaiSubscriptionPayload,
 } from "./types.js";
+import { resolveUsageTarget } from "./usage-targets.js";
 
 const BASETEN_BILLING_USAGE_URL = "https://api.baseten.co/v1/billing/usage_summary";
 const BASETEN_USAGE_WINDOW_DAYS = 30;
@@ -503,10 +505,46 @@ export async function queryProviderUsage(
 	signal: AbortSignal,
 	timeoutMs: number,
 	guard?: UsageRequestGuard,
-	targetId?: string,
+	targetOrSettings?: string | Readonly<UsageQuerySettings>,
 ): Promise<UsageReport> {
+	const startedAt = Date.now();
+	let targetId =
+		typeof targetOrSettings === "string"
+			? targetOrSettings
+			: adapter.id === "fireworks"
+				? targetOrSettings?.fireworksAccountId
+				: undefined;
+	let resolvedLegacyFireworksTarget = false;
 	try {
-		return await adapter.query(auth, signal, timeoutMs, guard, targetId);
+		if (
+			adapter.id === "fireworks" &&
+			typeof targetOrSettings !== "string" &&
+			adapter.targets &&
+			guard
+		) {
+			const target = await resolveUsageTarget(
+				adapter,
+				auth,
+				targetId,
+				signal,
+				remainingTimeout(timeoutMs, startedAt, "resolving the Fireworks account"),
+				guard,
+			);
+			if (target.kind === "selection-required") {
+				throw new Error("Fireworks account selection is required.");
+			}
+			targetId = target.targetId;
+			resolvedLegacyFireworksTarget = true;
+		}
+		return await adapter.query(
+			auth,
+			signal,
+			resolvedLegacyFireworksTarget
+				? remainingTimeout(timeoutMs, startedAt, `querying ${adapter.displayName} usage`)
+				: timeoutMs,
+			guard,
+			targetId,
+		);
 	} catch (error) {
 		if (isStaleExtensionContextError(error) || isAbortError(error)) throw error;
 		throw new Error(redactUsageError(errorMessage(error), auth.secrets));

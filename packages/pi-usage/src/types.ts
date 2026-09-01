@@ -63,6 +63,10 @@ export interface ResolvedUsageAuth {
 	effectiveBaseUrl?: string;
 }
 
+export interface UsageQuerySettings {
+	fireworksAccountId?: string;
+}
+
 export type UsageRequestGuard = () => Promise<void>;
 
 export interface UsageProviderTarget {

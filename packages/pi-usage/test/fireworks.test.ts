@@ -12,6 +12,7 @@ import {
 	resolveUsageTarget,
 	SUPPORTED_ADAPTERS,
 	type UsageProviderAdapter,
+	type UsageQuerySettings,
 } from "../src/index.js";
 
 const FIREWORKS_MODEL = {
@@ -541,6 +542,41 @@ test("Fireworks transport follows opaque pagination tokens across account pages"
 			"https://api.fireworks.ai/v1/accounts?pageSize=200&pageToken=token%2B%2F%3D",
 		);
 		assert.match(requests[2] ?? "", /\/v1\/accounts\/bold\/billing\/summary\?/u);
+	} finally {
+		vi.unstubAllGlobals();
+	}
+});
+
+test("queryProviderUsage preserves legacy Fireworks settings and auto-selection", async () => {
+	const requests: string[] = [];
+	const fetchMock = vi.fn(async (input: string | URL | Request) => {
+		const url = String(input);
+		requests.push(url);
+		return url.includes("/v1/accounts?")
+			? new Response(JSON.stringify({ accounts: [accountRow("acme")] }), { status: 200 })
+			: summaryResponse();
+	});
+	vi.stubGlobal("fetch", fetchMock);
+	try {
+		const legacySettings: UsageQuerySettings = { fireworksAccountId: "acme" };
+		for (const settings of [legacySettings, undefined]) {
+			const report = await queryProviderUsage(
+				adapter,
+				fireworksAuth(),
+				new AbortController().signal,
+				1_000,
+				async () => undefined,
+				settings,
+			);
+			assert.equal(report.accountLabel, "acme");
+		}
+		assert.equal(requests.filter((url) => url.includes("/v1/accounts?")).length, 2);
+		assert.equal(requests.filter((url) => url.includes("/billing/summary")).length, 2);
+		assert.ok(
+			requests
+				.filter((url) => url.includes("/billing/summary"))
+				.every((url) => /\/v1\/accounts\/acme\/billing\/summary\?/u.test(url)),
+		);
 	} finally {
 		vi.unstubAllGlobals();
 	}

@@ -104,6 +104,7 @@ function memorySettingsRuntime(
 		document?: Record<string, unknown>;
 		failUpdates?: boolean;
 		kind?: UsageSettingsState["kind"];
+		afterTargetWrite?: () => void;
 	} = {},
 ): { runtime: UsageSettingsRuntime; state: () => UsageSettingsState } {
 	const kind = options.kind ?? "loaded";
@@ -144,15 +145,19 @@ function memorySettingsRuntime(
 			};
 			return structuredClone(state);
 		},
-		updateSelectedTarget: async (providerId, targetId, signal) => {
+		updateSelectedTarget: async (providerId, targetId, signal, checkPublishedSelection) => {
 			signal?.throwIfAborted();
 			if (options.failUpdates) throw new Error("disk full");
 			const selectedTargets = { ...state.settings.selectedTargets, [providerId]: targetId };
-			state = {
+			const next = {
 				...state,
 				settings: { ...state.settings, selectedTargets },
 				document: { ...state.document, selectedTargets },
 			};
+			options.afterTargetWrite?.();
+			await checkPublishedSelection?.();
+			signal?.throwIfAborted();
+			state = next;
 			return structuredClone(state);
 		},
 		flush: async () => undefined,
@@ -561,6 +566,35 @@ test("explicit all-provider query retains DeepSeek balance, Kimi, and partial fa
 	assert.deepEqual(deepSeekFetchedKeys, ["Bearer deepseek-key"]);
 	assert.match(titles[1] ?? "", /query failed/i);
 	assert.equal(statuses.get("usage"), "openrouter $75.00 left");
+});
+
+test("auth-unavailable target providers do not expose a no-op target action", async () => {
+	const options: string[] = [];
+	const mock = createMockPi();
+	usageExtension(mock.pi, { settingsRuntime: memorySettingsRuntime().runtime });
+	const command = mock.commands.get("usage");
+	assert.ok(command);
+	const { ctx } = createMockContext({
+		hasUI: true,
+		mode: "rpc",
+		model: fireworksModel,
+		select: async (_title: string, choices: string[]) => {
+			options.push(...choices);
+			return "Close";
+		},
+		modelRegistry: {
+			getApiKeyAndHeaders: async () => ({ ok: false, error: "missing" }),
+			getProviderAuth: async () => undefined,
+			getAvailable: () => [fireworksModel],
+			getAll: () => [fireworksModel],
+			getProviderDisplayName: testProviderDisplayName,
+		},
+	});
+
+	await command.handler("", ctx);
+
+	assert.ok(options.includes("Close"));
+	assert.ok(!options.some((option) => /^(Select|Change) account…$/u.test(option)));
 });
 
 test("View all renders unresolved target providers without opening a nested picker", async (t) => {
@@ -1185,7 +1219,7 @@ test("current unresolved Fireworks usage prompts once, persists, and re-queries 
 
 	assert.equal(settings.state().settings.selectedTargets.fireworks, "beta");
 	assert.equal(statuses.get("usage"), "fireworks USD 2");
-	assert.equal(requests.filter((url) => url.includes("/v1/accounts?")).length, 3);
+	assert.equal(requests.filter((url) => url.includes("/v1/accounts?")).length, 4);
 	const billingRequests = requests.filter((url) => url.includes("/billing/summary"));
 	assert.equal(billingRequests.length, 1);
 	assert.match(billingRequests[0] ?? "", /\/accounts\/beta\/billing\/summary/u);
@@ -1253,6 +1287,62 @@ test("auth rotation while the target picker is open prevents stale selection per
 	activeKey = "fw-b";
 	resolveTarget("beta");
 	await pending;
+
+	assert.deepEqual(settings.state().settings.selectedTargets, {});
+	assert.equal(requests.filter((request) => request.url.includes("/billing/summary")).length, 0);
+	assert.ok(requests.some((request) => request.authorization === "Bearer fw-a"));
+	assert.ok(requests.some((request) => request.authorization === "Bearer fw-b"));
+	assert.match(notifications.at(-1)?.message ?? "", /accounts changed; choose again/iu);
+});
+
+test("auth rotation during target settings publication rolls back the selection", async (t) => {
+	const originalFetch = globalThis.fetch;
+	t.onTestFinished(() => {
+		globalThis.fetch = originalFetch;
+	});
+	let activeKey = "fw-a";
+	const requests: Array<{ url: string; authorization: string }> = [];
+	globalThis.fetch = async (input, init) => {
+		const url = String(input);
+		const authorization = new Headers(init?.headers).get("authorization") ?? "";
+		requests.push({ url, authorization });
+		if (url.includes("/v1/accounts?")) {
+			return new Response(
+				JSON.stringify({ accounts: [{ name: "accounts/acme" }, { name: "accounts/beta" }] }),
+				{ status: 200 },
+			);
+		}
+		return new Response(JSON.stringify({ lineItems: [] }), { status: 200 });
+	};
+	const settings = memorySettingsRuntime({
+		afterTargetWrite: () => {
+			activeKey = "fw-b";
+		},
+	});
+	const mock = createMockPi();
+	usageExtension(mock.pi, { settingsRuntime: settings.runtime });
+	const command = mock.commands.get("usage");
+	assert.ok(command);
+	let rootSelections = 0;
+	const { ctx, notifications } = createMockContext({
+		hasUI: true,
+		mode: "rpc",
+		model: fireworksModel,
+		select: async (title: string) => {
+			if (title.startsWith("Select account for Fireworks")) return "beta";
+			rootSelections += 1;
+			return rootSelections === 1 ? "Select account…" : "Close";
+		},
+		modelRegistry: {
+			getApiKeyAndHeaders: async () => ({ ok: true, apiKey: activeKey }),
+			getProviderAuth: async () => ({ auth: { apiKey: activeKey } }),
+			getAvailable: () => [fireworksModel],
+			getAll: () => [fireworksModel],
+			getProviderDisplayName: testProviderDisplayName,
+		},
+	});
+
+	await command.handler("", ctx);
 
 	assert.deepEqual(settings.state().settings.selectedTargets, {});
 	assert.equal(requests.filter((request) => request.url.includes("/billing/summary")).length, 0);

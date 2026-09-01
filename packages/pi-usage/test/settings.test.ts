@@ -166,6 +166,51 @@ test("target saves preserve unknown fields and legacy Fireworks data for other p
 	});
 });
 
+test("failed post-publication target checks restore the exact prior settings state", async () => {
+	const path = await tempSettingsPath();
+	await writeFile(path, '{"fireworksAccountId":"acme","future":"kept"}\n');
+	const runtime = createUsageSettingsRuntime(path);
+	await runtime.reload();
+	let observedPublishedDocument: unknown;
+
+	await assert.rejects(
+		runtime.updateSelectedTarget("fireworks", "beta", undefined, async () => {
+			observedPublishedDocument = JSON.parse(await readFile(path, "utf8"));
+			throw new Error("credential rotated");
+		}),
+		/credential rotated/,
+	);
+
+	assert.deepEqual(observedPublishedDocument, {
+		selectedTargets: { fireworks: "beta" },
+		future: "kept",
+	});
+	assert.deepEqual(JSON.parse(await readFile(path, "utf8")), {
+		fireworksAccountId: "acme",
+		future: "kept",
+	});
+	assert.equal(runtime.get().settings.selectedTargets.fireworks, "acme");
+	assert.deepEqual(
+		(await readdir(join(path, ".."))).filter((name) => name.endsWith(".tmp")),
+		[],
+	);
+
+	const missingPath = await tempSettingsPath();
+	const missingRuntime = createUsageSettingsRuntime(missingPath);
+	await assert.rejects(
+		missingRuntime.updateSelectedTarget("fireworks", "beta", undefined, async () => {
+			assert.equal(
+				(await loadUsageSettings(missingPath)).settings.selectedTargets.fireworks,
+				"beta",
+			);
+			throw new Error("membership changed");
+		}),
+		/membership changed/,
+	);
+	assert.equal((await loadUsageSettings(missingPath)).kind, "missing");
+	assert.equal(missingRuntime.get().kind, "missing");
+});
+
 test("serialized updates reread the latest document and leave no temporary files", async () => {
 	const path = await tempSettingsPath();
 	await writeFile(path, '{"codexFastMode":false,"external":"first"}\n');

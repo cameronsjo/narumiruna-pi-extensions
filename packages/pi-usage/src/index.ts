@@ -68,6 +68,7 @@ export type {
 	UsageSettings,
 	UsageSettingsRuntime,
 	UsageSettingsState,
+	UsageTargetPublicationCheck,
 } from "./settings.js";
 export {
 	createUsageSettingsRuntime,
@@ -92,6 +93,7 @@ export type {
 	UsageModel,
 	UsageProviderAdapter,
 	UsageProviderTarget,
+	UsageQuerySettings,
 	UsageReport,
 	UsageRequestGuard,
 	UsageSemantics,

@@ -29,6 +29,8 @@ export interface UsageSettingsState {
 	issue?: string;
 }
 
+export type UsageTargetPublicationCheck = () => Promise<void>;
+
 export interface UsageSettingsRuntime {
 	get(): Readonly<UsageSettingsState>;
 	reload(signal?: AbortSignal): Promise<Readonly<UsageSettingsState>>;
@@ -40,6 +42,7 @@ export interface UsageSettingsRuntime {
 		providerId: string,
 		targetId: string,
 		signal?: AbortSignal,
+		checkPublishedSelection?: UsageTargetPublicationCheck,
 	): Promise<Readonly<UsageSettingsState>>;
 	flush(): Promise<void>;
 }
@@ -180,16 +183,37 @@ export function createUsageSettingsRuntime(
 				state = saved;
 				return structuredClone(state);
 			}),
-		updateSelectedTarget: (providerId, targetId, signal) =>
+		updateSelectedTarget: (providerId, targetId, signal, checkPublishedSelection) =>
 			enqueue(async () => {
-				const saved = await saveUsageTargetSelection(
+				const transaction = await saveUsageTargetSelection(
 					path,
 					providerId,
 					targetId,
 					operations,
 					signal,
 				);
-				state = saved;
+				try {
+					await checkPublishedSelection?.();
+					throwIfAborted(signal);
+				} catch (error) {
+					try {
+						await restoreUsageSettingsState(
+							path,
+							transaction.saved,
+							transaction.previous,
+							operations,
+						);
+						state = transaction.previous;
+					} catch (rollbackError) {
+						state = await loadUsageSettings(path);
+						throw new AggregateError(
+							[error, rollbackError],
+							"Target selection changed after publication and pi-usage.json rollback failed",
+						);
+					}
+					throw error;
+				}
+				state = transaction.saved;
 				return structuredClone(state);
 			}),
 		flush: () => queue,
@@ -221,11 +245,12 @@ async function saveUsageTargetSelection(
 	targetId: string,
 	operations: UsageSettingsFileOperations,
 	signal?: AbortSignal,
-): Promise<UsageSettingsState> {
+): Promise<{ saved: UsageSettingsState; previous: UsageSettingsState }> {
 	if (!isProviderId(providerId) || !isBoundedTargetId(targetId)) {
 		throw new Error("Refusing to save an invalid usage target selection");
 	}
-	return saveUsageSettingsDocument(
+	const previous = await loadUsageSettings(path, signal);
+	const saved = await saveUsageSettingsDocument(
 		path,
 		(document) => {
 			document.selectedTargets = {
@@ -236,7 +261,9 @@ async function saveUsageTargetSelection(
 		},
 		operations,
 		signal,
+		previous,
 	);
+	return { saved, previous };
 }
 
 async function saveUsageSettingsDocument(
@@ -244,10 +271,14 @@ async function saveUsageSettingsDocument(
 	mutate: (document: Record<string, unknown>) => void,
 	operations: UsageSettingsFileOperations,
 	signal?: AbortSignal,
+	expected?: UsageSettingsState,
 ): Promise<UsageSettingsState> {
 	const latest = await loadUsageSettings(path, signal);
 	if (latest.kind === "invalid") {
 		throw new Error("Cannot overwrite an invalid pi-usage.json; repair it and reload first");
+	}
+	if (expected && !sameUsageSettingsDocument(latest, expected)) {
+		throw new Error("pi-usage.json changed while saving; retry the action");
 	}
 	const document = { ...latest.document };
 	mutate(document);
@@ -279,6 +310,44 @@ async function saveUsageSettingsDocument(
 		await rm(temporaryPath, { force: true }).catch(() => undefined);
 	}
 	return { kind: "loaded", path, settings, document };
+}
+
+async function restoreUsageSettingsState(
+	path: string,
+	published: UsageSettingsState,
+	previous: UsageSettingsState,
+	operations: UsageSettingsFileOperations,
+): Promise<void> {
+	if (previous.kind === "missing") {
+		const current = await loadUsageSettings(path);
+		if (!sameUsageSettingsDocument(current, published)) {
+			throw new Error("pi-usage.json changed before target selection rollback");
+		}
+		await rm(path);
+		return;
+	}
+	if (previous.kind !== "loaded" || !previous.document) {
+		throw new Error("Cannot restore invalid prior pi-usage.json settings");
+	}
+	await saveUsageSettingsDocument(
+		path,
+		(document) => {
+			for (const key of Object.keys(document)) delete document[key];
+			Object.assign(document, previous.document);
+		},
+		operations,
+		undefined,
+		published,
+	);
+}
+
+function sameUsageSettingsDocument(
+	left: Pick<UsageSettingsState, "kind" | "document">,
+	right: Pick<UsageSettingsState, "kind" | "document">,
+): boolean {
+	return (
+		left.kind === right.kind && JSON.stringify(left.document) === JSON.stringify(right.document)
+	);
 }
 
 async function chmodPrivate(path: string): Promise<void> {

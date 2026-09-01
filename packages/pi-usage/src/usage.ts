@@ -37,7 +37,11 @@ import {
 	queryProviderUsage,
 	resolveUsageAuth,
 } from "./query.js";
-import { createUsageSettingsRuntime, type UsageSettingsRuntime } from "./settings.js";
+import {
+	createUsageSettingsRuntime,
+	type UsageSettingsRuntime,
+	type UsageSettingsState,
+} from "./settings.js";
 import type {
 	PiModel,
 	ProviderUsageState,
@@ -87,6 +91,10 @@ type QueryOutcome = {
 	authState?: "unavailable";
 	rememberedTargetId?: string;
 };
+
+class UsageTargetSelectionChangedError extends Error {
+	override readonly name = "UsageTargetSelectionChangedError";
+}
 
 type StableCurrent = {
 	outcome: QueryOutcome;
@@ -767,7 +775,11 @@ export default function usageExtension(
 			const actionableTargetState = (): ProviderUsageState | undefined => {
 				if (visibleStates.length !== 1) return undefined;
 				const state = visibleStates[0];
-				return state && adapterForProvider(state.providerId)?.targets ? state : undefined;
+				return state &&
+					(state.status === "ready" || state.status === "selection-required") &&
+					adapterForProvider(state.providerId)?.targets
+					? state
+					: undefined;
 			};
 			const promptForTarget = async (
 				state: ProviderUsageState,
@@ -829,14 +841,49 @@ export default function usageExtension(
 					);
 					return false;
 				}
-				const saved = await runMenuOperation(
-					ctx,
-					`Saving ${adapter.targets.singularLabel}…`,
-					controller.signal,
-					(signal) => settingsRuntime.updateSelectedTarget(adapter.id, targetId, signal),
-				);
-				if (!saved || controller.signal.aborted || statusGeneration !== menuGeneration)
+				let saved: Readonly<UsageSettingsState> | undefined;
+				try {
+					saved = await runMenuOperation(
+						ctx,
+						`Saving ${adapter.targets.singularLabel}…`,
+						controller.signal,
+						(signal) =>
+							settingsRuntime.updateSelectedTarget(adapter.id, targetId, signal, async () => {
+								let published: Awaited<ReturnType<typeof loadTargetChoices>>;
+								try {
+									published = await loadTargetChoices(ctx, adapter, signal);
+								} catch (error) {
+									if (
+										signal.aborted ||
+										controller.signal.aborted ||
+										statusGeneration !== menuGeneration ||
+										isStaleExtensionContextError(error)
+									) {
+										throw error;
+									}
+									throw new UsageTargetSelectionChangedError();
+								}
+								if (
+									published.fingerprint !== snapshot.fingerprint ||
+									!published.choices.some((choice) => choice.id === targetId)
+								) {
+									throw new UsageTargetSelectionChangedError();
+								}
+							}),
+					);
+				} catch (error) {
+					if (error instanceof UsageTargetSelectionChangedError) {
+						ctx.ui.notify(
+							`${providerDisplayName(ctx, adapter.id)} ${adapter.targets.pluralLabel} changed; choose again.`,
+							"warning",
+						);
+						return false;
+					}
+					throw error;
+				}
+				if (!saved || controller.signal.aborted || statusGeneration !== menuGeneration) {
 					return false;
+				}
 				invalidateProviderState(adapter.id);
 				return true;
 			};
