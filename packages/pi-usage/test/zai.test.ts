@@ -489,6 +489,12 @@ test("Z.AI subscription normalizer prefers the current valid product over histor
 	);
 	assert.equal(
 		normalizeZaiSubscriptionPayload({
+			data: [{ productName: "GLM Coding Pro", status: "VALID", inCurrentPeriod: false }],
+		}),
+		undefined,
+	);
+	assert.equal(
+		normalizeZaiSubscriptionPayload({
 			code: 500,
 			success: false,
 			data: [{ productName: "GLM Coding Lite", status: "VALID" }],

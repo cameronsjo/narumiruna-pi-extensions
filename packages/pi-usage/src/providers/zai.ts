@@ -118,7 +118,9 @@ export function normalizeZaiSubscriptionPayload(
 		candidates.find(
 			(candidate) => candidate.inCurrentPeriod === true && candidate.status === undefined,
 		)?.plan ??
-		candidates.find((candidate) => candidate.status === "VALID")?.plan
+		candidates.find(
+			(candidate) => candidate.status === "VALID" && candidate.inCurrentPeriod === undefined,
+		)?.plan
 	);
 }
 
