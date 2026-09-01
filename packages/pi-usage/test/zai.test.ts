@@ -254,6 +254,38 @@ test("Z.AI adapter accepts current credit-limit and mixed rollout window names",
 	}
 });
 
+test("Z.AI adapter derives window length and label from the payload window number", () => {
+	const report = normalizeZaiQuotaPayload(
+		"zai",
+		"Z.AI",
+		{
+			data: {
+				limits: [
+					{
+						type: "CREDIT_LIMIT",
+						unit: 3,
+						number: 1,
+						percentage: 10,
+						nextResetTime: 1_744_137_600_000,
+					},
+					{ type: "CREDIT_LIMIT", unit: 3, percentage: 20 },
+					{ type: "CREDIT_LIMIT", unit: 6, number: 2, usage: 100, currentValue: 40 },
+				],
+			},
+		},
+		900,
+	);
+
+	assert.deepEqual(
+		report.buckets.map((bucket) => [bucket.label, bucket.windowMinutes]),
+		[
+			["1h window", 60],
+			["5h window", 300],
+			["Weekly window", 20_160],
+		],
+	);
+});
+
 test("Z.AI adapter rejects malformed or empty quota responses", () => {
 	assert.throws(() => normalizeZaiQuotaPayload("zai", "Z.AI", {}, 0), /not an object/);
 	assert.throws(

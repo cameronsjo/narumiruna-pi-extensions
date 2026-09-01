@@ -34,14 +34,20 @@ export function normalizeZaiQuotaPayload(
 			addCountBucket(buckets, limit, "mcp-monthly", "MCP monthly allowance");
 			addUsageDetailMetrics(metrics, limit.usageDetails);
 		} else if (isPlanUsage && unit === 3) {
-			addPercentBucket(buckets, limit, "five-hour", "5h window", FIVE_HOUR_WINDOW_MINUTES);
+			addPercentBucket(
+				buckets,
+				limit,
+				"five-hour",
+				sessionWindowLabel(limit),
+				sessionWindowMinutes(limit),
+			);
 		} else if (isPlanUsage && unit === 6) {
 			const used = asNonnegativeNumber(limit.currentValue);
 			const quota = asNonnegativeNumber(limit.usage);
 			if (used !== undefined && quota !== undefined) {
-				addCountBucket(buckets, limit, "weekly", "Weekly window", WEEKLY_WINDOW_MINUTES);
+				addCountBucket(buckets, limit, "weekly", "Weekly window", weeklyWindowMinutes(limit));
 			} else {
-				addPercentBucket(buckets, limit, "weekly", "Weekly window", WEEKLY_WINDOW_MINUTES);
+				addPercentBucket(buckets, limit, "weekly", "Weekly window", weeklyWindowMinutes(limit));
 			}
 		}
 	}
@@ -92,6 +98,24 @@ function planRenewalDate(value: unknown): string | undefined {
 	const millis = asNonnegativeNumber(value);
 	if (millis === undefined || millis === 0) return undefined;
 	return new Date(millis).toISOString().slice(0, 10);
+}
+
+// Z.AI encodes each window as a (unit, number) pair — unit 3 counts hours and unit 6 counts
+// weeks — so the payload's number drives the window length and session label; the established
+// 5-hour and weekly constants remain the fallback when the payload omits it.
+function sessionWindowMinutes(limit: Record<string, unknown>): number {
+	const hours = asPositiveNumber(limit.number);
+	return hours === undefined ? FIVE_HOUR_WINDOW_MINUTES : Math.round(hours * 60);
+}
+
+function sessionWindowLabel(limit: Record<string, unknown>): string {
+	const minutes = sessionWindowMinutes(limit);
+	return minutes === FIVE_HOUR_WINDOW_MINUTES ? "5h window" : `${Math.round(minutes / 60)}h window`;
+}
+
+function weeklyWindowMinutes(limit: Record<string, unknown>): number {
+	const weeks = asPositiveNumber(limit.number);
+	return weeks === undefined ? WEEKLY_WINDOW_MINUTES : Math.round(weeks * WEEKLY_WINDOW_MINUTES);
 }
 
 function addPercentBucket(
@@ -165,6 +189,11 @@ function asString(value: unknown): string | undefined {
 function asNonnegativeNumber(value: unknown): number | undefined {
 	if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return undefined;
 	return value;
+}
+
+function asPositiveNumber(value: unknown): number | undefined {
+	const number = asNonnegativeNumber(value);
+	return number !== undefined && number > 0 ? number : undefined;
 }
 
 function asEpochSeconds(value: unknown): number | undefined {
