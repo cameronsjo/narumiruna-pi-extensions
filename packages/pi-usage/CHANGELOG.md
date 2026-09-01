@@ -1,5 +1,15 @@
 # @narumitw/pi-usage
 
+## 0.60.0
+
+### Minor Changes
+
+- bf71c9b: Add Z.AI plan support: query the undocumented `GET {origin}/api/biz/subscription/list` plan endpoint after the quota windows and report the GLM Coding Plan name and renewal date, falling back to the quota response's plan level when the plan endpoint is unavailable. Z.AI percentage windows now render usage bars in `/usage`, matching the Codex report. OpenCode Zen and xAI percentage windows now use the same shared usage bars. Z.AI window lengths and the session label derive from the payload's `(unit, number)` window pair instead of hardcoded constants, with the previous 5-hour and weekly values as fallbacks.
+
+### Patch Changes
+
+- c988f0a: Select the current valid Z.AI subscription instead of reporting an earlier expired plan.
+
 ## 0.59.0
 
 ### Minor Changes
