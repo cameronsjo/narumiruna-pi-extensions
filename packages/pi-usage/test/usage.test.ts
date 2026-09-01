@@ -1343,7 +1343,7 @@ test("Z.AI providers publish statusline usage and refresh through /usage", async
 
 	await command.handler("", ctx);
 	assert.equal(fetches, 2);
-	assert.match(titles[0] ?? "", /5h window:\s+10% used · 90% left/);
+	assert.match(titles[0] ?? "", /5h window:\s+\[█{18}░{2}\] 90% left/);
 	assert.equal(statuses.get("usage"), "zai 90% 5h 80% wk");
 });
 

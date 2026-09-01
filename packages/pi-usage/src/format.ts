@@ -497,12 +497,13 @@ function formatXaiReport(lines: string[], report: UsageReport): void {
 
 function formatZaiReport(lines: string[], report: UsageReport): void {
 	for (const bucket of report.buckets) {
+		if (bucket.unit === "percent" && bucket.used !== undefined) {
+			lines.push(`${`${bucket.label}:`.padEnd(VALUE_COLUMN)}${formatPercentBucket(bucket)}`);
+			continue;
+		}
 		const reset = bucket.resetsAt ? ` (resets ${formatReset(bucket.resetsAt)})` : "";
 		let value = "unavailable";
-		if (bucket.unit === "percent" && bucket.used !== undefined) {
-			value = `${bucket.used}% used`;
-			if (bucket.remaining !== undefined) value += ` · ${bucket.remaining}% left`;
-		} else if (bucket.used !== undefined && bucket.limit !== undefined) {
+		if (bucket.used !== undefined && bucket.limit !== undefined) {
 			value = `${bucket.used} of ${bucket.limit} used`;
 			if (bucket.remaining !== undefined) value += ` · ${bucket.remaining} left`;
 		} else if (bucket.used !== undefined) {
