@@ -269,6 +269,10 @@ function formatOpenRouterReport(lines: string[], report: UsageReport): void {
 
 function formatOpenCodeZenReport(lines: string[], report: UsageReport): void {
 	for (const bucket of report.buckets) {
+		if (bucket.unit === "percent" && bucket.used !== undefined) {
+			lines.push(`${`${bucket.label}:`.padEnd(VALUE_COLUMN)}${formatPercentBucket(bucket)}`);
+			continue;
+		}
 		const reset = bucket.resetsAt ? ` (resets ${formatReset(bucket.resetsAt)})` : "";
 		const used = bucket.used ?? "unavailable";
 		lines.push(`${`${bucket.label}:`.padEnd(VALUE_COLUMN)}${used}% used${reset}`);
@@ -469,8 +473,7 @@ function formatXaiReport(lines: string[], report: UsageReport): void {
 	if (included) {
 		let value = "unavailable";
 		if (included.unit === "percent" && included.used !== undefined) {
-			value = `${included.used}% used`;
-			if (included.remaining !== undefined) value += ` · ${included.remaining}% left`;
+			value = formatPercentBar(included);
 		} else if (included.used !== undefined) {
 			value = `${formatUsd(included.used)} used`;
 			if (included.limit !== undefined) value += ` of ${formatUsd(included.limit)}`;
@@ -638,10 +641,13 @@ function compactLimitLabel(label: string): string {
 }
 
 function formatPercentBucket(bucket: UsageBucket): string {
+	return `${formatPercentBar(bucket)}${bucket.resetsAt ? ` (resets ${formatReset(bucket.resetsAt)})` : ""}`;
+}
+
+function formatPercentBar(bucket: UsageBucket): string {
 	const remaining = clampPercent(bucket.remaining ?? 0);
 	const filled = Math.round((remaining / 100) * BAR_SEGMENTS);
-	const reset = bucket.resetsAt ? ` (resets ${formatReset(bucket.resetsAt)})` : "";
-	return `[${"█".repeat(filled)}${"░".repeat(BAR_SEGMENTS - filled)}] ${remaining.toFixed(0)}% left${reset}`;
+	return `[${"█".repeat(filled)}${"░".repeat(BAR_SEGMENTS - filled)}] ${remaining.toFixed(0)}% left`;
 }
 
 function formatWindowLabel(
