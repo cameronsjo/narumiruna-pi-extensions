@@ -1185,13 +1185,80 @@ test("current unresolved Fireworks usage prompts once, persists, and re-queries 
 
 	assert.equal(settings.state().settings.selectedTargets.fireworks, "beta");
 	assert.equal(statuses.get("usage"), "fireworks USD 2");
-	assert.equal(requests.filter((url) => url.includes("/v1/accounts?")).length, 2);
+	assert.equal(requests.filter((url) => url.includes("/v1/accounts?")).length, 3);
 	const billingRequests = requests.filter((url) => url.includes("/billing/summary"));
 	assert.equal(billingRequests.length, 1);
 	assert.match(billingRequests[0] ?? "", /\/accounts\/beta\/billing\/summary/u);
 	assert.ok(titles.some((title) => /Selection required/iu.test(title)));
 	await command.handler("", ctx);
 	assert.ok(selectedOptions.flat().some((option) => /Change account…/u.test(option)));
+});
+
+test("auth rotation while the target picker is open prevents stale selection persistence", async (t) => {
+	const originalFetch = globalThis.fetch;
+	t.onTestFinished(() => {
+		globalThis.fetch = originalFetch;
+	});
+	let activeKey = "fw-a";
+	const requests: Array<{ url: string; authorization: string }> = [];
+	globalThis.fetch = async (input, init) => {
+		const url = String(input);
+		const authorization = new Headers(init?.headers).get("authorization") ?? "";
+		requests.push({ url, authorization });
+		if (url.includes("/v1/accounts?")) {
+			const accounts =
+				authorization === "Bearer fw-a"
+					? [{ name: "accounts/acme" }, { name: "accounts/beta" }]
+					: [{ name: "accounts/beta" }, { name: "accounts/gamma" }];
+			return new Response(JSON.stringify({ accounts }), { status: 200 });
+		}
+		return new Response(JSON.stringify({ lineItems: [] }), { status: 200 });
+	};
+	const settings = memorySettingsRuntime();
+	const mock = createMockPi();
+	usageExtension(mock.pi, { settingsRuntime: settings.runtime });
+	const command = mock.commands.get("usage");
+	assert.ok(command);
+	let rootSelections = 0;
+	let resolveTarget!: (value: string) => void;
+	let markTargetStarted: () => void = () => undefined;
+	const targetStarted = new Promise<void>((resolve) => {
+		markTargetStarted = resolve;
+	});
+	const { ctx, notifications } = createMockContext({
+		hasUI: true,
+		mode: "rpc",
+		model: fireworksModel,
+		select: async (title: string) => {
+			if (title.startsWith("Select account for Fireworks")) {
+				markTargetStarted();
+				return new Promise<string>((resolve) => {
+					resolveTarget = resolve;
+				});
+			}
+			rootSelections += 1;
+			return rootSelections === 1 ? "Select account…" : "Close";
+		},
+		modelRegistry: {
+			getApiKeyAndHeaders: async () => ({ ok: true, apiKey: activeKey }),
+			getProviderAuth: async () => ({ auth: { apiKey: activeKey } }),
+			getAvailable: () => [fireworksModel],
+			getAll: () => [fireworksModel],
+			getProviderDisplayName: testProviderDisplayName,
+		},
+	});
+
+	const pending = command.handler("", ctx);
+	await targetStarted;
+	activeKey = "fw-b";
+	resolveTarget("beta");
+	await pending;
+
+	assert.deepEqual(settings.state().settings.selectedTargets, {});
+	assert.equal(requests.filter((request) => request.url.includes("/billing/summary")).length, 0);
+	assert.ok(requests.some((request) => request.authorization === "Bearer fw-a"));
+	assert.ok(requests.some((request) => request.authorization === "Bearer fw-b"));
+	assert.match(notifications.at(-1)?.message ?? "", /accounts changed; choose again/iu);
 });
 
 test("cancelling the target picker leaves selection and billing untouched", async (t) => {

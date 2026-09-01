@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { test } from "vitest";
+import { test, vi } from "vitest";
 import {
 	createUsageTargetSelectOptions,
+	listUsageTargets,
 	type ResolvedUsageAuth,
 	resolveUsageTarget,
 	type UsageProviderAdapter,
@@ -92,6 +93,17 @@ test("provider-neutral resolution handles one account and remembered organizatio
 			["org-a", "org-b"],
 		);
 	}
+
+	const rotatedAccount = targetAdapter("rotated-account", "account", "accounts", [
+		{ id: "new-account", label: "New account" },
+	]);
+	assert.deepEqual(
+		await resolveUsageTarget(rotatedAccount, auth, "old-account", signal, 1_000, guard),
+		{
+			kind: "selection-required",
+			choices: [{ id: "new-account", label: "New account" }],
+		},
+	);
 });
 
 test("a second fake provider proves project selection and zero-target failure are generic", async () => {
@@ -113,6 +125,40 @@ test("a second fake provider proves project selection and zero-target failure ar
 		resolveUsageTarget(empty, auth, undefined, signal, 1_000, guard),
 		/workspaces discovery returned no choices/iu,
 	);
+});
+
+test("target discovery subtracts guard time from the adapter deadline", async () => {
+	let now = 1_000;
+	const nowMock = vi.spyOn(Date, "now").mockImplementation(() => now);
+	const adapter = targetAdapter("deadline-provider", "project", "projects", [
+		{ id: "project", label: "Project" },
+	]);
+	let receivedTimeout: number | undefined;
+	let listCalls = 0;
+	if (!adapter.targets) assert.fail("target adapter must expose targets");
+	adapter.targets.list = async (_auth, _signal, timeoutMs) => {
+		listCalls += 1;
+		receivedTimeout = timeoutMs;
+		return [{ id: "project", label: "Project" }];
+	};
+	try {
+		await listUsageTargets(adapter, auth, signal, 100, async () => {
+			now += 40;
+		});
+		assert.equal(receivedTimeout, 60);
+
+		now = 2_000;
+		listCalls = 0;
+		await assert.rejects(
+			listUsageTargets(adapter, auth, signal, 100, async () => {
+				now += 100;
+			}),
+			/Timed out while discovering provider targets/iu,
+		);
+		assert.equal(listCalls, 0);
+	} finally {
+		nowMock.mockRestore();
+	}
 });
 
 test("target descriptors sanitize terminal input, stay bounded, and reject duplicate IDs", async () => {

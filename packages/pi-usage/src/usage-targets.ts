@@ -36,10 +36,12 @@ export async function resolveUsageTarget(
 		throw new Error(`The remembered ${adapter.targets.singularLabel} identifier was invalid.`);
 	}
 	const choices = await listUsageTargets(adapter, auth, signal, timeoutMs, guard);
-	if (choices.length === 1) return { kind: "selected", targetId: choices[0]?.id };
-	if (rememberedTargetId && choices.some((choice) => choice.id === rememberedTargetId)) {
-		return { kind: "selected", targetId: rememberedTargetId };
+	if (rememberedTargetId) {
+		return choices.some((choice) => choice.id === rememberedTargetId)
+			? { kind: "selected", targetId: rememberedTargetId }
+			: { kind: "selection-required", choices };
 	}
+	if (choices.length === 1) return { kind: "selected", targetId: choices[0]?.id };
 	return { kind: "selection-required", choices };
 }
 
@@ -51,9 +53,16 @@ export async function listUsageTargets(
 	guard: UsageRequestGuard,
 ): Promise<readonly UsageProviderTarget[]> {
 	if (!adapter.targets) return [];
+	const startedAt = Date.now();
 	await guard();
-	const listed = await adapter.targets.list(auth, signal, timeoutMs, guard);
+	const listed = await adapter.targets.list(
+		auth,
+		signal,
+		remainingTargetTimeout(timeoutMs, startedAt),
+		guard,
+	);
 	await guard();
+	remainingTargetTimeout(timeoutMs, startedAt);
 	const choices = normalizeUsageTargets(listed);
 	if (choices.length === 0) {
 		throw new Error(`${adapter.targets.pluralLabel} discovery returned no choices.`);
@@ -113,6 +122,12 @@ export function createUsageTargetSelectOptions(
 		return option;
 	});
 	return { options, targetIdFor: (option) => ids.get(option) };
+}
+
+function remainingTargetTimeout(timeoutMs: number, startedAt: number): number {
+	const remaining = timeoutMs - (Date.now() - startedAt);
+	if (remaining <= 0) throw new Error("Timed out while discovering provider targets.");
+	return remaining;
 }
 
 export function isBoundedTargetId(value: unknown): value is string {

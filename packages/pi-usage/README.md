@@ -95,7 +95,7 @@ The current provider then offers **Select &lt;target&gt;…**, while a ready cur
 
 Selecting another provider may open one Pi target prompt after that provider is queried lazily.
 Cancelling the prompt changes nothing.
-An explicit selection is saved first, then auth and targets are resolved again before billing is queried.
+Auth and target membership are revalidated before an explicit selection is saved, then both are resolved again before billing is queried.
 **View all configured providers…** never opens nested target prompts: unresolved providers remain visible with guidance to view them individually.
 Background status refresh also stays non-interactive and shows `selection required` until `/usage` completes the choice.
 Fireworks accounts are the first implementation of this provider-neutral flow.

@@ -504,7 +504,7 @@ export default function usageExtension(
 		adapter: UsageProviderAdapter,
 		signal: AbortSignal,
 	) => {
-		if (!adapter.targets) return [];
+		if (!adapter.targets) throw new Error("Provider does not support usage targets.");
 		const expectedSessionGeneration = sessionGeneration;
 		const expectedSessionId = ctx.sessionManager.getSessionId();
 		const expectedModel = modelIdentity(ctx.model);
@@ -534,7 +534,14 @@ export default function usageExtension(
 				throw abortError();
 			}
 		};
-		return listUsageTargets(adapter, auth, signal, Math.max(1, deadlineAt - Date.now()), guard);
+		const choices = await listUsageTargets(
+			adapter,
+			auth,
+			signal,
+			Math.max(1, deadlineAt - Date.now()),
+			guard,
+		);
+		return { choices, fingerprint: auth.fingerprint };
 	};
 
 	const queryCurrentState = async (
@@ -762,22 +769,27 @@ export default function usageExtension(
 				const state = visibleStates[0];
 				return state && adapterForProvider(state.providerId)?.targets ? state : undefined;
 			};
-			const promptForTarget = async (state: ProviderUsageState): Promise<boolean> => {
+			const promptForTarget = async (
+				state: ProviderUsageState,
+				stateFingerprint?: string,
+			): Promise<boolean> => {
 				const adapter = adapterForProvider(state.providerId);
 				if (!adapter?.targets) return false;
-				const choices =
-					state.status === "selection-required"
-						? state.choices
+				const expectedRememberedTargetId =
+					settingsRuntime.get().settings.selectedTargets[adapter.id];
+				const snapshot =
+					state.status === "selection-required" && stateFingerprint
+						? { choices: state.choices, fingerprint: stateFingerprint }
 						: await runMenuOperation(
 								ctx,
 								`Loading ${adapter.targets.pluralLabel}…`,
 								controller.signal,
 								(signal) => loadTargetChoices(ctx, adapter, signal),
 							);
-				if (!choices || controller.signal.aborted || statusGeneration !== menuGeneration) {
+				if (!snapshot || controller.signal.aborted || statusGeneration !== menuGeneration) {
 					return false;
 				}
-				const selectOptions = createUsageTargetSelectOptions(choices);
+				const selectOptions = createUsageTargetSelectOptions(snapshot.choices);
 				const selected = await ctx.ui.select(
 					`Select ${adapter.targets.singularLabel} for ${providerDisplayName(ctx, adapter.id)}`,
 					[...selectOptions.options],
@@ -786,12 +798,37 @@ export default function usageExtension(
 				if (
 					selected === undefined ||
 					controller.signal.aborted ||
-					statusGeneration !== menuGeneration
+					statusGeneration !== menuGeneration ||
+					settingsRuntime.get().settings.selectedTargets[adapter.id] !== expectedRememberedTargetId
 				) {
 					return false;
 				}
 				const targetId = selectOptions.targetIdFor(selected);
 				if (!targetId) return false;
+				const revalidated = await runMenuOperation(
+					ctx,
+					`Revalidating ${adapter.targets.singularLabel}…`,
+					controller.signal,
+					(signal) => loadTargetChoices(ctx, adapter, signal),
+				);
+				if (
+					!revalidated ||
+					controller.signal.aborted ||
+					statusGeneration !== menuGeneration ||
+					settingsRuntime.get().settings.selectedTargets[adapter.id] !== expectedRememberedTargetId
+				) {
+					return false;
+				}
+				if (
+					revalidated.fingerprint !== snapshot.fingerprint ||
+					!revalidated.choices.some((choice) => choice.id === targetId)
+				) {
+					ctx.ui.notify(
+						`${providerDisplayName(ctx, adapter.id)} ${adapter.targets.pluralLabel} changed; choose again.`,
+						"warning",
+					);
+					return false;
+				}
 				const saved = await runMenuOperation(
 					ctx,
 					`Saving ${adapter.targets.singularLabel}…`,
@@ -964,7 +1001,11 @@ export default function usageExtension(
 						const targetState = actionableTargetState();
 						if (!targetState) return { kind: "rejected" };
 						try {
-							if (!(await promptForTarget(targetState))) return { kind: "stay" };
+							const stateFingerprint =
+								targetState === current.state ? current.fingerprint : undefined;
+							if (!(await promptForTarget(targetState, stateFingerprint))) {
+								return { kind: "stay" };
+							}
 							const adapter = adapterForProvider(targetState.providerId);
 							if (!adapter) return { kind: "rejected" };
 							if (targetState.providerId === ctx.model?.provider) {
@@ -1243,7 +1284,9 @@ export default function usageExtension(
 						);
 						if (!outcome) return { kind: "back" };
 						if (outcome.state.status === "selection-required") {
-							if (!(await promptForTarget(outcome.state))) return { kind: "back" };
+							if (!(await promptForTarget(outcome.state, outcome.fingerprint))) {
+								return { kind: "back" };
+							}
 							outcome = await runMenuOperation(
 								ctx,
 								`Checking ${providerDisplayName(ctx, adapter.id)} usage…`,
