@@ -154,14 +154,31 @@ test("runtime auth rejects proxy origins and forwards only adapter-approved head
 		/proxy-resolved.*official/iu,
 	);
 
+	const { ctx: providerOverrideContext } = createMockContext({
+		model: officialModel,
+		modelRegistry: {
+			getProvider: () => ({ baseUrl: "https://proxy.example.test/v1" }),
+			getProviderAuth: async () => ({ auth: { apiKey: "must-not-send" } }),
+			getAvailable: () => [officialModel],
+			getAll: () => [officialModel],
+		},
+	});
+	await assert.rejects(
+		() => resolveUsageAuth(providerOverrideContext, adapter),
+		/overridden provider credential.*official/iu,
+	);
+
 	const { ctx: officialContext } = createMockContext({
 		model: officialModel,
 		modelRegistry: {
+			getProvider: () => ({ baseUrl: "https://openrouter.ai/api/v1" }),
 			getProviderAuth: async () => ({
 				auth: {
 					apiKey: "official-key",
 					headers: { "X-Proxy-Secret": "must-not-leak", "X-Title": "private-title" },
 				},
+				env: { OPENROUTER_ACCOUNT: "account-a" },
+				source: "test credential",
 			}),
 			getAvailable: () => [officialModel],
 			getAll: () => [officialModel],
@@ -169,6 +186,29 @@ test("runtime auth rejects proxy origins and forwards only adapter-approved head
 	});
 	const auth = await resolveUsageAuth(officialContext, adapter);
 	assert.deepEqual(auth?.headers, { Authorization: "Bearer official-key" });
+	assert.deepEqual(auth?.auth, {
+		apiKey: "official-key",
+		headers: { "X-Proxy-Secret": "must-not-leak", "X-Title": "private-title" },
+	});
+	assert.deepEqual(auth?.env, { OPENROUTER_ACCOUNT: "account-a" });
+	assert.equal(auth?.source, "test credential");
+	assert.equal(auth?.effectiveBaseUrl, "https://openrouter.ai/api/v1");
+
+	const { ctx: rotatedEnvContext } = createMockContext({
+		model: officialModel,
+		modelRegistry: {
+			getProvider: () => ({ baseUrl: "https://openrouter.ai/api/v1" }),
+			getProviderAuth: async () => ({
+				auth: { apiKey: "official-key" },
+				env: { OPENROUTER_ACCOUNT: "account-b" },
+				source: "test credential",
+			}),
+			getAvailable: () => [officialModel],
+			getAll: () => [officialModel],
+		},
+	});
+	const rotatedEnv = await resolveUsageAuth(rotatedEnvContext, adapter);
+	assert.notEqual(rotatedEnv?.fingerprint, auth?.fingerprint);
 
 	const { ctx: modelScopedContext } = createMockContext({
 		model: officialModel,
@@ -189,7 +229,7 @@ test("runtime auth rejects proxy origins and forwards only adapter-approved head
 	const modelScopedAuth = await resolveUsageAuth(modelScopedContext, adapter);
 	assert.deepEqual(modelScopedAuth?.headers, { Authorization: "Bearer current-model-key" });
 	assert.ok(modelScopedAuth?.secrets.includes("Bearer current-model-key"));
-	assert.ok(!modelScopedAuth?.secrets.includes("must-not-leak"));
+	assert.ok(modelScopedAuth?.secrets.includes("must-not-leak"));
 
 	const { ctx: modelKeyContext } = createMockContext({
 		model: officialModel,

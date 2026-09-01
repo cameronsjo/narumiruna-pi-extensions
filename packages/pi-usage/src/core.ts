@@ -54,13 +54,39 @@ export class UsageCache {
 }
 
 export function fingerprintResolvedAuth(
-	auth: { apiKey?: string; headers?: Record<string, string> },
+	auth: {
+		apiKey?: string;
+		headers?: Record<string, string | null>;
+		baseUrl?: string;
+		env?: Record<string, string>;
+		source?: string;
+		providerAuth?: {
+			apiKey?: string;
+			headers?: Record<string, string | null>;
+			baseUrl?: string;
+		};
+	},
 	salt: Uint8Array,
 ): string {
 	const headers = Object.entries(auth.headers ?? {})
 		.map(([name, value]) => [name.toLowerCase(), value] as const)
 		.sort(([left], [right]) => left.localeCompare(right));
-	const canonical = JSON.stringify({ apiKey: auth.apiKey ?? "", headers });
+	const env = Object.entries(auth.env ?? {}).sort(([left], [right]) => left.localeCompare(right));
+	const providerHeaders = Object.entries(auth.providerAuth?.headers ?? {})
+		.map(([name, value]) => [name.toLowerCase(), value] as const)
+		.sort(([left], [right]) => left.localeCompare(right));
+	const canonical = JSON.stringify({
+		apiKey: auth.apiKey ?? "",
+		headers,
+		baseUrl: auth.baseUrl ?? "",
+		env,
+		source: auth.source ?? "",
+		providerAuth: {
+			apiKey: auth.providerAuth?.apiKey ?? "",
+			headers: providerHeaders,
+			baseUrl: auth.providerAuth?.baseUrl ?? "",
+		},
+	});
 	return createHmac("sha256", salt).update(canonical).digest("hex");
 }
 

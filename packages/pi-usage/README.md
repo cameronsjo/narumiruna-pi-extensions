@@ -16,7 +16,7 @@ xAI OAuth subscription reporting follows the reviewed Grok Build contract and ru
 - Reports GitHub Copilot allowances and OpenRouter per-key limits and spending windows.
 - Reports exact DeepSeek API balances with separate CNY and USD values.
 - Reports OpenCode Go plan windows and Z.AI Coding Plan quotas.
-- Reports Fireworks rated API spend for the last 30 days with per-series subtotals.
+- Reports Fireworks rated API spend for the last 30 days with per-series subtotals and account selection.
 - Reports Vercel AI Gateway credit balance and lifetime spend.
 - Reports Baseten organization Model APIs spend after credits for the last 30 days.
 - Reports xAI OAuth subscription allowances and credits.
@@ -56,6 +56,7 @@ The package declares `dist/index.ts`, so an unbuilt local checkout must run the 
 ## 🚀 Quick start
 
 Run `/usage` in TUI or RPC mode to inspect the active provider, refresh its usage, or choose another configured provider.
+When a provider exposes several billing targets, `/usage` asks for one target before querying usage.
 Run `/fast` to toggle Fast mode for a supported active Codex model.
 
 ## 💬 Commands
@@ -84,6 +85,21 @@ Escape returns from provider selection or closes the root menu.
 Print and JSON modes reject `/usage` because they cannot host the interactive flow.
 The extension owns the cancellable live-query progress view because it streams provider work and supports in-flight abort.
 
+### Provider targets
+
+A target is the provider-owned account, organization, project, team, or workspace used for one usage query.
+Providers without target discovery query immediately, and a single returned target is selected automatically without writing settings.
+When several targets are available, `/usage` remembers an explicit selection by provider and reuses it only while it remains in a fresh listing.
+A missing remembered target returns **Selection required** instead of querying another target silently.
+The current provider then offers **Select &lt;target&gt;…**, while a ready current or individually viewed provider offers **Change &lt;target&gt;…**.
+
+Selecting another provider may open one Pi target prompt after that provider is queried lazily.
+Cancelling the prompt changes nothing.
+An explicit selection is saved first, then auth and targets are resolved again before billing is queried.
+**View all configured providers…** never opens nested target prompts: unresolved providers remain visible with guidance to view them individually.
+Background status refresh also stays non-interactive and shows `selection required` until `/usage` completes the choice.
+Fireworks accounts are the first implementation of this provider-neutral flow.
+
 For the current OpenAI Codex provider, **Redeem usage limit reset…** first checks fresh earned-reset details.
 When details are available, you select a reset and review its exact effect before confirmation.
 **No, go back** is the safe default and cancellation before confirmation sends no mutation.
@@ -93,7 +109,7 @@ Successful, already-completed, not-needed, and no-credit outcomes are reported s
 
 ## ⚙️ Settings
 
-Choose **Settings** in `/usage` to edit Codex Fast mode, the Codex reset countdown, and the Fireworks account selector through Pi's settings-list interaction in TUI mode.
+Choose **Settings** in `/usage` to edit Codex Fast mode and the Codex reset countdown through Pi's settings-list interaction in TUI mode.
 RPC mode reports the active manual settings path instead of opening terminal UI.
 
 These preferences live in `pi-usage.json` under Pi's user agent directory, normally `~/.pi/agent/pi-usage.json`.
@@ -104,19 +120,9 @@ Malformed or invalid files remain untouched.
 A failed save restores the prior displayed and effective value, while shutdown waits for queued writes.
 Separate Pi processes are not mutually locked.
 
-### Fireworks account
-
-A Fireworks key that can see one account needs no setting.
-For a key that can see several accounts, choose **Fireworks account** in the TUI Settings screen, or set the exact visible account slug in `pi-usage.json` and run `/reload`:
-
-```json
-{
-  "fireworksAccountId": "acme"
-}
-```
-
-The `fireworksAccountId` setting is validated as a URL-safe account slug and then checked against the official account listing before billing data is requested.
-Submit a blank value from the TUI input, or remove the JSON field and run `/reload`, to restore single-account auto-selection.
+Target selections are stored only as IDs in the provider-neutral `selectedTargets` object in this file and are managed through `/usage`, not the Settings screen.
+The former `fireworksAccountId` field remains read-compatible: it supplies `selectedTargets.fireworks` in memory only when the generic value is absent.
+A successful explicit Fireworks account selection writes the generic field and removes the legacy field atomically; ordinary reads do not rewrite the file.
 
 ### Codex Fast mode
 
@@ -279,7 +285,8 @@ DeepSeek Harness `cd5ef8148158c3a752a658978873241fdf8e2bbc` reports only per-req
 - Statusline example: `fireworks USD 12.345678901`
 
 The extension queries the fixed endpoints only when the selected model origin is `https://api.fireworks.ai` and any resolved-auth origin override, when present, has the same official origin.
-The account slug is discovered through the documented account listing; a key that can see several accounts must set `fireworksAccountId` in `pi-usage.json` to one of the listed account slugs, and the slug must remain visible to the key.
+The account slug is discovered through the documented account listing.
+One visible account is selected automatically; several visible accounts use the remembered selection or ask through `/usage`, and a disappeared selection returns **Selection required** without a billing request.
 Monetary `units` and `nanos` values are summed exactly with integer arithmetic and stay exact through display.
 Fireworks does not expose credit balance, spend caps, per-window quota, or reset times through its API, so `pi-usage` does not claim those Fireworks capabilities; the web console remains the authoritative balance source.
 Rated line items may differ from the final invoice once credits or adjustments are applied.
@@ -390,8 +397,8 @@ Only the official `api.z.ai` and `open.bigmodel.cn` origins are queried; other o
 `Current` identifies the provider and credential used by Pi's selected model.
 `Configured` identifies runtime auth for another supported provider, not an active provider.
 
-The extension does not enumerate multiple accounts inside one provider and does not switch accounts.
-Account selection remains owned by Pi or an account-management extension.
+The extension selects one provider target for one query and never flattens targets into provider rows or aggregates every visible target.
+Provider adapters own target discovery and validation; core owns one-target selection, persistence, cache identity, cancellation, and UI.
 A compatible credential owner may offer the verified active named account through the versioned process-local protocol without exposing its account label or storage.
 Without such an owner, `pi-usage` retains its standalone Pi `auth.json` behavior.
 An older or incompatible owner degrades to the existing authentication-unavailable result when the stored login does not match runtime auth.
@@ -457,7 +464,7 @@ An absent or incompatible peer preserves standalone fallback and fail-closed mis
 - Credentials resolved for custom provider base URLs are never forwarded to the providers' official usage endpoints; effective auth origin validation requires Pi 0.81.0 or newer.
 - Provider reports are snapshots and may themselves be delayed by the provider.
 - DeepSeek reports current API balance only; it does not expose historical usage, quota windows, reset times, or account-wide token totals through the balance endpoint.
-- Fireworks reports rated 30-day spend only; credit balance and spend caps are visible only in the Fireworks web console, and keys that can see several accounts must set `fireworksAccountId` in `pi-usage.json`.
+- Fireworks reports rated 30-day spend only; credit balance and spend caps are visible only in the Fireworks web console, and `/usage` must select one visible account before querying a multi-account key.
 - Moonshot AI reports current API balance only; it does not expose historical spend, aggregate token usage, quota windows, or reset times through the balance endpoint.
 - Vercel AI Gateway reports current team credits and lifetime spend only; Custom Reporting and request-rate counters are not queried.
 - MiniMax Token Plan field semantics have changed over time; contradictory counts and percentages are reported as unavailable rather than guessed.
@@ -484,6 +491,7 @@ packages/pi-usage/
 │   ├── codex-fast-runtime.ts # Fast command, persistence lifecycle, and request hooks
 │   ├── settings.ts    # Validated user settings and atomic persistence
 │   ├── usage-helpers.ts # Small orchestration helpers
+│   ├── usage-targets.ts # Provider-neutral target resolution and safe picker descriptors
 │   ├── query.ts       # Runtime auth resolution and bounded provider queries
 │   ├── oauth-credential-source.ts # Ephemeral OAuth candidate collection
 │   ├── codex-resets.ts # Codex reset auth, API contracts, and normalization

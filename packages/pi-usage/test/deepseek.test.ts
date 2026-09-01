@@ -217,7 +217,7 @@ test("DeepSeek runtime auth accepts only official model and resolved-auth origin
 	});
 	const auth = await resolveUsageAuth(officialContext, adapter);
 	assert.deepEqual(auth?.headers, { Authorization: "Bearer current-deepseek-key" });
-	assert.ok(!auth?.secrets.includes("must-not-send"));
+	assert.ok(auth?.secrets.includes("must-not-send"));
 
 	const fetchMock = vi.spyOn(globalThis, "fetch");
 	try {
