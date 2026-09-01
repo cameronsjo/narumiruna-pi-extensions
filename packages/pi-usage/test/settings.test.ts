@@ -39,17 +39,35 @@ test("normalizes owned settings and ignores the retired xAI field", () => {
 	assert.deepEqual(normalizeUsageSettings({ codexFastMode: true }), {
 		codexFastMode: true,
 		codexStatusResetCountdown: true,
+		selectedTargets: {},
 	});
 	assert.deepEqual(normalizeUsageSettings({ fireworksAccountId: "acme-prod" }), {
 		codexFastMode: false,
 		codexStatusResetCountdown: true,
-		fireworksAccountId: "acme-prod",
+		selectedTargets: { fireworks: "acme-prod" },
 	});
+	assert.deepEqual(
+		normalizeUsageSettings({
+			fireworksAccountId: "legacy",
+			selectedTargets: { fireworks: "current", custom: "project-1" },
+		}),
+		{
+			codexFastMode: false,
+			codexStatusResetCountdown: true,
+			selectedTargets: { fireworks: "current", custom: "project-1" },
+		},
+	);
 	assert.deepEqual(normalizeUsageSettings({ xaiUsage: false }), DEFAULT_USAGE_SETTINGS);
 	assert.deepEqual(normalizeUsageSettings({ xaiUsage: "retired" }), DEFAULT_USAGE_SETTINGS);
 	assert.equal(normalizeUsageSettings({ codexFastMode: "true" }), undefined);
 	assert.equal(normalizeUsageSettings({ fireworksAccountId: "../other" }), undefined);
 	assert.equal(normalizeUsageSettings({ fireworksAccountId: "" }), undefined);
+	assert.equal(normalizeUsageSettings({ selectedTargets: [] }), undefined);
+	assert.equal(normalizeUsageSettings({ selectedTargets: { provider: "" } }), undefined);
+	assert.equal(
+		normalizeUsageSettings({ selectedTargets: { provider: "x".repeat(257) } }),
+		undefined,
+	);
 	assert.equal(normalizeUsageSettings([]), undefined);
 });
 
@@ -66,7 +84,7 @@ test("missing loads are side-effect free and valid loads preserve unknown fields
 	const loaded = await loadUsageSettings(path);
 	assert.equal(loaded.kind, "loaded");
 	assert.equal(loaded.settings.codexFastMode, true);
-	assert.equal(loaded.settings.fireworksAccountId, "acme");
+	assert.equal(loaded.settings.selectedTargets.fireworks, "acme");
 	assert.equal(loaded.document?.xaiUsage, false);
 	assert.equal(loaded.document?.future, "kept");
 });
@@ -116,14 +134,81 @@ test("the first explicit save creates a private file and preserves unknown field
 	if (process.platform !== "win32") assert.equal((await stat(path)).mode & 0o777, 0o600);
 });
 
-test("clearing the Fireworks account removes only its owned field", async () => {
+test("an explicit Fireworks selection atomically migrates the legacy field", async () => {
 	const path = await tempSettingsPath();
 	await writeFile(path, '{"fireworksAccountId":"acme","future":"kept"}\n');
 	const runtime = createUsageSettingsRuntime(path);
 	await runtime.reload();
-	await runtime.update({ fireworksAccountId: undefined });
-	assert.deepEqual(JSON.parse(await readFile(path, "utf8")), { future: "kept" });
-	assert.equal(runtime.get().settings.fireworksAccountId, undefined);
+	assert.equal(runtime.get().settings.selectedTargets.fireworks, "acme");
+	assert.equal(JSON.parse(await readFile(path, "utf8")).fireworksAccountId, "acme");
+
+	await runtime.updateSelectedTarget("fireworks", "beta");
+	assert.deepEqual(JSON.parse(await readFile(path, "utf8")), {
+		selectedTargets: { fireworks: "beta" },
+		future: "kept",
+	});
+	assert.equal(runtime.get().settings.selectedTargets.fireworks, "beta");
+});
+
+test("target saves preserve unknown fields and legacy Fireworks data for other providers", async () => {
+	const path = await tempSettingsPath();
+	await writeFile(
+		path,
+		'{"fireworksAccountId":"acme","selectedTargets":{"other":"old"},"future":"kept"}\n',
+	);
+	const runtime = createUsageSettingsRuntime(path);
+	await runtime.reload();
+	await runtime.updateSelectedTarget("other", "new");
+	assert.deepEqual(JSON.parse(await readFile(path, "utf8")), {
+		fireworksAccountId: "acme",
+		selectedTargets: { other: "new" },
+		future: "kept",
+	});
+});
+
+test("failed post-publication target checks restore the exact prior settings state", async () => {
+	const path = await tempSettingsPath();
+	await writeFile(path, '{"fireworksAccountId":"acme","future":"kept"}\n');
+	const runtime = createUsageSettingsRuntime(path);
+	await runtime.reload();
+	let observedPublishedDocument: unknown;
+
+	await assert.rejects(
+		runtime.updateSelectedTarget("fireworks", "beta", undefined, async () => {
+			observedPublishedDocument = JSON.parse(await readFile(path, "utf8"));
+			throw new Error("credential rotated");
+		}),
+		/credential rotated/,
+	);
+
+	assert.deepEqual(observedPublishedDocument, {
+		selectedTargets: { fireworks: "beta" },
+		future: "kept",
+	});
+	assert.deepEqual(JSON.parse(await readFile(path, "utf8")), {
+		fireworksAccountId: "acme",
+		future: "kept",
+	});
+	assert.equal(runtime.get().settings.selectedTargets.fireworks, "acme");
+	assert.deepEqual(
+		(await readdir(join(path, ".."))).filter((name) => name.endsWith(".tmp")),
+		[],
+	);
+
+	const missingPath = await tempSettingsPath();
+	const missingRuntime = createUsageSettingsRuntime(missingPath);
+	await assert.rejects(
+		missingRuntime.updateSelectedTarget("fireworks", "beta", undefined, async () => {
+			assert.equal(
+				(await loadUsageSettings(missingPath)).settings.selectedTargets.fireworks,
+				"beta",
+			);
+			throw new Error("membership changed");
+		}),
+		/membership changed/,
+	);
+	assert.equal((await loadUsageSettings(missingPath)).kind, "missing");
+	assert.equal(missingRuntime.get().kind, "missing");
 });
 
 test("serialized updates reread the latest document and leave no temporary files", async () => {
@@ -196,10 +281,37 @@ test("failed saves retain prior runtime state, clean up, and do not poison retri
 	assert.equal(runtime.get().settings.codexFastMode, true);
 });
 
+test("failed explicit target migration keeps legacy data and allows a retry", async () => {
+	const path = await tempSettingsPath();
+	await writeFile(path, '{"fireworksAccountId":"acme","future":"kept"}\n');
+	let rejectRename = true;
+	const runtime = createUsageSettingsRuntime({
+		path,
+		operations: {
+			rename: async (source, destination) => {
+				if (rejectRename) throw new Error("rename rejected");
+				await rename(source, destination);
+			},
+		},
+	});
+	await runtime.reload();
+	await assert.rejects(runtime.updateSelectedTarget("fireworks", "beta"), /rename rejected/);
+	assert.deepEqual(JSON.parse(await readFile(path, "utf8")), {
+		fireworksAccountId: "acme",
+		future: "kept",
+	});
+	assert.equal(runtime.get().settings.selectedTargets.fireworks, "acme");
+
+	rejectRename = false;
+	await runtime.updateSelectedTarget("fireworks", "beta");
+	assert.equal(runtime.get().settings.selectedTargets.fireworks, "beta");
+});
+
 test("normalizes the Codex reset countdown status preference", () => {
 	assert.deepEqual(normalizeUsageSettings({ codexStatusResetCountdown: false }), {
 		codexFastMode: false,
 		codexStatusResetCountdown: false,
+		selectedTargets: {},
 	});
 	assert.equal(normalizeUsageSettings({ codexStatusResetCountdown: "false" }), undefined);
 });

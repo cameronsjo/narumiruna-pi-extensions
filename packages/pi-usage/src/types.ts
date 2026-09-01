@@ -53,10 +53,37 @@ export interface ResolvedUsageAuth {
 	fingerprint: string;
 	secrets: string[];
 	model: PiModel;
+	auth?: {
+		apiKey?: string;
+		headers?: Record<string, string | null>;
+		baseUrl?: string;
+	};
+	env?: Record<string, string>;
+	source?: string;
+	effectiveBaseUrl?: string;
 }
 
 export interface UsageQuerySettings {
 	fireworksAccountId?: string;
+}
+
+export type UsageRequestGuard = () => Promise<void>;
+
+export interface UsageProviderTarget {
+	id: string;
+	label: string;
+	description?: string;
+}
+
+export interface UsageTargetResolver {
+	singularLabel: string;
+	pluralLabel: string;
+	list(
+		auth: ResolvedUsageAuth,
+		signal: AbortSignal,
+		timeoutMs: number,
+		guard: UsageRequestGuard,
+	): Promise<readonly UsageProviderTarget[]>;
 }
 
 export interface UsageProviderAdapter {
@@ -64,12 +91,13 @@ export interface UsageProviderAdapter {
 	displayName: string;
 	semantics: UsageSemantics;
 	publishesStatusline?: boolean;
+	targets?: UsageTargetResolver;
 	query(
 		auth: ResolvedUsageAuth,
 		signal: AbortSignal,
 		timeoutMs: number,
-		guard?: () => Promise<void>,
-		settings?: Readonly<UsageQuerySettings>,
+		guard?: UsageRequestGuard,
+		targetId?: string,
 	): Promise<UsageReport>;
 }
 
@@ -80,6 +108,15 @@ export type ProviderUsageState =
 			displayState: UsageDisplayState;
 			status: "ready";
 			report: UsageReport;
+	  }
+	| {
+			providerId: string;
+			providerName: string;
+			displayState: UsageDisplayState;
+			status: "selection-required";
+			singularLabel: string;
+			pluralLabel: string;
+			choices: readonly UsageProviderTarget[];
 	  }
 	| {
 			providerId: string;

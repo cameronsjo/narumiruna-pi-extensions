@@ -37,7 +37,11 @@ import {
 	queryProviderUsage,
 	resolveUsageAuth,
 } from "./query.js";
-import { createUsageSettingsRuntime, type UsageSettingsRuntime } from "./settings.js";
+import {
+	createUsageSettingsRuntime,
+	type UsageSettingsRuntime,
+	type UsageSettingsState,
+} from "./settings.js";
 import type {
 	PiModel,
 	ProviderUsageState,
@@ -54,6 +58,11 @@ import {
 	setBoundedMap,
 } from "./usage-helpers.js";
 import { showUsageSettings } from "./usage-settings-ui.js";
+import {
+	createUsageTargetSelectOptions,
+	listUsageTargets,
+	resolveUsageTarget,
+} from "./usage-targets.js";
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const STATUS_COUNTDOWN_REFRESH_MS = 60 * 1000;
@@ -80,7 +89,12 @@ type QueryOutcome = {
 	state: ProviderUsageState;
 	fingerprint?: string;
 	authState?: "unavailable";
+	rememberedTargetId?: string;
 };
+
+class UsageTargetSelectionChangedError extends Error {
+	override readonly name = "UsageTargetSelectionChangedError";
+}
 
 type StableCurrent = {
 	outcome: QueryOutcome;
@@ -174,7 +188,11 @@ export default function usageExtension(
 			if (
 				safeSetStatus(
 					ctx,
-					outcome.state.status === "auth-unavailable" ? "auth unavailable" : "usage error",
+					outcome.state.status === "auth-unavailable"
+						? "auth unavailable"
+						: outcome.state.status === "selection-required"
+							? "selection required"
+							: "usage error",
 				)
 			) {
 				if (shouldSchedule && sessionActive) scheduleStatusRefresh(ctx, model);
@@ -248,10 +266,10 @@ export default function usageExtension(
 		const expectedSessionGeneration = sessionGeneration;
 		const expectedSessionId = ctx.sessionManager.getSessionId();
 		const expectedModelIdentity = modelIdentity(ctx.model);
-		const expectedFireworksAccountId =
-			adapter.id === "fireworks" ? settingsRuntime.get().settings.fireworksAccountId : undefined;
-		const querySettings =
-			adapter.id === "fireworks" ? { fireworksAccountId: expectedFireworksAccountId } : undefined;
+		const expectedTargetId = adapter.targets
+			? settingsRuntime.get().settings.selectedTargets[adapter.id]
+			: undefined;
+		const providerName = providerDisplayName(ctx, adapter.id);
 		let auth: ResolvedUsageAuth | undefined;
 		try {
 			auth = await awaitWithDeadline(
@@ -268,32 +286,33 @@ export default function usageExtension(
 			return {
 				state: {
 					providerId: adapter.id,
-					providerName: adapter.displayName,
+					providerName,
 					displayState,
 					status: isTimeoutError(error) ? "query-failed" : "auth-unavailable",
 					message: errorMessage(error),
 				},
 			};
 		}
-		const requiresRequestBoundaryGuard = [
-			"baseten",
-			"deepseek",
-			"fireworks",
-			"minimax",
-			"minimax-cn",
-			"moonshotai",
-			"moonshotai-cn",
-			"vercel-ai-gateway",
-			"xai",
-			"zai",
-			"zai-coding-cn",
-		].includes(adapter.id);
+		const requiresRequestBoundaryGuard =
+			adapter.targets !== undefined ||
+			[
+				"baseten",
+				"deepseek",
+				"minimax",
+				"minimax-cn",
+				"moonshotai",
+				"moonshotai-cn",
+				"vercel-ai-gateway",
+				"xai",
+				"zai",
+				"zai-coding-cn",
+			].includes(adapter.id);
 		const requestContextChanged = () =>
 			expectedSessionGeneration !== sessionGeneration ||
 			ctx.sessionManager.getSessionId() !== expectedSessionId ||
 			modelIdentity(ctx.model) !== expectedModelIdentity ||
-			(adapter.id === "fireworks" &&
-				settingsRuntime.get().settings.fireworksAccountId !== expectedFireworksAccountId);
+			(adapter.targets !== undefined &&
+				settingsRuntime.get().settings.selectedTargets[adapter.id] !== expectedTargetId);
 		if (requiresRequestBoundaryGuard && requestContextChanged()) throw abortError();
 		if (!auth) {
 			if (displayState === "current") {
@@ -302,101 +321,142 @@ export default function usageExtension(
 			return {
 				state: {
 					providerId: adapter.id,
-					providerName: adapter.displayName,
+					providerName,
 					displayState,
 					status: "auth-unavailable",
-					message: `No runtime credential is configured for ${adapter.displayName}.`,
+					message: `No runtime credential is configured for ${providerName}.`,
 				},
 				authState: "unavailable",
 			};
 		}
-		const queryFingerprint =
-			adapter.id === "fireworks"
-				? `${auth.fingerprint}:account:${expectedFireworksAccountId ?? "auto"}`
-				: auth.fingerprint;
-		if (displayState === "current") {
-			transitionCurrentIdentity(`${adapter.id}:${queryFingerprint}`, adapter.id);
-		}
-
-		const cached = !force ? cache.get(adapter.id, queryFingerprint) : undefined;
-		if (cached) {
-			return {
-				state: {
-					providerId: adapter.id,
-					providerName: adapter.displayName,
-					displayState,
-					status: "ready",
-					report: cached,
-				},
-				fingerprint: auth.fingerprint,
-			};
-		}
-
-		const failureKey = `${adapter.id}:${queryFingerprint}`;
-		const previousFailure = failureBackoff.get(failureKey);
-		if (!force && previousFailure && previousFailure.until > Date.now()) {
-			return {
-				state: {
-					providerId: adapter.id,
-					providerName: adapter.displayName,
-					displayState,
-					status: "query-failed",
-					message: previousFailure.message,
-				},
-				fingerprint: auth.fingerprint,
-			};
-		}
-		failureBackoff.delete(failureKey);
-		querySequence += 1;
-		const queryId = querySequence;
-		setBoundedMap(latestQueries, failureKey, queryId, MAX_ACCOUNT_STATES);
-
 		let retryableAuthChanged = false;
+		const guard = async () => {
+			if (signal.aborted || requestContextChanged()) throw abortError();
+			if (!requiresRequestBoundaryGuard) return;
+			const revalidated = await awaitWithDeadline(
+				resolveUsageAuth(ctx, adapter, undefined, credentialReader, credentialCandidates),
+				signal,
+				Math.max(1, deadlineAt - Date.now()),
+				`revalidating ${providerName} runtime auth`,
+			);
+			if (signal.aborted || requestContextChanged()) throw abortError();
+			if (revalidated?.fingerprint !== auth.fingerprint) {
+				if (["deepseek", "minimax", "minimax-cn"].includes(adapter.id)) {
+					retryableAuthChanged = true;
+					throw new Error(`${providerName} runtime credential changed during the usage query.`);
+				}
+				throw abortError();
+			}
+		};
+		let queryFingerprint = adapter.targets
+			? `${auth.fingerprint}:target:${expectedTargetId ?? "unresolved"}`
+			: auth.fingerprint;
+		let failureKey = `${adapter.id}:${queryFingerprint}`;
+		let queryId: number | undefined;
 		try {
-			const remainingMs = Math.max(1, deadlineAt - Date.now());
-			const guard = requiresRequestBoundaryGuard
-				? async () => {
-						if (signal.aborted || requestContextChanged()) throw abortError();
-						const revalidated = await awaitWithDeadline(
-							resolveUsageAuth(ctx, adapter, undefined, credentialReader, credentialCandidates),
-							signal,
-							Math.max(1, deadlineAt - Date.now()),
-							`revalidating ${adapter.displayName} runtime auth`,
-						);
-						if (signal.aborted || requestContextChanged()) throw abortError();
-						if (revalidated?.fingerprint !== auth.fingerprint) {
-							if (["deepseek", "minimax", "minimax-cn"].includes(adapter.id)) {
-								retryableAuthChanged = true;
-								throw new Error(
-									`${adapter.displayName} runtime credential changed during the usage query.`,
-								);
-							}
-							throw abortError();
-						}
-					}
-				: undefined;
+			const previousDiscoveryFailure = failureBackoff.get(failureKey);
+			if (!force && previousDiscoveryFailure && previousDiscoveryFailure.until > Date.now()) {
+				return {
+					state: {
+						providerId: adapter.id,
+						providerName,
+						displayState,
+						status: "query-failed",
+						message: previousDiscoveryFailure.message,
+					},
+					fingerprint: auth.fingerprint,
+					rememberedTargetId: expectedTargetId,
+				};
+			}
+			const target = await resolveUsageTarget(
+				adapter,
+				auth,
+				expectedTargetId,
+				signal,
+				Math.max(1, deadlineAt - Date.now()),
+				guard,
+			);
+			if (target.kind === "selection-required") {
+				if (displayState === "current") {
+					transitionCurrentIdentity(`${adapter.id}:${queryFingerprint}`, adapter.id);
+				}
+				return {
+					state: {
+						providerId: adapter.id,
+						providerName,
+						displayState,
+						status: "selection-required",
+						singularLabel: adapter.targets?.singularLabel ?? "target",
+						pluralLabel: adapter.targets?.pluralLabel ?? "targets",
+						choices: target.choices,
+					},
+					fingerprint: auth.fingerprint,
+					rememberedTargetId: expectedTargetId,
+				};
+			}
+			queryFingerprint = adapter.targets
+				? `${auth.fingerprint}:target:${target.targetId ?? "none"}`
+				: auth.fingerprint;
+			failureKey = `${adapter.id}:${queryFingerprint}`;
+			if (displayState === "current") {
+				transitionCurrentIdentity(`${adapter.id}:${queryFingerprint}`, adapter.id);
+			}
+			const cached = !force ? cache.get(adapter.id, queryFingerprint) : undefined;
+			if (cached) {
+				return {
+					state: {
+						providerId: adapter.id,
+						providerName,
+						displayState,
+						status: "ready",
+						report: cached,
+					},
+					fingerprint: auth.fingerprint,
+					rememberedTargetId: expectedTargetId,
+				};
+			}
+			const previousFailure = failureBackoff.get(failureKey);
+			if (!force && previousFailure && previousFailure.until > Date.now()) {
+				return {
+					state: {
+						providerId: adapter.id,
+						providerName,
+						displayState,
+						status: "query-failed",
+						message: previousFailure.message,
+					},
+					fingerprint: auth.fingerprint,
+					rememberedTargetId: expectedTargetId,
+				};
+			}
+			failureBackoff.delete(failureKey);
+			querySequence += 1;
+			queryId = querySequence;
+			setBoundedMap(latestQueries, failureKey, queryId, MAX_ACCOUNT_STATES);
 			const report = await queryProviderUsage(
 				adapter,
 				auth,
 				signal,
-				remainingMs,
-				guard,
-				querySettings,
+				Math.max(1, deadlineAt - Date.now()),
+				requiresRequestBoundaryGuard ? guard : undefined,
+				target.targetId,
 			);
-			if (guard) await guard();
+			if (requiresRequestBoundaryGuard) await guard();
+			const effectiveReport = { ...report, providerName };
 			if (latestQueries.get(failureKey) === queryId) {
-				cache.set(adapter.id, queryFingerprint, report);
+				cache.set(adapter.id, queryFingerprint, effectiveReport);
 				failureBackoff.delete(failureKey);
 			}
 			return {
 				state: {
 					providerId: adapter.id,
-					providerName: adapter.displayName,
+					providerName,
 					displayState,
 					status: "ready",
-					report,
+					report: effectiveReport,
 				},
 				fingerprint: auth.fingerprint,
+				rememberedTargetId: expectedTargetId,
 			};
 		} catch (error) {
 			if (isStaleExtensionContextError(error) || isAbortError(error)) throw error;
@@ -407,7 +467,9 @@ export default function usageExtension(
 				!requestContextChanged() &&
 				Date.now() < deadlineAt
 			) {
-				if (latestQueries.get(failureKey) === queryId) latestQueries.delete(failureKey);
+				if (queryId !== undefined && latestQueries.get(failureKey) === queryId) {
+					latestQueries.delete(failureKey);
+				}
 				return queryAdapterState(
 					ctx,
 					adapter,
@@ -423,7 +485,7 @@ export default function usageExtension(
 			for (const [key, failure] of failureBackoff) {
 				if (failure.until <= now) failureBackoff.delete(key);
 			}
-			if (latestQueries.get(failureKey) === queryId) {
+			if (queryId === undefined || latestQueries.get(failureKey) === queryId) {
 				setBoundedMap(
 					failureBackoff,
 					failureKey,
@@ -434,14 +496,60 @@ export default function usageExtension(
 			return {
 				state: {
 					providerId: adapter.id,
-					providerName: adapter.displayName,
+					providerName,
 					displayState,
 					status: "query-failed",
 					message,
 				},
 				fingerprint: auth.fingerprint,
+				rememberedTargetId: expectedTargetId,
 			};
 		}
+	};
+
+	const loadTargetChoices = async (
+		ctx: ExtensionContext,
+		adapter: UsageProviderAdapter,
+		signal: AbortSignal,
+	) => {
+		if (!adapter.targets) throw new Error("Provider does not support usage targets.");
+		const expectedSessionGeneration = sessionGeneration;
+		const expectedSessionId = ctx.sessionManager.getSessionId();
+		const expectedModel = modelIdentity(ctx.model);
+		const expectedTargetId = settingsRuntime.get().settings.selectedTargets[adapter.id];
+		const deadlineAt = Date.now() + DEFAULT_TIMEOUT_MS;
+		const changed = () =>
+			expectedSessionGeneration !== sessionGeneration ||
+			ctx.sessionManager.getSessionId() !== expectedSessionId ||
+			modelIdentity(ctx.model) !== expectedModel ||
+			settingsRuntime.get().settings.selectedTargets[adapter.id] !== expectedTargetId;
+		const auth = await awaitWithDeadline(
+			resolveUsageAuth(ctx, adapter, undefined, credentialReader, credentialCandidates),
+			signal,
+			Math.max(1, deadlineAt - Date.now()),
+			`resolving ${providerDisplayName(ctx, adapter.id)} runtime auth`,
+		);
+		if (!auth || signal.aborted || changed()) throw abortError();
+		const guard = async () => {
+			if (signal.aborted || changed()) throw abortError();
+			const revalidated = await awaitWithDeadline(
+				resolveUsageAuth(ctx, adapter, undefined, credentialReader, credentialCandidates),
+				signal,
+				Math.max(1, deadlineAt - Date.now()),
+				`revalidating ${providerDisplayName(ctx, adapter.id)} runtime auth`,
+			);
+			if (signal.aborted || changed() || revalidated?.fingerprint !== auth.fingerprint) {
+				throw abortError();
+			}
+		};
+		const choices = await listUsageTargets(
+			adapter,
+			auth,
+			signal,
+			Math.max(1, deadlineAt - Date.now()),
+			guard,
+		);
+		return { choices, fingerprint: auth.fingerprint };
 	};
 
 	const queryCurrentState = async (
@@ -558,6 +666,10 @@ export default function usageExtension(
 			return false;
 		}
 		const adapter = adapterForProvider(model?.provider);
+		const selectionStillCurrent =
+			!adapter?.targets ||
+			settingsRuntime.get().settings.selectedTargets[adapter.id] === outcome.rememberedTargetId;
+		if (!selectionStillCurrent) return false;
 		if (outcome.authState === "unavailable") {
 			if (!adapter) return false;
 			try {
@@ -570,6 +682,9 @@ export default function usageExtension(
 				return (
 					generation === statusGeneration &&
 					modelIdentity(ctx.model) === modelIdentity(model) &&
+					(!adapter.targets ||
+						settingsRuntime.get().settings.selectedTargets[adapter.id] ===
+							outcome.rememberedTargetId) &&
 					auth === undefined
 				);
 			} catch (error) {
@@ -589,6 +704,9 @@ export default function usageExtension(
 			return (
 				generation === statusGeneration &&
 				modelIdentity(ctx.model) === modelIdentity(model) &&
+				(!adapter.targets ||
+					settingsRuntime.get().settings.selectedTargets[adapter.id] ===
+						outcome.rememberedTargetId) &&
 				auth?.fingerprint === outcome.fingerprint
 			);
 		} catch (error) {
@@ -654,6 +772,121 @@ export default function usageExtension(
 			let redemptionId: string | undefined;
 			let resetOutcome: CodexResetOutcome | undefined;
 			let resetFailure: string | undefined;
+			const actionableTargetState = (): ProviderUsageState | undefined => {
+				if (visibleStates.length !== 1) return undefined;
+				const state = visibleStates[0];
+				return state &&
+					(state.status === "ready" || state.status === "selection-required") &&
+					adapterForProvider(state.providerId)?.targets
+					? state
+					: undefined;
+			};
+			const promptForTarget = async (
+				state: ProviderUsageState,
+				stateFingerprint?: string,
+			): Promise<boolean> => {
+				const adapter = adapterForProvider(state.providerId);
+				if (!adapter?.targets) return false;
+				const expectedRememberedTargetId =
+					settingsRuntime.get().settings.selectedTargets[adapter.id];
+				const snapshot =
+					state.status === "selection-required" && stateFingerprint
+						? { choices: state.choices, fingerprint: stateFingerprint }
+						: await runMenuOperation(
+								ctx,
+								`Loading ${adapter.targets.pluralLabel}…`,
+								controller.signal,
+								(signal) => loadTargetChoices(ctx, adapter, signal),
+							);
+				if (!snapshot || controller.signal.aborted || statusGeneration !== menuGeneration) {
+					return false;
+				}
+				const selectOptions = createUsageTargetSelectOptions(snapshot.choices);
+				const selected = await ctx.ui.select(
+					`Select ${adapter.targets.singularLabel} for ${providerDisplayName(ctx, adapter.id)}`,
+					[...selectOptions.options],
+					{ signal: controller.signal },
+				);
+				if (
+					selected === undefined ||
+					controller.signal.aborted ||
+					statusGeneration !== menuGeneration ||
+					settingsRuntime.get().settings.selectedTargets[adapter.id] !== expectedRememberedTargetId
+				) {
+					return false;
+				}
+				const targetId = selectOptions.targetIdFor(selected);
+				if (!targetId) return false;
+				const revalidated = await runMenuOperation(
+					ctx,
+					`Revalidating ${adapter.targets.singularLabel}…`,
+					controller.signal,
+					(signal) => loadTargetChoices(ctx, adapter, signal),
+				);
+				if (
+					!revalidated ||
+					controller.signal.aborted ||
+					statusGeneration !== menuGeneration ||
+					settingsRuntime.get().settings.selectedTargets[adapter.id] !== expectedRememberedTargetId
+				) {
+					return false;
+				}
+				if (
+					revalidated.fingerprint !== snapshot.fingerprint ||
+					!revalidated.choices.some((choice) => choice.id === targetId)
+				) {
+					ctx.ui.notify(
+						`${providerDisplayName(ctx, adapter.id)} ${adapter.targets.pluralLabel} changed; choose again.`,
+						"warning",
+					);
+					return false;
+				}
+				let saved: Readonly<UsageSettingsState> | undefined;
+				try {
+					saved = await runMenuOperation(
+						ctx,
+						`Saving ${adapter.targets.singularLabel}…`,
+						controller.signal,
+						(signal) =>
+							settingsRuntime.updateSelectedTarget(adapter.id, targetId, signal, async () => {
+								let published: Awaited<ReturnType<typeof loadTargetChoices>>;
+								try {
+									published = await loadTargetChoices(ctx, adapter, signal);
+								} catch (error) {
+									if (
+										signal.aborted ||
+										controller.signal.aborted ||
+										statusGeneration !== menuGeneration ||
+										isStaleExtensionContextError(error)
+									) {
+										throw error;
+									}
+									throw new UsageTargetSelectionChangedError();
+								}
+								if (
+									published.fingerprint !== snapshot.fingerprint ||
+									!published.choices.some((choice) => choice.id === targetId)
+								) {
+									throw new UsageTargetSelectionChangedError();
+								}
+							}),
+					);
+				} catch (error) {
+					if (error instanceof UsageTargetSelectionChangedError) {
+						ctx.ui.notify(
+							`${providerDisplayName(ctx, adapter.id)} ${adapter.targets.pluralLabel} changed; choose again.`,
+							"warning",
+						);
+						return false;
+					}
+					throw error;
+				}
+				if (!saved || controller.signal.aborted || statusGeneration !== menuGeneration) {
+					return false;
+				}
+				invalidateProviderState(adapter.id);
+				return true;
+			};
 			const { defineMenu, runMenu } = await import("@narumitw/pi-tui-kit");
 			if (controller.signal.aborted || statusGeneration !== menuGeneration) return;
 			type Screen =
@@ -666,6 +899,7 @@ export default function usageExtension(
 			type Action =
 				| "refresh"
 				| "settings"
+				| "target"
 				| "toggle-fast"
 				| "another"
 				| "all"
@@ -681,6 +915,8 @@ export default function usageExtension(
 				screens: {
 					main: () => {
 						const fastAvailability = fastRuntime.availability(ctx.model);
+						const targetState = actionableTargetState();
+						const targetAdapter = adapterForProvider(targetState?.providerId);
 						const fastLines =
 							fastAvailability.kind === "available"
 								? [`Fast mode: ${fastAvailability.enabled ? "On" : "Off"}`, FAST_USAGE_WARNING]
@@ -694,6 +930,15 @@ export default function usageExtension(
 							items: [
 								{ id: "refresh", label: REFRESH_CURRENT, action: "refresh" },
 								{ id: "settings", label: SETTINGS, action: "settings" },
+								...(targetState && targetAdapter?.targets
+									? [
+											{
+												id: "target",
+												label: `${targetState.status === "selection-required" ? "Select" : "Change"} ${targetAdapter.targets.singularLabel}…`,
+												action: "target" as const,
+											},
+										]
+									: []),
 								...(fastAvailability.kind === "available"
 									? [
 											{
@@ -735,7 +980,7 @@ export default function usageExtension(
 							.filter((adapter) => adapter.id !== ctx.model?.provider)
 							.map((adapter) => ({
 								id: adapter.id,
-								label: adapter.displayName,
+								label: providerDisplayName(ctx, adapter.id),
 								action: "provider" as const,
 							})),
 						hint: "back",
@@ -799,6 +1044,61 @@ export default function usageExtension(
 					}),
 				},
 				actions: {
+					target: async () => {
+						const targetState = actionableTargetState();
+						if (!targetState) return { kind: "rejected" };
+						try {
+							const stateFingerprint =
+								targetState === current.state ? current.fingerprint : undefined;
+							if (!(await promptForTarget(targetState, stateFingerprint))) {
+								return { kind: "stay" };
+							}
+							const adapter = adapterForProvider(targetState.providerId);
+							if (!adapter) return { kind: "rejected" };
+							if (targetState.providerId === ctx.model?.provider) {
+								const refreshed = await queryStableCurrent(
+									ctx,
+									true,
+									controller,
+									`Checking ${providerDisplayName(ctx, adapter.id)} usage…`,
+								);
+								if (!refreshed) return { kind: "stay" };
+								stableCurrent = refreshed;
+								current = refreshed.outcome;
+								visibleStates = [current.state];
+								publishStableCurrent(ctx, refreshed);
+								return { kind: "stay" };
+							}
+							const outcome = await runMenuOperation(
+								ctx,
+								`Checking ${providerDisplayName(ctx, adapter.id)} usage…`,
+								controller.signal,
+								(signal) => queryAdapterState(ctx, adapter, "configured", true, signal),
+							);
+							if (!outcome) return { kind: "stay" };
+							const revalidated = await queryStableCurrent(
+								ctx,
+								false,
+								controller,
+								"Revalidating current usage…",
+							);
+							if (!revalidated) return { kind: "stay" };
+							stableCurrent = revalidated;
+							current = revalidated.outcome;
+							visibleStates = [
+								outcome.state.providerId === current.state.providerId
+									? current.state
+									: { ...outcome.state, displayState: "configured" },
+							];
+							return { kind: "stay" };
+						} catch (error) {
+							if (isAbortError(error) || isStaleExtensionContextError(error)) {
+								return { kind: "stay" };
+							}
+							ctx.ui.notify(`Could not select target: ${errorMessage(error)}`, "error");
+							return { kind: "stay" };
+						}
+					},
 					settings: async () => {
 						await showUsageSettings(
 							ctx,
@@ -1023,13 +1323,25 @@ export default function usageExtension(
 							(candidate) => candidate.id === itemId && candidate.id !== ctx.model?.provider,
 						);
 						if (!adapter) return { kind: "back" };
-						const outcome = await runMenuOperation(
+						let outcome = await runMenuOperation(
 							ctx,
-							`Checking ${adapter.displayName} usage…`,
+							`Checking ${providerDisplayName(ctx, adapter.id)} usage…`,
 							controller.signal,
 							(signal) => queryAdapterState(ctx, adapter, "configured", false, signal),
 						);
 						if (!outcome) return { kind: "back" };
+						if (outcome.state.status === "selection-required") {
+							if (!(await promptForTarget(outcome.state, outcome.fingerprint))) {
+								return { kind: "back" };
+							}
+							outcome = await runMenuOperation(
+								ctx,
+								`Checking ${providerDisplayName(ctx, adapter.id)} usage…`,
+								controller.signal,
+								(signal) => queryAdapterState(ctx, adapter, "configured", true, signal),
+							);
+							if (!outcome) return { kind: "back" };
+						}
 						const revalidated = await queryStableCurrent(
 							ctx,
 							false,
@@ -1076,7 +1388,7 @@ export default function usageExtension(
 							const adapter = adapters[index] as UsageProviderAdapter;
 							return {
 								providerId: adapter.id,
-								providerName: adapter.displayName,
+								providerName: providerDisplayName(ctx, adapter.id),
 								displayState: "configured",
 								status: "query-failed",
 								message: errorMessage(result.reason),

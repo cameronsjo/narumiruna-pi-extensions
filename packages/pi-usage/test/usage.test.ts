@@ -72,6 +72,21 @@ const fireworksModel = {
 	baseUrl: "https://api.fireworks.ai/inference",
 };
 
+function testProviderDisplayName(provider: string): string {
+	return (
+		{
+			"openai-codex": "OpenAI Codex",
+			openrouter: "OpenRouter",
+			deepseek: "DeepSeek",
+			"kimi-coding": "Kimi For Coding",
+			fireworks: "Fireworks",
+			minimax: "MiniMax",
+			xai: "xAI",
+			zai: "Z.AI",
+		}[provider] ?? provider
+	);
+}
+
 function codexAccessToken(accountId: string): string {
 	const payload = Buffer.from(
 		JSON.stringify({
@@ -85,9 +100,11 @@ function memorySettingsRuntime(
 	options: {
 		codexStatusResetCountdown?: boolean;
 		fireworksAccountId?: string;
+		selectedTargets?: Record<string, string>;
 		document?: Record<string, unknown>;
 		failUpdates?: boolean;
 		kind?: UsageSettingsState["kind"];
+		afterTargetWrite?: () => void;
 	} = {},
 ): { runtime: UsageSettingsRuntime; state: () => UsageSettingsState } {
 	const kind = options.kind ?? "loaded";
@@ -97,16 +114,20 @@ function memorySettingsRuntime(
 		settings: {
 			codexFastMode: false,
 			codexStatusResetCountdown: options.codexStatusResetCountdown ?? false,
-			...(options.fireworksAccountId ? { fireworksAccountId: options.fireworksAccountId } : {}),
+			selectedTargets: {
+				...(options.fireworksAccountId ? { fireworks: options.fireworksAccountId } : {}),
+				...options.selectedTargets,
+			},
 		},
 		...(kind === "invalid"
 			? { issue: "invalid test settings" }
 			: {
 					document: {
 						codexFastMode: false,
-						...(options.fireworksAccountId
-							? { fireworksAccountId: options.fireworksAccountId }
-							: {}),
+						selectedTargets: {
+							...(options.fireworksAccountId ? { fireworks: options.fireworksAccountId } : {}),
+							...options.selectedTargets,
+						},
 						...options.document,
 					},
 				}),
@@ -122,6 +143,21 @@ function memorySettingsRuntime(
 				settings: { ...state.settings, ...patch },
 				document: { ...state.document, ...patch },
 			};
+			return structuredClone(state);
+		},
+		updateSelectedTarget: async (providerId, targetId, signal, checkPublishedSelection) => {
+			signal?.throwIfAborted();
+			if (options.failUpdates) throw new Error("disk full");
+			const selectedTargets = { ...state.settings.selectedTargets, [providerId]: targetId };
+			const next = {
+				...state,
+				settings: { ...state.settings, selectedTargets },
+				document: { ...state.document, selectedTargets },
+			};
+			options.afterTargetWrite?.();
+			await checkPublishedSelection?.();
+			signal?.throwIfAborted();
+			state = next;
 			return structuredClone(state);
 		},
 		flush: async () => undefined,
@@ -245,7 +281,7 @@ test("/usage automatically queries the current runtime account and shows state p
 			getAvailable: () => [openRouterModel],
 			getAll: () => [openRouterModel, codexModel],
 			getProviderAuthStatus: (provider: string) => ({ configured: provider === "openrouter" }),
-			getProviderDisplayName: (provider: string) => provider,
+			getProviderDisplayName: testProviderDisplayName,
 		},
 	});
 
@@ -357,7 +393,7 @@ test("current Codex usage can redeem a selected reset and refresh account state"
 			getAvailable: () => [codexModel],
 			getAll: () => [codexModel],
 			getProviderAuthStatus: () => ({ configured: true }),
-			getProviderDisplayName: (provider: string) => provider,
+			getProviderDisplayName: testProviderDisplayName,
 		},
 	});
 
@@ -430,7 +466,7 @@ test("Codex reset confirmation defaults to cancellation and sends no mutation", 
 			getAvailable: () => [codexModel],
 			getAll: () => [codexModel],
 			getProviderAuthStatus: () => ({ configured: true }),
-			getProviderDisplayName: (provider: string) => provider,
+			getProviderDisplayName: testProviderDisplayName,
 		},
 	});
 
@@ -514,7 +550,7 @@ test("explicit all-provider query retains DeepSeek balance, Kimi, and partial fa
 				configured: configured.has(provider),
 				source: "stored",
 			}),
-			getProviderDisplayName: (provider: string) => provider,
+			getProviderDisplayName: testProviderDisplayName,
 		},
 	});
 
@@ -530,6 +566,87 @@ test("explicit all-provider query retains DeepSeek balance, Kimi, and partial fa
 	assert.deepEqual(deepSeekFetchedKeys, ["Bearer deepseek-key"]);
 	assert.match(titles[1] ?? "", /query failed/i);
 	assert.equal(statuses.get("usage"), "openrouter $75.00 left");
+});
+
+test("auth-unavailable target providers do not expose a no-op target action", async () => {
+	const options: string[] = [];
+	const mock = createMockPi();
+	usageExtension(mock.pi, { settingsRuntime: memorySettingsRuntime().runtime });
+	const command = mock.commands.get("usage");
+	assert.ok(command);
+	const { ctx } = createMockContext({
+		hasUI: true,
+		mode: "rpc",
+		model: fireworksModel,
+		select: async (_title: string, choices: string[]) => {
+			options.push(...choices);
+			return "Close";
+		},
+		modelRegistry: {
+			getApiKeyAndHeaders: async () => ({ ok: false, error: "missing" }),
+			getProviderAuth: async () => undefined,
+			getAvailable: () => [fireworksModel],
+			getAll: () => [fireworksModel],
+			getProviderDisplayName: testProviderDisplayName,
+		},
+	});
+
+	await command.handler("", ctx);
+
+	assert.ok(options.includes("Close"));
+	assert.ok(!options.some((option) => /^(Select|Change) account…$/u.test(option)));
+});
+
+test("View all renders unresolved target providers without opening a nested picker", async (t) => {
+	const originalFetch = globalThis.fetch;
+	t.onTestFinished(() => {
+		globalThis.fetch = originalFetch;
+	});
+	const requests: string[] = [];
+	globalThis.fetch = async (input) => {
+		const url = String(input);
+		requests.push(url);
+		if (url.includes("/v1/accounts?")) {
+			return new Response(
+				JSON.stringify({ accounts: [{ name: "accounts/acme" }, { name: "accounts/beta" }] }),
+				{ status: 200 },
+			);
+		}
+		return usageFetch(input);
+	};
+	const choices = ["View all configured providers…", "Close"];
+	const titles: string[] = [];
+	const mock = createMockPi();
+	usageExtension(mock.pi, { settingsRuntime: memorySettingsRuntime().runtime });
+	const command = mock.commands.get("usage");
+	assert.ok(command);
+	const { ctx } = createMockContext({
+		hasUI: true,
+		mode: "rpc",
+		model: openRouterModel,
+		select: async (title: string) => {
+			titles.push(title);
+			return choices.shift();
+		},
+		modelRegistry: {
+			getProviderAuth: async (providerId: string) => ({
+				auth: {
+					apiKey: `${providerId}-key`,
+					...(providerId === "fireworks" ? { baseUrl: fireworksModel.baseUrl } : {}),
+				},
+			}),
+			getAvailable: () => [openRouterModel, fireworksModel],
+			getAll: () => [openRouterModel, fireworksModel],
+			getProviderAuthStatus: () => ({ configured: true }),
+			getProviderDisplayName: testProviderDisplayName,
+		},
+	});
+
+	await command.handler("", ctx);
+
+	assert.match(titles.at(-1) ?? "", /Fireworks · Configured\nSelection required/iu);
+	assert.ok(!titles.some((title) => title.startsWith("Select account for Fireworks")));
+	assert.equal(requests.filter((url) => url.includes("/billing/summary")).length, 0);
 });
 
 test("another-provider queries show only the selected provider and preserve current status", async (t) => {
@@ -557,7 +674,7 @@ test("another-provider queries show only the selected provider and preserve curr
 			getAvailable: () => [openRouterModel, codexModel],
 			getAll: () => [openRouterModel, codexModel],
 			getProviderAuthStatus: () => ({ configured: true }),
-			getProviderDisplayName: (provider: string) => provider,
+			getProviderDisplayName: testProviderDisplayName,
 		},
 	});
 
@@ -629,7 +746,7 @@ test("current auth appearance during a command is revalidated before display", a
 			getAvailable: () => [openRouterModel],
 			getAll: () => [openRouterModel],
 			getProviderAuthStatus: () => ({ configured: true }),
-			getProviderDisplayName: (provider: string) => provider,
+			getProviderDisplayName: testProviderDisplayName,
 		},
 	});
 
@@ -702,7 +819,7 @@ test("TUI usage queries complete through the loader before opening the menu", as
 			getAvailable: () => [openRouterModel],
 			getAll: () => [openRouterModel],
 			getProviderAuthStatus: () => ({ configured: true }),
-			getProviderDisplayName: (provider: string) => provider,
+			getProviderDisplayName: testProviderDisplayName,
 		},
 	});
 
@@ -810,7 +927,7 @@ test("session shutdown aborts usage action and provider selectors", async (t) =>
 			getAvailable: () => [openRouterModel, codexModel],
 			getAll: () => [openRouterModel, codexModel],
 			getProviderAuthStatus: () => ({ configured: true }),
-			getProviderDisplayName: (provider: string) => provider,
+			getProviderDisplayName: testProviderDisplayName,
 		},
 	});
 
@@ -867,6 +984,7 @@ test("current Kimi usage follows account changes and clears status on model repl
 			}),
 			getAvailable: () => [kimiModel],
 			getAll: () => [kimiModel],
+			getProviderDisplayName: testProviderDisplayName,
 		},
 	});
 
@@ -998,7 +1116,11 @@ test("current Fireworks usage receives its guard and settings-backed account sel
 				lineItems: [
 					{
 						series: "SERVERLESS",
-						totalCost: { currencyCode: "USD", units: "1", nanos: 0 },
+						totalCost: {
+							currencyCode: "USD",
+							units: url.includes("/accounts/beta/") ? "1" : "3",
+							nanos: 0,
+						},
 					},
 				],
 			}),
@@ -1025,11 +1147,255 @@ test("current Fireworks usage receives its guard and settings-backed account sel
 	await settle();
 
 	assert.equal(statuses.get("usage"), "fireworks USD 1");
+	await settings.runtime.updateSelectedTarget("fireworks", "acme");
+	mock.events.get("turn_start")?.[0]?.({}, ctx);
+	await settle();
+	await settle();
+	assert.equal(statuses.get("usage"), "fireworks USD 3");
 	const billingRequests = requests.filter((url) => url.includes("/billing/summary"));
-	assert.ok(billingRequests.length > 0);
-	assert.ok(billingRequests.every((url) => url.includes("/accounts/beta/billing/summary")));
+	assert.ok(billingRequests.some((url) => url.includes("/accounts/beta/billing/summary")));
+	assert.ok(billingRequests.some((url) => url.includes("/accounts/acme/billing/summary")));
 	mock.events.get("session_shutdown")?.[0]?.({}, ctx);
 	assert.equal(statuses.get("usage"), undefined);
+});
+
+test("current unresolved Fireworks usage prompts once, persists, and re-queries fresh targets", async (t) => {
+	const originalFetch = globalThis.fetch;
+	t.onTestFinished(() => {
+		globalThis.fetch = originalFetch;
+	});
+	const requests: string[] = [];
+	globalThis.fetch = async (input) => {
+		const url = String(input);
+		requests.push(url);
+		if (url.includes("/v1/accounts?")) {
+			return new Response(
+				JSON.stringify({ accounts: [{ name: "accounts/acme" }, { name: "accounts/beta" }] }),
+				{ status: 200 },
+			);
+		}
+		return new Response(
+			JSON.stringify({
+				lineItems: [
+					{
+						series: "SERVERLESS",
+						totalCost: { currencyCode: "USD", units: "2", nanos: 0 },
+					},
+				],
+			}),
+			{ status: 200 },
+		);
+	};
+	const settings = memorySettingsRuntime();
+	const menuChoices = ["Select account…", "Close"];
+	const titles: string[] = [];
+	const selectedOptions: string[][] = [];
+	const mock = createMockPi();
+	usageExtension(mock.pi, { settingsRuntime: settings.runtime });
+	const command = mock.commands.get("usage");
+	assert.ok(command);
+	const { ctx, statuses } = createMockContext({
+		hasUI: true,
+		mode: "rpc",
+		model: fireworksModel,
+		select: async (title: string, options: string[]) => {
+			titles.push(title);
+			selectedOptions.push(options);
+			if (title.startsWith("Select account for Fireworks")) return "beta";
+			return menuChoices.shift();
+		},
+		modelRegistry: {
+			getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "fw-key" }),
+			getProviderAuth: async () => ({
+				auth: { apiKey: "fw-key", baseUrl: fireworksModel.baseUrl },
+			}),
+			getAvailable: () => [fireworksModel],
+			getAll: () => [fireworksModel],
+			getProviderDisplayName: testProviderDisplayName,
+		},
+	});
+
+	await command.handler("", ctx);
+
+	assert.equal(settings.state().settings.selectedTargets.fireworks, "beta");
+	assert.equal(statuses.get("usage"), "fireworks USD 2");
+	assert.equal(requests.filter((url) => url.includes("/v1/accounts?")).length, 4);
+	const billingRequests = requests.filter((url) => url.includes("/billing/summary"));
+	assert.equal(billingRequests.length, 1);
+	assert.match(billingRequests[0] ?? "", /\/accounts\/beta\/billing\/summary/u);
+	assert.ok(titles.some((title) => /Selection required/iu.test(title)));
+	await command.handler("", ctx);
+	assert.ok(selectedOptions.flat().some((option) => /Change account…/u.test(option)));
+});
+
+test("auth rotation while the target picker is open prevents stale selection persistence", async (t) => {
+	const originalFetch = globalThis.fetch;
+	t.onTestFinished(() => {
+		globalThis.fetch = originalFetch;
+	});
+	let activeKey = "fw-a";
+	const requests: Array<{ url: string; authorization: string }> = [];
+	globalThis.fetch = async (input, init) => {
+		const url = String(input);
+		const authorization = new Headers(init?.headers).get("authorization") ?? "";
+		requests.push({ url, authorization });
+		if (url.includes("/v1/accounts?")) {
+			const accounts =
+				authorization === "Bearer fw-a"
+					? [{ name: "accounts/acme" }, { name: "accounts/beta" }]
+					: [{ name: "accounts/beta" }, { name: "accounts/gamma" }];
+			return new Response(JSON.stringify({ accounts }), { status: 200 });
+		}
+		return new Response(JSON.stringify({ lineItems: [] }), { status: 200 });
+	};
+	const settings = memorySettingsRuntime();
+	const mock = createMockPi();
+	usageExtension(mock.pi, { settingsRuntime: settings.runtime });
+	const command = mock.commands.get("usage");
+	assert.ok(command);
+	let rootSelections = 0;
+	let resolveTarget!: (value: string) => void;
+	let markTargetStarted: () => void = () => undefined;
+	const targetStarted = new Promise<void>((resolve) => {
+		markTargetStarted = resolve;
+	});
+	const { ctx, notifications } = createMockContext({
+		hasUI: true,
+		mode: "rpc",
+		model: fireworksModel,
+		select: async (title: string) => {
+			if (title.startsWith("Select account for Fireworks")) {
+				markTargetStarted();
+				return new Promise<string>((resolve) => {
+					resolveTarget = resolve;
+				});
+			}
+			rootSelections += 1;
+			return rootSelections === 1 ? "Select account…" : "Close";
+		},
+		modelRegistry: {
+			getApiKeyAndHeaders: async () => ({ ok: true, apiKey: activeKey }),
+			getProviderAuth: async () => ({ auth: { apiKey: activeKey } }),
+			getAvailable: () => [fireworksModel],
+			getAll: () => [fireworksModel],
+			getProviderDisplayName: testProviderDisplayName,
+		},
+	});
+
+	const pending = command.handler("", ctx);
+	await targetStarted;
+	activeKey = "fw-b";
+	resolveTarget("beta");
+	await pending;
+
+	assert.deepEqual(settings.state().settings.selectedTargets, {});
+	assert.equal(requests.filter((request) => request.url.includes("/billing/summary")).length, 0);
+	assert.ok(requests.some((request) => request.authorization === "Bearer fw-a"));
+	assert.ok(requests.some((request) => request.authorization === "Bearer fw-b"));
+	assert.match(notifications.at(-1)?.message ?? "", /accounts changed; choose again/iu);
+});
+
+test("auth rotation during target settings publication rolls back the selection", async (t) => {
+	const originalFetch = globalThis.fetch;
+	t.onTestFinished(() => {
+		globalThis.fetch = originalFetch;
+	});
+	let activeKey = "fw-a";
+	const requests: Array<{ url: string; authorization: string }> = [];
+	globalThis.fetch = async (input, init) => {
+		const url = String(input);
+		const authorization = new Headers(init?.headers).get("authorization") ?? "";
+		requests.push({ url, authorization });
+		if (url.includes("/v1/accounts?")) {
+			return new Response(
+				JSON.stringify({ accounts: [{ name: "accounts/acme" }, { name: "accounts/beta" }] }),
+				{ status: 200 },
+			);
+		}
+		return new Response(JSON.stringify({ lineItems: [] }), { status: 200 });
+	};
+	const settings = memorySettingsRuntime({
+		afterTargetWrite: () => {
+			activeKey = "fw-b";
+		},
+	});
+	const mock = createMockPi();
+	usageExtension(mock.pi, { settingsRuntime: settings.runtime });
+	const command = mock.commands.get("usage");
+	assert.ok(command);
+	let rootSelections = 0;
+	const { ctx, notifications } = createMockContext({
+		hasUI: true,
+		mode: "rpc",
+		model: fireworksModel,
+		select: async (title: string) => {
+			if (title.startsWith("Select account for Fireworks")) return "beta";
+			rootSelections += 1;
+			return rootSelections === 1 ? "Select account…" : "Close";
+		},
+		modelRegistry: {
+			getApiKeyAndHeaders: async () => ({ ok: true, apiKey: activeKey }),
+			getProviderAuth: async () => ({ auth: { apiKey: activeKey } }),
+			getAvailable: () => [fireworksModel],
+			getAll: () => [fireworksModel],
+			getProviderDisplayName: testProviderDisplayName,
+		},
+	});
+
+	await command.handler("", ctx);
+
+	assert.deepEqual(settings.state().settings.selectedTargets, {});
+	assert.equal(requests.filter((request) => request.url.includes("/billing/summary")).length, 0);
+	assert.ok(requests.some((request) => request.authorization === "Bearer fw-a"));
+	assert.ok(requests.some((request) => request.authorization === "Bearer fw-b"));
+	assert.match(notifications.at(-1)?.message ?? "", /accounts changed; choose again/iu);
+});
+
+test("cancelling the target picker leaves selection and billing untouched", async (t) => {
+	const originalFetch = globalThis.fetch;
+	t.onTestFinished(() => {
+		globalThis.fetch = originalFetch;
+	});
+	const requests: string[] = [];
+	globalThis.fetch = async (input) => {
+		const url = String(input);
+		requests.push(url);
+		return new Response(
+			JSON.stringify({ accounts: [{ name: "accounts/acme" }, { name: "accounts/beta" }] }),
+			{ status: 200 },
+		);
+	};
+	const settings = memorySettingsRuntime();
+	const mock = createMockPi();
+	usageExtension(mock.pi, { settingsRuntime: settings.runtime });
+	const command = mock.commands.get("usage");
+	assert.ok(command);
+	let menuSelection = true;
+	const { ctx } = createMockContext({
+		hasUI: true,
+		mode: "rpc",
+		model: fireworksModel,
+		select: async (title: string) => {
+			if (title.startsWith("Select account for Fireworks")) return undefined;
+			if (menuSelection) {
+				menuSelection = false;
+				return "Select account…";
+			}
+			return "Close";
+		},
+		modelRegistry: {
+			getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "fw-key" }),
+			getProviderAuth: async () => ({ auth: { apiKey: "fw-key" } }),
+			getAvailable: () => [fireworksModel],
+			getAll: () => [fireworksModel],
+			getProviderDisplayName: testProviderDisplayName,
+		},
+	});
+
+	await command.handler("", ctx);
+
+	assert.deepEqual(settings.state().settings.selectedTargets, {});
+	assert.equal(requests.filter((url) => url.includes("/billing/summary")).length, 0);
 });
 
 test("Fireworks waits for settings reload and cancels a replaced reload before refreshing", async (t) => {
@@ -1077,7 +1443,7 @@ test("Fireworks waits for settings reload and cancels a replaced reload before r
 				);
 			});
 		}
-		return settings.runtime.update({ fireworksAccountId: "beta" }, signal);
+		return settings.runtime.updateSelectedTarget("fireworks", "beta", signal);
 	};
 	const mock = createMockPi();
 	usageExtension(mock.pi, { settingsRuntime: settings.runtime });
@@ -1103,7 +1469,7 @@ test("Fireworks waits for settings reload and cancels a replaced reload before r
 	await settle();
 	await settle();
 
-	assert.equal(settings.state().settings.fireworksAccountId, "beta");
+	assert.equal(settings.state().settings.selectedTargets.fireworks, "beta");
 	assert.equal(statuses.get("usage"), "fireworks USD 1");
 	const billingRequests = requests.filter((url) => url.includes("/billing/summary"));
 	assert.ok(billingRequests.length > 0);
@@ -1418,7 +1784,7 @@ test("a current command supersedes an older automatic query for the same provide
 			getAvailable: () => [openRouterModel],
 			getAll: () => [openRouterModel],
 			getProviderAuthStatus: () => ({ configured: true }),
-			getProviderDisplayName: (provider: string) => provider,
+			getProviderDisplayName: testProviderDisplayName,
 		},
 	});
 
@@ -1467,7 +1833,7 @@ test("cross-provider results revalidate which account is Current before display"
 			getAvailable: () => [openRouterModel, codexModel],
 			getAll: () => [openRouterModel, codexModel],
 			getProviderAuthStatus: () => ({ configured: true }),
-			getProviderDisplayName: (provider: string) => provider,
+			getProviderDisplayName: testProviderDisplayName,
 		},
 	});
 
@@ -1554,7 +1920,7 @@ test("Codex reset countdown repaints locally and stops across replacement and sh
 			getAvailable: () => [codexModel],
 			getAll: () => [codexModel],
 			getProviderAuthStatus: () => ({ configured: true }),
-			getProviderDisplayName: (provider: string) => provider,
+			getProviderDisplayName: testProviderDisplayName,
 		},
 	});
 
@@ -1621,7 +1987,7 @@ test("Codex reset countdown ignores a stale extension context", async (t) => {
 			getAvailable: () => [codexModel],
 			getAll: () => [codexModel],
 			getProviderAuthStatus: () => ({ configured: true }),
-			getProviderDisplayName: (provider: string) => provider,
+			getProviderDisplayName: testProviderDisplayName,
 		},
 	});
 
@@ -1698,7 +2064,7 @@ test("a slow command cannot overwrite status after the selected model changes", 
 			getAvailable: () => [openRouterModel, codexModel],
 			getAll: () => [openRouterModel, codexModel],
 			getProviderAuthStatus: () => ({ configured: true }),
-			getProviderDisplayName: (provider: string) => provider,
+			getProviderDisplayName: testProviderDisplayName,
 		},
 	});
 
@@ -1763,7 +2129,7 @@ test("statusline follows runtime auth changes and clears for unsupported selecte
 			getAvailable: () => [openRouterModel],
 			getAll: () => [openRouterModel],
 			getProviderAuthStatus: () => ({ configured: true }),
-			getProviderDisplayName: (provider: string) => provider,
+			getProviderDisplayName: testProviderDisplayName,
 		},
 	});
 
@@ -1992,7 +2358,7 @@ test("xAI account changes after the final adapter guard prevent configured publi
 			getAvailable: () => [openRouterModel, xaiModel],
 			getAll: () => [openRouterModel, xaiModel],
 			getProviderAuthStatus: () => ({ configured: true }),
-			getProviderDisplayName: (provider: string) => provider,
+			getProviderDisplayName: testProviderDisplayName,
 		},
 	});
 
@@ -2057,7 +2423,7 @@ test("xAI appears as a configured provider without changing current status", asy
 			getAvailable: () => [openRouterModel, xaiModel],
 			getAll: () => [openRouterModel, xaiModel],
 			getProviderAuthStatus: () => ({ configured: true }),
-			getProviderDisplayName: (provider: string) => provider,
+			getProviderDisplayName: testProviderDisplayName,
 		},
 	});
 
@@ -2091,7 +2457,7 @@ test("the Settings menu action gives RPC mode the active manual settings path", 
 			getAvailable: () => [openRouterModel],
 			getAll: () => [openRouterModel],
 			getProviderAuthStatus: () => ({ configured: true }),
-			getProviderDisplayName: (provider: string) => provider,
+			getProviderDisplayName: testProviderDisplayName,
 		},
 	});
 
@@ -2172,181 +2538,8 @@ test("the TUI SettingsList describes and applies usage preferences immediately",
 		),
 	);
 	assert.ok(renderedSettings.some((frame) => /Use faster Codex routing/.test(frame)));
-	assert.ok(renderedSettings.some((frame) => /Fireworks account/.test(frame)));
+	assert.doesNotMatch(renderedSettings.join("\n"), /Fireworks account/u);
 	assert.doesNotMatch(renderedSettings.join("\n"), /xAI|warning|undocumented|experimental/iu);
-});
-
-test("the TUI Settings flow edits and clears the Fireworks account", async () => {
-	for (const [initial, entered, expected] of [
-		[undefined, "acme-prod", "acme-prod"],
-		["acme-prod", "   ", undefined],
-	] as const) {
-		const settings = memorySettingsRuntime({ fireworksAccountId: initial });
-		let customCalls = 0;
-		const applied: string[] = [];
-		const { ctx } = createMockContext({
-			hasUI: true,
-			mode: "tui",
-			input: async () => entered,
-			custom: async (factory: unknown) =>
-				new Promise<unknown>((resolve) => {
-					customCalls += 1;
-					let component: {
-						dispose?(): void;
-						handleInput(data: string): void;
-						render(width: number): string[];
-					};
-					const done = (value: unknown) => {
-						component.dispose?.();
-						resolve(value);
-					};
-					component = (
-						factory as (
-							tui: { requestRender(): void },
-							theme: {
-								bold(text: string): string;
-								fg(_color: string, text: string): string;
-							},
-							keybindings: object,
-							done: (value: unknown) => void,
-						) => typeof component
-					)({ requestRender() {} }, { bold: (text) => text, fg: (_color, text) => text }, {}, done);
-					if (customCalls === 1) {
-						component.handleInput("\u001b[B");
-						component.handleInput("\u001b[B");
-						component.handleInput("\r");
-					} else {
-						component.handleInput("\u0003");
-					}
-				}),
-		});
-
-		const changed = await showUsageSettings(
-			ctx,
-			settings.runtime,
-			new AbortController().signal,
-			() => true,
-			(id) => applied.push(id),
-		);
-
-		assert.equal(changed, true);
-		assert.equal(settings.state().settings.fireworksAccountId, expected);
-		assert.deepEqual(applied, ["fireworksAccountId"]);
-		assert.equal(customCalls, 2);
-	}
-});
-
-test("the Fireworks settings input retries validation and rolls back save failures", async () => {
-	for (const failUpdates of [false, true]) {
-		const settings = memorySettingsRuntime({ failUpdates });
-		const inputs = ["../unsafe", "acme"];
-		let customCalls = 0;
-		const { ctx, notifications } = createMockContext({
-			hasUI: true,
-			mode: "tui",
-			input: async () => inputs.shift(),
-			custom: async (factory: unknown) =>
-				new Promise<unknown>((resolve) => {
-					customCalls += 1;
-					let component: {
-						dispose?(): void;
-						handleInput(data: string): void;
-					};
-					const done = (value: unknown) => {
-						component.dispose?.();
-						resolve(value);
-					};
-					component = (
-						factory as (
-							tui: { requestRender(): void },
-							theme: {
-								bold(text: string): string;
-								fg(_color: string, text: string): string;
-							},
-							keybindings: object,
-							done: (value: unknown) => void,
-						) => typeof component
-					)({ requestRender() {} }, { bold: (text) => text, fg: (_color, text) => text }, {}, done);
-					if (customCalls === 1) {
-						component.handleInput("\u001b[B");
-						component.handleInput("\u001b[B");
-						component.handleInput("\r");
-					} else {
-						component.handleInput("\u0003");
-					}
-				}),
-		});
-
-		const changed = await showUsageSettings(
-			ctx,
-			settings.runtime,
-			new AbortController().signal,
-			() => true,
-			() => undefined,
-		);
-
-		assert.equal(changed, !failUpdates);
-		assert.equal(settings.state().settings.fireworksAccountId, failUpdates ? undefined : "acme");
-		assert.match(notifications[0]?.message ?? "", /URL-safe Fireworks account slug/iu);
-		if (failUpdates) assert.match(notifications[1]?.message ?? "", /disk full/iu);
-	}
-});
-
-test("parent cancellation aborts the Fireworks settings input without saving", async () => {
-	const settings = memorySettingsRuntime();
-	const parentController = new AbortController();
-	let markInputStarted: () => void = () => undefined;
-	const inputStarted = new Promise<void>((resolve) => {
-		markInputStarted = resolve;
-	});
-	const { ctx } = createMockContext({
-		hasUI: true,
-		mode: "tui",
-		input: async (_title: string, _placeholder: string, options: { signal: AbortSignal }) => {
-			markInputStarted();
-			return new Promise<undefined>((resolve) => {
-				options.signal.addEventListener("abort", () => resolve(undefined), { once: true });
-			});
-		},
-		custom: async (factory: unknown) =>
-			new Promise<unknown>((resolve) => {
-				let component: {
-					dispose?(): void;
-					handleInput(data: string): void;
-				};
-				const done = (value: unknown) => {
-					component.dispose?.();
-					resolve(value);
-				};
-				component = (
-					factory as (
-						tui: { requestRender(): void },
-						theme: {
-							bold(text: string): string;
-							fg(_color: string, text: string): string;
-						},
-						keybindings: object,
-						done: (value: unknown) => void,
-					) => typeof component
-				)({ requestRender() {} }, { bold: (text) => text, fg: (_color, text) => text }, {}, done);
-				component.handleInput("\u001b[B");
-				component.handleInput("\u001b[B");
-				component.handleInput("\r");
-			}),
-	});
-
-	const pending = showUsageSettings(
-		ctx,
-		settings.runtime,
-		parentController.signal,
-		() => true,
-		() => assert.fail("cancelled input must not apply"),
-	);
-	await inputStarted;
-	parentController.abort();
-
-	assert.equal(await pending, false);
-	assert.equal(settings.state().settings.fireworksAccountId, undefined);
 });
 
 test("Ctrl+C hard-cancels Settings before conflicting configurable actions", async (t) => {
@@ -2408,6 +2601,7 @@ test("Ctrl+C hard-cancels Settings before conflicting configurable actions", asy
 	assert.deepEqual(settings.state().settings, {
 		codexFastMode: false,
 		codexStatusResetCountdown: false,
+		selectedTargets: {},
 	});
 	assert.equal(applied, 0);
 });

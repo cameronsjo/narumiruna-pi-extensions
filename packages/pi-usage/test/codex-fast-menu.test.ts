@@ -21,7 +21,7 @@ function runtime(kind: UsageSettingsState["kind"] = "loaded") {
 	let state: UsageSettingsState = {
 		kind,
 		path: "/tmp/pi-usage.json",
-		settings: { codexFastMode: false, codexStatusResetCountdown: false },
+		settings: { codexFastMode: false, codexStatusResetCountdown: false, selectedTargets: {} },
 		...(kind === "invalid" ? { issue: "bad file" } : { document: {} }),
 	};
 	const patches: unknown[] = [];
@@ -39,6 +39,9 @@ function runtime(kind: UsageSettingsState["kind"] = "loaded") {
 				document: { ...state.document, ...patch },
 			};
 			return structuredClone(state);
+		},
+		async updateSelectedTarget() {
+			throw new Error("target selection is not used in Codex Fast menu tests");
 		},
 		async flush() {},
 	};

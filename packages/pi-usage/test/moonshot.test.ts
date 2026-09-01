@@ -233,7 +233,7 @@ test("Moonshot runtime auth keeps Global and China credentials on their official
 			});
 			const auth = await resolveUsageAuth(ctx, adapter);
 			assert.deepEqual(auth?.headers, { Authorization: `Bearer ${providerId}-key` });
-			assert.ok(!auth?.secrets.includes("must-not-send"));
+			assert.ok(auth?.secrets.includes("must-not-send"));
 
 			for (const [modelBaseUrl, authBaseUrl, pattern] of [
 				["https://proxy.example.test/v1", undefined, /custom.*official/iu],
