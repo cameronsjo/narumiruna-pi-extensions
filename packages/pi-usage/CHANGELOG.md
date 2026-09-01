@@ -1,5 +1,11 @@
 # @narumitw/pi-usage
 
+## 0.60.1
+
+### Patch Changes
+
+- cd0ee28: Add a provider-neutral usage target picker, starting with Fireworks accounts, and remove the free-form Fireworks account setting.
+
 ## 0.60.0
 
 ### Minor Changes
