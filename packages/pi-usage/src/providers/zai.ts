@@ -1,5 +1,12 @@
 import { sanitizeDisplayText } from "../core.js";
-import type { UsageBucket, UsageMetric, UsageReport, ZaiQuotaPayload } from "../types.js";
+import type {
+	UsageBucket,
+	UsageMetric,
+	UsageReport,
+	ZaiPlanInfo,
+	ZaiQuotaPayload,
+	ZaiSubscriptionPayload,
+} from "../types.js";
 
 const FIVE_HOUR_WINDOW_MINUTES = 300;
 const WEEKLY_WINDOW_MINUTES = 10_080;
@@ -9,6 +16,7 @@ export function normalizeZaiQuotaPayload(
 	providerName: string,
 	payload: ZaiQuotaPayload,
 	capturedAt: number,
+	plan?: ZaiPlanInfo,
 ): UsageReport {
 	const data = asObject(payload.data);
 	if (!data) throw new Error("Z.AI quota response data was not an object.");
@@ -26,14 +34,20 @@ export function normalizeZaiQuotaPayload(
 			addCountBucket(buckets, limit, "mcp-monthly", "MCP monthly allowance");
 			addUsageDetailMetrics(metrics, limit.usageDetails);
 		} else if (isPlanUsage && unit === 3) {
-			addPercentBucket(buckets, limit, "five-hour", "5h window", FIVE_HOUR_WINDOW_MINUTES);
+			addPercentBucket(
+				buckets,
+				limit,
+				"five-hour",
+				sessionWindowLabel(limit),
+				sessionWindowMinutes(limit),
+			);
 		} else if (isPlanUsage && unit === 6) {
 			const used = asNonnegativeNumber(limit.currentValue);
 			const quota = asNonnegativeNumber(limit.usage);
 			if (used !== undefined && quota !== undefined) {
-				addCountBucket(buckets, limit, "weekly", "Weekly window", WEEKLY_WINDOW_MINUTES);
+				addCountBucket(buckets, limit, "weekly", "Weekly window", weeklyWindowMinutes(limit));
 			} else {
-				addPercentBucket(buckets, limit, "weekly", "Weekly window", WEEKLY_WINDOW_MINUTES);
+				addPercentBucket(buckets, limit, "weekly", "Weekly window", weeklyWindowMinutes(limit));
 			}
 		}
 	}
@@ -43,7 +57,12 @@ export function normalizeZaiQuotaPayload(
 
 	const notes: string[] = [];
 	const level = asString(data.level);
-	if (level) notes.push(`Plan: ${level}`);
+	const planLabel = plan?.name ?? level;
+	if (planLabel) {
+		notes.push(
+			plan?.renewsAt ? `Plan: ${planLabel} · renews ${plan.renewsAt}` : `Plan: ${planLabel}`,
+		);
+	}
 
 	return {
 		providerId,
@@ -55,6 +74,48 @@ export function normalizeZaiQuotaPayload(
 		metrics,
 		...(notes.length > 0 ? { notes } : {}),
 	};
+}
+
+// The undocumented subscription endpoint returns the purchased Coding Plan products; the first
+// entry with a product name supplies the plan label, and its renewal date is best-effort.
+export function normalizeZaiSubscriptionPayload(
+	payload: ZaiSubscriptionPayload,
+): ZaiPlanInfo | undefined {
+	if (!Array.isArray(payload.data)) return undefined;
+	for (const raw of payload.data) {
+		const entry = asObject(raw);
+		if (!entry) continue;
+		const name = asString(entry.productName);
+		if (!name) continue;
+		const renewsAt = planRenewalDate(entry.nextRenewTime);
+		return { name, ...(renewsAt !== undefined ? { renewsAt } : {}) };
+	}
+	return undefined;
+}
+
+function planRenewalDate(value: unknown): string | undefined {
+	if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}/u.test(value)) return value.slice(0, 10);
+	const millis = asNonnegativeNumber(value);
+	if (millis === undefined || millis === 0) return undefined;
+	return new Date(millis).toISOString().slice(0, 10);
+}
+
+// Z.AI encodes each window as a (unit, number) pair — unit 3 counts hours and unit 6 counts
+// weeks — so the payload's number drives the window length and session label; the established
+// 5-hour and weekly constants remain the fallback when the payload omits it.
+function sessionWindowMinutes(limit: Record<string, unknown>): number {
+	const hours = asPositiveNumber(limit.number);
+	return hours === undefined ? FIVE_HOUR_WINDOW_MINUTES : Math.round(hours * 60);
+}
+
+function sessionWindowLabel(limit: Record<string, unknown>): string {
+	const minutes = sessionWindowMinutes(limit);
+	return minutes === FIVE_HOUR_WINDOW_MINUTES ? "5h window" : `${Math.round(minutes / 60)}h window`;
+}
+
+function weeklyWindowMinutes(limit: Record<string, unknown>): number {
+	const weeks = asPositiveNumber(limit.number);
+	return weeks === undefined ? WEEKLY_WINDOW_MINUTES : Math.round(weeks * WEEKLY_WINDOW_MINUTES);
 }
 
 function addPercentBucket(
@@ -128,6 +189,11 @@ function asString(value: unknown): string | undefined {
 function asNonnegativeNumber(value: unknown): number | undefined {
 	if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return undefined;
 	return value;
+}
+
+function asPositiveNumber(value: unknown): number | undefined {
+	const number = asNonnegativeNumber(value);
+	return number !== undefined && number > 0 ? number : undefined;
 }
 
 function asEpochSeconds(value: unknown): number | undefined {

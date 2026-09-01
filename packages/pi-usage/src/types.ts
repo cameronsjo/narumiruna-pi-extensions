@@ -157,6 +157,16 @@ export type ZaiQuotaPayload = {
 	data?: unknown;
 };
 
+export type ZaiSubscriptionPayload = {
+	code?: unknown;
+	data?: unknown;
+};
+
+export interface ZaiPlanInfo {
+	name: string;
+	renewsAt?: string;
+}
+
 export type KimiCodingUsagePayload = {
 	usage?: unknown;
 	limits?: unknown;

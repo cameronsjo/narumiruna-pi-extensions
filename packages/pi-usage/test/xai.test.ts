@@ -98,7 +98,7 @@ test("normalizes current credits while keeping allowance, on-demand, and prepaid
 		{ id: "subscription-tier", label: "Plan tier", value: "SuperGrok" },
 	]);
 	const formatted = formatUsageReport(report, "current");
-	assert.match(formatted, /Included allowance:\s+42\.5% used · 57\.5% left · Weekly/);
+	assert.match(formatted, /Included allowance:\s+\[█{12}░{8}\] 58% left · Weekly/);
 	assert.match(formatted, /On-demand usage:\s+\$3\.00 used of \$50\.00 cap/);
 	assert.match(formatted, /Prepaid balance:\s+\$12\.50/);
 	assert.match(formatted, /Plan tier:\s+SuperGrok/);

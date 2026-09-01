@@ -25,7 +25,7 @@ import { normalizeOpenCodeZenPayload } from "./providers/opencode-zen.js";
 import { normalizeOpenRouterKeyPayload } from "./providers/openrouter.js";
 import { normalizeVercelAIGatewayCreditsPayload } from "./providers/vercel-ai-gateway.js";
 import { normalizeXaiBillingPayload } from "./providers/xai.js";
-import { normalizeZaiQuotaPayload } from "./providers/zai.js";
+import { normalizeZaiQuotaPayload, normalizeZaiSubscriptionPayload } from "./providers/zai.js";
 import type {
 	BasetenBillingUsagePayload,
 	CodexBackendPayload,
@@ -46,7 +46,9 @@ import type {
 	VercelAIGatewayCreditsPayload,
 	XaiBillingPayload,
 	XaiUserPayload,
+	ZaiPlanInfo,
 	ZaiQuotaPayload,
+	ZaiSubscriptionPayload,
 } from "./types.js";
 
 const BASETEN_BILLING_USAGE_URL = "https://api.baseten.co/v1/billing/usage_summary";
@@ -295,35 +297,16 @@ export const SUPPORTED_ADAPTERS: readonly UsageProviderAdapter[] = [
 		id: "zai",
 		displayName: "Z.AI",
 		semantics: { kind: "consumer-subscription", label: "GLM Coding Plan usage" },
-		async query(auth, signal, timeoutMs) {
-			const payload = await fetchProviderJson(
-				zaiMonitorUrl(auth.model.baseUrl),
-				zaiMonitorAuth(auth),
-				signal,
-				timeoutMs,
-				"Z.AI quota endpoint",
-			);
-			return normalizeZaiQuotaPayload("zai", "Z.AI", payload as ZaiQuotaPayload, Date.now());
+		async query(auth, signal, timeoutMs, guard) {
+			return queryZaiUsage("zai", "Z.AI", auth, signal, timeoutMs, guard);
 		},
 	},
 	{
 		id: "zai-coding-cn",
 		displayName: "Z.AI Coding CN",
 		semantics: { kind: "consumer-subscription", label: "GLM Coding Plan usage" },
-		async query(auth, signal, timeoutMs) {
-			const payload = await fetchProviderJson(
-				zaiMonitorUrl(auth.model.baseUrl),
-				zaiMonitorAuth(auth),
-				signal,
-				timeoutMs,
-				"Z.AI Coding CN quota endpoint",
-			);
-			return normalizeZaiQuotaPayload(
-				"zai-coding-cn",
-				"Z.AI Coding CN",
-				payload as ZaiQuotaPayload,
-				Date.now(),
-			);
+		async query(auth, signal, timeoutMs, guard) {
+			return queryZaiUsage("zai-coding-cn", "Z.AI Coding CN", auth, signal, timeoutMs, guard);
 		},
 	},
 ];
@@ -1123,10 +1106,14 @@ function fireworksBillingSummaryUrl(accountId: string, startedAt: number): strin
 	return url.toString();
 }
 
-function zaiMonitorUrl(baseUrl: string | undefined): string {
+function zaiOrigin(baseUrl: string | undefined): string {
 	const base = baseUrl?.trim();
 	if (!base) throw new Error("Z.AI model base URL is unavailable.");
-	return `${new URL(base).origin}/api/monitor/usage/quota/limit`;
+	return new URL(base).origin;
+}
+
+function zaiMonitorUrl(baseUrl: string | undefined): string {
+	return `${zaiOrigin(baseUrl)}/api/monitor/usage/quota/limit`;
 }
 
 function zaiMonitorAuth(auth: ResolvedUsageAuth): ResolvedUsageAuth {
@@ -1135,6 +1122,55 @@ function zaiMonitorAuth(auth: ResolvedUsageAuth): ResolvedUsageAuth {
 		authorization === undefined ? undefined : (bearerToken(authorization) ?? authorization);
 	if (token === undefined || token === authorization) return auth;
 	return { ...auth, headers: { ...auth.headers, Authorization: token } };
+}
+
+async function queryZaiUsage(
+	providerId: "zai" | "zai-coding-cn",
+	providerName: string,
+	auth: ResolvedUsageAuth,
+	signal: AbortSignal,
+	timeoutMs: number,
+	guard: UsageRequestGuard | undefined,
+): Promise<UsageReport> {
+	if (!guard) throw new Error("Z.AI usage requires request-boundary revalidation.");
+	const startedAt = Date.now();
+	await guard();
+	const payload = (await fetchProviderJson(
+		zaiMonitorUrl(auth.model.baseUrl),
+		zaiMonitorAuth(auth),
+		signal,
+		remainingTimeout(timeoutMs, startedAt, `fetching ${providerName} quota`),
+		`${providerName} quota endpoint`,
+	)) as ZaiQuotaPayload;
+	await guard();
+	const planTimeoutMs = timeoutMs - (Date.now() - startedAt);
+	const plan = await fetchZaiPlan(providerName, auth, signal, planTimeoutMs);
+	return normalizeZaiQuotaPayload(providerId, providerName, payload, Date.now(), plan);
+}
+
+// The subscription endpoint is undocumented and may not exist on every official origin. It only
+// contributes the plan name and renewal date, so any non-abort failure is swallowed instead of
+// blanking the required quota report.
+async function fetchZaiPlan(
+	providerName: string,
+	auth: ResolvedUsageAuth,
+	signal: AbortSignal,
+	timeoutMs: number,
+): Promise<ZaiPlanInfo | undefined> {
+	if (timeoutMs <= 0 || signal.aborted) return undefined;
+	try {
+		const payload = (await fetchProviderJson(
+			`${zaiOrigin(auth.model.baseUrl)}/api/biz/subscription/list`,
+			zaiMonitorAuth(auth),
+			signal,
+			timeoutMs,
+			`${providerName} plan endpoint`,
+		)) as ZaiSubscriptionPayload;
+		return normalizeZaiSubscriptionPayload(payload);
+	} catch (error) {
+		if (isAbortError(error)) throw error;
+		return undefined;
+	}
 }
 
 function isAbortError(error: unknown): boolean {

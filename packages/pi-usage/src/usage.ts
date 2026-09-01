@@ -285,6 +285,8 @@ export default function usageExtension(
 			"moonshotai-cn",
 			"vercel-ai-gateway",
 			"xai",
+			"zai",
+			"zai-coding-cn",
 		].includes(adapter.id);
 		const requestContextChanged = () =>
 			expectedSessionGeneration !== sessionGeneration ||

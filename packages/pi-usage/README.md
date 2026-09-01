@@ -371,9 +371,9 @@ xAI identity and billing requests occur only after an explicit current, configur
 
 - Provider ID: `zai` and `zai-coding-cn`
 - Semantics: GLM Coding Plan quota windows—the rolling 5-hour and weekly plan-usage windows plus the monthly MCP allowance
-- Source: the undocumented `GET {origin}/api/monitor/usage/quota/limit` endpoint also used by Z.AI's official coding plugin
+- Source: the undocumented `GET {origin}/api/monitor/usage/quota/limit` endpoint also used by Z.AI's official coding plugin, plus the undocumented `GET {origin}/api/biz/subscription/list` plan endpoint
 - Allowed origins: the model base URL must resolve to `https://api.z.ai` or `https://open.bigmodel.cn`
-- Displayed data: explicit used and remaining values, reset times, provider-reported per-tool MCP details, and the reported plan level
+- Displayed data: explicit used and remaining values, reset times, provider-reported per-tool MCP details, and the plan name with its renewal date
 - Percentage-only windows remain percent-based
 - Statusline: publishes remaining plan percentages such as `zai 87% 5h 76% wk`; monthly MCP details remain available through `/usage`
 
@@ -382,6 +382,7 @@ The extension classifies both forms by the provider's window unit and does not l
 The quota monitor expects a raw API key without a `Bearer` prefix.
 The extension removes that prefix from resolved authorization before sending it to the monitor endpoint.
 Fingerprinting and redaction keep using the original resolved credential.
+The plan endpoint only contributes the plan name and renewal date; when it is unavailable or fails, the quota windows remain reported and the plan note falls back to the quota response's plan level.
 Only the official `api.z.ai` and `open.bigmodel.cn` origins are queried; other origins fail before sending the credential.
 
 ## 🧭 Current and configured accounts

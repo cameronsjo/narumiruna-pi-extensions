@@ -1333,17 +1333,17 @@ test("Z.AI providers publish statusline usage and refresh through /usage", async
 
 	await mock.events.get("session_start")?.[0]?.({}, ctx);
 	await settle();
-	assert.equal(fetches, 1);
+	assert.equal(fetches, 2);
 	assert.equal(statuses.get("usage"), "zai 90% 5h 80% wk");
 
 	mock.events.get("turn_start")?.[0]?.({}, ctx);
 	await settle();
-	assert.equal(fetches, 1);
+	assert.equal(fetches, 2);
 	assert.equal(statuses.get("usage"), "zai 90% 5h 80% wk");
 
 	await command.handler("", ctx);
-	assert.equal(fetches, 1);
-	assert.match(titles[0] ?? "", /5h window:\s+10% used · 90% left/);
+	assert.equal(fetches, 2);
+	assert.match(titles[0] ?? "", /5h window:\s+\[█{18}░{2}\] 90% left/);
 	assert.equal(statuses.get("usage"), "zai 90% 5h 80% wk");
 });
 
@@ -1877,7 +1877,7 @@ test("a retired xAI setting cannot disable explicit usage or publish status", as
 		"https://cli-chat-proxy.grok.com/v1/user?include=subscription",
 		"https://cli-chat-proxy.grok.com/v1/billing?format=credits",
 	]);
-	assert.match(title, /Included allowance:\s+25% used · 75% left · Weekly/);
+	assert.match(title, /Included allowance:\s+\[█{15}░{5}\] 75% left · Weekly/);
 	assert.match(title, /Plan tier:\s+SuperGrok/);
 	assert.equal(statuses.get("usage"), undefined);
 });
@@ -2064,7 +2064,7 @@ test("xAI appears as a configured provider without changing current status", asy
 	await command.handler("", ctx);
 
 	assert.match(titles.at(-1) ?? "", /xAI Usage · Configured/);
-	assert.match(titles.at(-1) ?? "", /Included allowance:\s+10% used · 90% left/);
+	assert.match(titles.at(-1) ?? "", /Included allowance:\s+\[█{18}░{2}\] 90% left/);
 	assert.equal(statuses.get("usage"), "openrouter $75.00 left");
 	assert.equal(requests.filter((url) => url.includes("cli-chat-proxy")).length, 2);
 });
