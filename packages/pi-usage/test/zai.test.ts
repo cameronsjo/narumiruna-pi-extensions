@@ -459,6 +459,44 @@ test("Z.AI subscription normalizer extracts the plan name and renewal date", () 
 	assert.equal(normalizeZaiSubscriptionPayload({}), undefined);
 });
 
+test("Z.AI subscription normalizer prefers the current valid product over history", () => {
+	assert.deepEqual(
+		normalizeZaiSubscriptionPayload({
+			code: 200,
+			success: true,
+			data: [
+				{
+					productName: "GLM Coding Lite",
+					status: "EXPIRED",
+					inCurrentPeriod: false,
+					nextRenewTime: "2026-01-01",
+				},
+				{
+					productName: "GLM Coding Pro",
+					status: "VALID",
+					inCurrentPeriod: 1,
+					nextRenewTime: "2026-12-01",
+				},
+			],
+		}),
+		{ name: "GLM Coding Pro", renewsAt: "2026-12-01" },
+	);
+	assert.equal(
+		normalizeZaiSubscriptionPayload({
+			data: [{ productName: "GLM Coding Lite", status: "EXPIRED", inCurrentPeriod: false }],
+		}),
+		undefined,
+	);
+	assert.equal(
+		normalizeZaiSubscriptionPayload({
+			code: 500,
+			success: false,
+			data: [{ productName: "GLM Coding Lite", status: "VALID" }],
+		}),
+		undefined,
+	);
+});
+
 test("Z.AI adapters send an already unprefixed authorization unchanged", async () => {
 	const requests: Array<{ url: string; authorization: string | undefined }> = [];
 	vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {

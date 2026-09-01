@@ -76,21 +76,50 @@ export function normalizeZaiQuotaPayload(
 	};
 }
 
-// The undocumented subscription endpoint returns the purchased Coding Plan products; the first
-// entry with a product name supplies the plan label, and its renewal date is best-effort.
+// The undocumented subscription endpoint can include historical products. Prefer the current,
+// valid product and fail closed to the quota plan level when only explicitly inactive products exist.
 export function normalizeZaiSubscriptionPayload(
 	payload: ZaiSubscriptionPayload,
 ): ZaiPlanInfo | undefined {
+	if (payload.success === false) return undefined;
+	if (typeof payload.code === "number" && payload.code !== 0 && payload.code !== 200) {
+		return undefined;
+	}
 	if (!Array.isArray(payload.data)) return undefined;
+
+	const candidates: Array<{
+		plan: ZaiPlanInfo;
+		status?: string;
+		inCurrentPeriod?: boolean;
+	}> = [];
 	for (const raw of payload.data) {
 		const entry = asObject(raw);
 		if (!entry) continue;
 		const name = asString(entry.productName);
 		if (!name) continue;
 		const renewsAt = planRenewalDate(entry.nextRenewTime);
-		return { name, ...(renewsAt !== undefined ? { renewsAt } : {}) };
+		const status = asString(entry.status)?.toUpperCase();
+		const inCurrentPeriod = asBoolean(entry.inCurrentPeriod);
+		candidates.push({
+			plan: { name, ...(renewsAt !== undefined ? { renewsAt } : {}) },
+			...(status !== undefined ? { status } : {}),
+			...(inCurrentPeriod !== undefined ? { inCurrentPeriod } : {}),
+		});
 	}
-	return undefined;
+
+	const hasStateMetadata = candidates.some(
+		(candidate) => candidate.status !== undefined || candidate.inCurrentPeriod !== undefined,
+	);
+	if (!hasStateMetadata) return candidates[0]?.plan;
+	return (
+		candidates.find(
+			(candidate) => candidate.inCurrentPeriod === true && candidate.status === "VALID",
+		)?.plan ??
+		candidates.find(
+			(candidate) => candidate.inCurrentPeriod === true && candidate.status === undefined,
+		)?.plan ??
+		candidates.find((candidate) => candidate.status === "VALID")?.plan
+	);
 }
 
 function planRenewalDate(value: unknown): string | undefined {
@@ -194,6 +223,13 @@ function asNonnegativeNumber(value: unknown): number | undefined {
 function asPositiveNumber(value: unknown): number | undefined {
 	const number = asNonnegativeNumber(value);
 	return number !== undefined && number > 0 ? number : undefined;
+}
+
+function asBoolean(value: unknown): boolean | undefined {
+	if (typeof value === "boolean") return value;
+	if (value === 1) return true;
+	if (value === 0) return false;
+	return undefined;
 }
 
 function asEpochSeconds(value: unknown): number | undefined {
