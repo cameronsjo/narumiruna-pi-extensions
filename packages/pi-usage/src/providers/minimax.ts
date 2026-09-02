@@ -152,18 +152,21 @@ function normalizeWindow(row: Record<string, unknown>, fields: WindowFields): Us
 	}
 	const total = nonnegativeInteger(row[fields.totalField], fields.totalField);
 	const count = nonnegativeInteger(row[fields.countField], fields.countField);
-	if (total === 0 && percent === undefined) {
-		throw new Error(`MiniMax Token Plan ${fields.label} returned no quota and no percent.`);
-	}
-	// Token Plan reports remaining_percent as the quota even when counts are 0.
 	if (total === 0) {
+		if (count !== 0) {
+			throw new Error(`MiniMax Token Plan ${fields.label} counts were inconsistent.`);
+		}
+		if (percent === undefined) {
+			throw new Error(`MiniMax Token Plan ${fields.label} returned no quota and no percent.`);
+		}
+		// Token Plan reports remaining_percent as the quota when both counts are 0.
 		return {
 			id: fields.id,
 			label: fields.label,
 			groupId: fields.groupId,
 			groupLabel: fields.groupLabel,
-			remaining: percent as number,
-			used: 100 - (percent as number),
+			remaining: percent,
+			used: 100 - percent,
 			limit: 0,
 			unit: "percent",
 			windowMinutes,

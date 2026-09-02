@@ -390,6 +390,26 @@ test("MiniMax Token Plan rejects rows with zero total and no usable percent", ()
 	);
 });
 
+test("MiniMax Token Plan rejects zero totals with nonzero counts even when percent is valid", () => {
+	const base = quotaPayload().model_remains[0];
+	const payload = {
+		base_resp: { status_code: 0, status_msg: "success" },
+		model_remains: [
+			{
+				...base,
+				model_name: "general",
+				current_interval_total_count: 0,
+				current_interval_usage_count: 1,
+				current_interval_remaining_percent: 38,
+			},
+		],
+	};
+	assert.throws(
+		() => normalizeMiniMaxUsagePayload("minimax", "token-plan", payload, 0),
+		/counts were inconsistent/iu,
+	);
+});
+
 test("MiniMax Token Plan keeps mixed rows where one window is zero-total and the other has counts", () => {
 	const base = quotaPayload().model_remains[0];
 	const payload = {
