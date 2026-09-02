@@ -158,8 +158,12 @@ Prefer Pi-owned `ctx.ui` flows and one TUI when they can preserve the required s
 - **MUST:** A hard-cancel handoff must synchronously invoke the owning root flow's cancel or close path independently of nested overlay focus before restoring input ownership.
   The outgoing TUI must consume the triggering input so it cannot reach a stale or unrelated focused component.
   **Verification:** `Test` hard cancellation with the root component focused and again with at least one nested overlay focused, and assert that the owning flow settles in each case.
-- **MUST:** After a handoff begins, subsequent input from the same terminal batch must reach the restored TUI through its normal input pipeline instead of being dropped or delivered to the stopped TUI.
-  **Verification:** `Test` one synchronous input batch containing the handoff key followed by printable input, and assert that the restored editor receives the printable input.
+- **MUST:** Do not stop or start a shared terminal reentrantly from its active input callback.
+  Keep logical cancellation synchronous, but defer the physical terminal transfer until the triggering callback unwinds when either TUI rebuilds terminal input state during stop or start.
+  **Verification:** `Test` input-dispatch depth and assert that every terminal stop, start, and restored redraw occurs only after the triggering callback returns.
+- **MUST:** After terminal restoration completes, the next separately dispatched input must reach the restored TUI through its normal input pipeline instead of being delivered to the stopped TUI.
+  Do not promise replay of bytes already coalesced behind the handoff key in the triggering raw dispatch when Pi exposes no public input-injection API.
+  **Verification:** `Test` the first post-restoration printable and viewport inputs and assert that the restored editor and scroll region receive them without another handoff key.
 
 - **SHOULD:** Prefer terminal ownership transfer to buffering and replaying terminal input.
   Avoid replaying input directly to a focused component because that bypasses normal TUI listeners, focus routing, key-release filtering, shortcuts, and render scheduling unless Pi exposes and documents an input-injection API for that purpose.
