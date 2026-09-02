@@ -9,8 +9,10 @@ import {
 	queryProviderUsage,
 	type ResolvedUsageAuth,
 	resolveUsageAuth,
+	resolveUsageTarget,
 	SUPPORTED_ADAPTERS,
 	type UsageProviderAdapter,
+	type UsageQuerySettings,
 } from "../src/index.js";
 
 const FIREWORKS_MODEL = {
@@ -54,14 +56,23 @@ function fireworksAuth(secret = "fw-test-secret"): ResolvedUsageAuth {
 	};
 }
 
-function queryFireworks(
+async function queryFireworks(
 	signal = new AbortController().signal,
 	timeoutMs = 1_000,
-	fireworksAccountId?: string,
+	rememberedAccountId?: string,
 ) {
-	return queryProviderUsage(adapter, fireworksAuth(), signal, timeoutMs, async () => undefined, {
-		fireworksAccountId,
-	});
+	const auth = fireworksAuth();
+	const guard = async () => undefined;
+	const target = await resolveUsageTarget(
+		adapter,
+		auth,
+		rememberedAccountId,
+		signal,
+		timeoutMs,
+		guard,
+	);
+	if (target.kind === "selection-required") throw new Error("Selection required");
+	return queryProviderUsage(adapter, auth, signal, timeoutMs, guard, target.targetId);
 }
 
 test("Fireworks billing summary sums rated line items exactly per currency and series", () => {
@@ -281,7 +292,8 @@ test("Fireworks runtime auth accepts only official model and resolved-auth origi
 	});
 	const auth = await resolveUsageAuth(officialContext, adapter);
 	assert.deepEqual(auth?.headers, { Authorization: "Bearer fw-current-key" });
-	assert.ok(!auth?.secrets.includes("must-not-send"));
+	assert.equal(auth?.auth?.apiKey, "provider-key");
+	assert.ok(auth?.secrets.includes("must-not-send"));
 
 	const fetchMock = vi.spyOn(globalThis, "fetch");
 	try {
@@ -327,8 +339,9 @@ test("Fireworks transport revalidates before network access and counts it agains
 					new AbortController().signal,
 					5,
 					() => new Promise<void>((resolve) => setTimeout(resolve, 10)),
+					"acme",
 				),
-			/timed out.*resolving the fireworks account/iu,
+			/timed out.*fetching fireworks rated spend/iu,
 		);
 		assert.equal(fetchMock.mock.calls.length, 0);
 	} finally {
@@ -379,6 +392,44 @@ test("Fireworks transport auto-selects a single account and queries only the fix
 		await assert.rejects(() => queryFireworks(), /refused a redirected response/iu);
 	} finally {
 		nowMock.mockRestore();
+		vi.unstubAllGlobals();
+	}
+});
+
+test("Fireworks target discovery aborts its owned request when the flow is cancelled", async () => {
+	const controller = new AbortController();
+	let requestSignal: AbortSignal | undefined;
+	let markStarted: () => void = () => undefined;
+	const started = new Promise<void>((resolve) => {
+		markStarted = resolve;
+	});
+	const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+		requestSignal = init?.signal ?? undefined;
+		markStarted();
+		return new Promise<Response>((_resolve, reject) => {
+			requestSignal?.addEventListener(
+				"abort",
+				() => reject(new DOMException("aborted", "AbortError")),
+				{ once: true },
+			);
+		});
+	});
+	vi.stubGlobal("fetch", fetchMock);
+	try {
+		const pending = adapter.targets?.list(
+			fireworksAuth(),
+			controller.signal,
+			1_000,
+			async () => undefined,
+		);
+		assert.ok(pending);
+		await started;
+		controller.abort();
+		await assert.rejects(pending, (error: unknown) => {
+			return error instanceof Error && error.name === "AbortError";
+		});
+		assert.equal(requestSignal?.aborted, true);
+	} finally {
 		vi.unstubAllGlobals();
 	}
 });
@@ -439,7 +490,7 @@ test("Fireworks transport shares one deadline across account pages", async () =>
 	}
 });
 
-test("Fireworks transport stops long account listings after finding the configured account", async () => {
+test("Fireworks target discovery completes pagination before using a remembered account", async () => {
 	const requests: string[] = [];
 	const fetchMock = vi.fn(async (input: string | URL | Request) => {
 		requests.push(String(input));
@@ -449,14 +500,17 @@ test("Fireworks transport stops long account listings after finding the configur
 				{ status: 200 },
 			);
 		}
+		if (requests.length === 2) {
+			return new Response(JSON.stringify({ accounts: [accountRow("beta")] }), { status: 200 });
+		}
 		return summaryResponse();
 	});
 	vi.stubGlobal("fetch", fetchMock);
 	try {
 		const report = await queryFireworks(new AbortController().signal, 1_000, "acme");
 		assert.equal(report.accountLabel, "acme");
-		assert.equal(requests.length, 2);
-		assert.match(requests[1] ?? "", /\/v1\/accounts\/acme\/billing\/summary\?/u);
+		assert.equal(requests.length, 3);
+		assert.match(requests[2] ?? "", /\/v1\/accounts\/acme\/billing\/summary\?/u);
 	} finally {
 		vi.unstubAllGlobals();
 	}
@@ -493,7 +547,42 @@ test("Fireworks transport follows opaque pagination tokens across account pages"
 	}
 });
 
-test("Fireworks transport fails closed for ambiguous, hostile, or unresolvable accounts", async () => {
+test("queryProviderUsage preserves legacy Fireworks settings and auto-selection", async () => {
+	const requests: string[] = [];
+	const fetchMock = vi.fn(async (input: string | URL | Request) => {
+		const url = String(input);
+		requests.push(url);
+		return url.includes("/v1/accounts?")
+			? new Response(JSON.stringify({ accounts: [accountRow("acme")] }), { status: 200 })
+			: summaryResponse();
+	});
+	vi.stubGlobal("fetch", fetchMock);
+	try {
+		const legacySettings: UsageQuerySettings = { fireworksAccountId: "acme" };
+		for (const settings of [legacySettings, undefined]) {
+			const report = await queryProviderUsage(
+				adapter,
+				fireworksAuth(),
+				new AbortController().signal,
+				1_000,
+				async () => undefined,
+				settings,
+			);
+			assert.equal(report.accountLabel, "acme");
+		}
+		assert.equal(requests.filter((url) => url.includes("/v1/accounts?")).length, 2);
+		assert.equal(requests.filter((url) => url.includes("/billing/summary")).length, 2);
+		assert.ok(
+			requests
+				.filter((url) => url.includes("/billing/summary"))
+				.every((url) => /\/v1\/accounts\/acme\/billing\/summary\?/u.test(url)),
+		);
+	} finally {
+		vi.unstubAllGlobals();
+	}
+});
+
+test("Fireworks target discovery returns unresolved choices and query validates exact slugs", async () => {
 	const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => {
 		return new Response(JSON.stringify({ accounts: [accountRow("acme"), accountRow("beta")] }), {
 			status: 200,
@@ -501,18 +590,43 @@ test("Fireworks transport fails closed for ambiguous, hostile, or unresolvable a
 	});
 	vi.stubGlobal("fetch", fetchMock);
 	try {
-		await assert.rejects(
-			() => queryFireworks(),
-			/see 2 accounts \(acme, beta\); set fireworksAccountId in pi-usage\.json/iu,
+		const auth = fireworksAuth();
+		const unresolved = await resolveUsageTarget(
+			adapter,
+			auth,
+			undefined,
+			new AbortController().signal,
+			1_000,
+			async () => undefined,
 		);
+		assert.deepEqual(unresolved, {
+			kind: "selection-required",
+			choices: [
+				{ id: "acme", label: "acme" },
+				{ id: "beta", label: "beta" },
+			],
+		});
 		await assert.rejects(
-			() => queryFireworks(new AbortController().signal, 1_000, "../other"),
-			/account setting was not a safe account slug/iu,
+			() =>
+				queryProviderUsage(
+					adapter,
+					auth,
+					new AbortController().signal,
+					1_000,
+					async () => undefined,
+					"../other",
+				),
+			/safe selected account slug/iu,
 		);
-		await assert.rejects(
-			() => queryFireworks(new AbortController().signal, 1_000, "hidden-account"),
-			/configured Fireworks account does not match an account visible/iu,
+		const stale = await resolveUsageTarget(
+			adapter,
+			auth,
+			"hidden-account",
+			new AbortController().signal,
+			1_000,
+			async () => undefined,
 		);
+		assert.equal(stale.kind, "selection-required");
 	} finally {
 		vi.unstubAllGlobals();
 	}

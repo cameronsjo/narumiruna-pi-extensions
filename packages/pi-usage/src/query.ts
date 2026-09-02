@@ -1,3 +1,5 @@
+// This module intentionally keeps adapter transport beside resolved-auth and origin validation;
+// separating that security boundary would duplicate request and redaction policy across providers.
 import { randomBytes } from "node:crypto";
 import { type ExtensionContext, readStoredCredential } from "@earendil-works/pi-coding-agent";
 import { errorMessage, fingerprintResolvedAuth, redactUsageError } from "./core.js";
@@ -8,11 +10,7 @@ import {
 import { normalizeBasetenBillingUsagePayload } from "./providers/baseten.js";
 import { normalizeCodexBackendPayload } from "./providers/codex.js";
 import { normalizeDeepSeekBalancePayload } from "./providers/deepseek.js";
-import {
-	isFireworksAccountId,
-	normalizeFireworksAccountsPayload,
-	normalizeFireworksBillingSummaryPayload,
-} from "./providers/fireworks.js";
+import { createFireworksAdapter } from "./providers/fireworks.js";
 import { normalizeGitHubCopilotUsagePayload } from "./providers/github-copilot.js";
 import { normalizeKimiCodingUsagePayload } from "./providers/kimi-coding.js";
 import {
@@ -30,8 +28,6 @@ import type {
 	BasetenBillingUsagePayload,
 	CodexBackendPayload,
 	DeepSeekBalancePayload,
-	FireworksAccountsPayload,
-	FireworksBillingSummaryPayload,
 	GitHubCopilotUsagePayload,
 	KimiCodingUsagePayload,
 	MiniMaxUsagePayload,
@@ -43,6 +39,7 @@ import type {
 	UsageProviderAdapter,
 	UsageQuerySettings,
 	UsageReport,
+	UsageRequestGuard,
 	VercelAIGatewayCreditsPayload,
 	XaiBillingPayload,
 	XaiUserPayload,
@@ -50,14 +47,12 @@ import type {
 	ZaiQuotaPayload,
 	ZaiSubscriptionPayload,
 } from "./types.js";
+import { resolveUsageTarget } from "./usage-targets.js";
 
 const BASETEN_BILLING_USAGE_URL = "https://api.baseten.co/v1/billing/usage_summary";
 const BASETEN_USAGE_WINDOW_DAYS = 30;
 const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 const DEEPSEEK_BALANCE_URL = "https://api.deepseek.com/user/balance";
-const FIREWORKS_BILLING_SUMMARY_ORIGIN = "https://api.fireworks.ai";
-const FIREWORKS_SPEND_WINDOW_DAYS = 30;
-const FIREWORKS_MAX_ACCOUNT_PAGES = 5;
 const GITHUB_COPILOT_USAGE_URL = "https://api.github.com/copilot_internal/user";
 const OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key";
 const VERCEL_AI_GATEWAY_CREDITS_URL = "https://ai-gateway.vercel.sh/v1/credits";
@@ -83,8 +78,6 @@ const MAX_SUCCESS_BODY_BYTES = 64 * 1024;
 const MAX_ERROR_BODY_BYTES = 4 * 1024;
 
 export const AUTH_FINGERPRINT_SALT = randomBytes(32);
-
-export type UsageRequestGuard = () => Promise<void>;
 
 export const SUPPORTED_ADAPTERS: readonly UsageProviderAdapter[] = [
 	{
@@ -201,35 +194,7 @@ export const SUPPORTED_ADAPTERS: readonly UsageProviderAdapter[] = [
 			return normalizeVercelAIGatewayCreditsPayload(payload, Date.now());
 		},
 	},
-	{
-		id: "fireworks",
-		displayName: "Fireworks",
-		semantics: { kind: "api-key", label: "Fireworks API spend" },
-		async query(auth, signal, timeoutMs, guard, settings) {
-			if (!guard) throw new Error("Fireworks API spend requires request-boundary revalidation.");
-			const startedAt = Date.now();
-			await guard();
-			const accountId = await resolveFireworksAccountId(
-				auth,
-				signal,
-				remainingTimeout(timeoutMs, startedAt, "resolving the Fireworks account"),
-				guard,
-				settings?.fireworksAccountId,
-			);
-			await guard();
-			const billingWindowAt = Date.now();
-			const payload = (await fetchProviderJson(
-				fireworksBillingSummaryUrl(accountId, billingWindowAt),
-				auth,
-				signal,
-				remainingTimeout(timeoutMs, startedAt, "fetching Fireworks rated spend"),
-				"Fireworks billing summary endpoint",
-				{ redirect: "error" },
-			)) as FireworksBillingSummaryPayload;
-			await guard();
-			return normalizeFireworksBillingSummaryPayload(payload, accountId, Date.now());
-		},
-	},
+	createFireworksAdapter(fetchProviderJson),
 	{
 		id: "opencode-go",
 		displayName: "OpenCode Go",
@@ -402,6 +367,12 @@ export async function resolveUsageAuth(
 	if (!model) return undefined;
 	// SAFETY: Pi exposes the required auth methods at runtime, and checks below narrow them before use.
 	const registry = ctx.modelRegistry as unknown as UsageAuthRegistry;
+	const provider = registry.getProvider?.(adapter.id);
+	if (provider?.baseUrl && !hasOfficialUrlOrigin(provider.baseUrl, adapter.id)) {
+		throw new Error(
+			`${adapter.displayName} usage cannot send an overridden provider credential to the official usage endpoint.`,
+		);
+	}
 	let modelAuth: RequestAuth | undefined;
 	const currentModel = ctx.model?.provider === adapter.id ? ctx.model : undefined;
 	const resolveCurrentModelAuth = async (): Promise<RequestAuth | undefined> => {
@@ -429,8 +400,46 @@ export async function resolveUsageAuth(
 	// Providers with credential-change retries read selected-model auth last so a rotation during
 	// provider-origin validation cannot leave the earlier credential queued for the usage request.
 	if (resolveSelectedAuthLast) modelAuth = await resolveCurrentModelAuth();
+	if (modelAuth?.baseUrl && !hasOfficialUrlOrigin(modelAuth.baseUrl, adapter.id)) {
+		throw new Error(
+			`${adapter.displayName} usage cannot send model-resolved proxy credentials to the official usage endpoint.`,
+		);
+	}
 	const auth = modelAuth ?? providerResult?.auth;
 	if (!auth) return undefined;
+	const finalize = (resolved: ResolvedUsageAuth): ResolvedUsageAuth => {
+		const preservedAuth = { ...(providerResult?.auth ?? auth) };
+		const env = providerResult?.env ?? modelAuth?.env;
+		const source = providerResult?.source;
+		const effectiveBaseUrl =
+			modelAuth?.baseUrl ?? providerResult?.auth.baseUrl ?? provider?.baseUrl ?? model.baseUrl;
+		const redactionInputs = [
+			preservedAuth.apiKey,
+			...Object.values(preservedAuth.headers ?? {}),
+			...Object.values(env ?? {}),
+			modelAuth?.apiKey,
+			...Object.values(modelAuth?.headers ?? {}),
+		].filter((value): value is string => typeof value === "string" && value.length > 0);
+		return {
+			...resolved,
+			auth: preservedAuth,
+			...(env ? { env: { ...env } } : {}),
+			...(source ? { source } : {}),
+			effectiveBaseUrl,
+			secrets: [...new Set([...resolved.secrets, ...redactionInputs])],
+			fingerprint: fingerprintResolvedAuth(
+				{
+					apiKey: resolved.apiKey,
+					headers: resolved.headers,
+					baseUrl: effectiveBaseUrl,
+					env,
+					source,
+					providerAuth: preservedAuth,
+				},
+				salt,
+			),
+		};
+	};
 	if (adapter.id === "github-copilot") {
 		const offered = candidateReader
 			? candidateReader(ctx, adapter.id)
@@ -438,12 +447,14 @@ export async function resolveUsageAuth(
 		if (!offered.ok) {
 			throw new Error("GitHub Copilot OAuth credential discovery failed closed.");
 		}
-		return resolveGitHubCopilotUsageAuth(
-			auth,
-			model,
-			salt,
-			offered.candidates,
-			offered.offeredCount === 0,
+		return finalize(
+			resolveGitHubCopilotUsageAuth(
+				auth,
+				model,
+				salt,
+				offered.candidates,
+				offered.offeredCount === 0,
+			),
 		);
 	}
 	if (adapter.id === "xai") {
@@ -451,7 +462,7 @@ export async function resolveUsageAuth(
 			? candidateReader(ctx, adapter.id)
 			: fallbackOAuthCredentialCandidates(adapter.id, credentialReader);
 		if (!offered.ok) throw new Error("xAI OAuth credential discovery failed closed.");
-		return resolveXaiUsageAuth(auth, model, salt, offered.candidates);
+		return finalize(resolveXaiUsageAuth(auth, model, salt, offered.candidates));
 	}
 	if (adapter.id === "deepseek") {
 		const resolvedAuthorization = authorizationFrom(auth);
@@ -459,10 +470,10 @@ export async function resolveUsageAuth(
 		if (!access) throw new Error("DeepSeek API balance requires Bearer authentication.");
 		const authorization = `Bearer ${access}`;
 		const headers = { Authorization: authorization };
-		return {
+		return finalize({
 			apiKey: access,
 			headers,
-			fingerprint: fingerprintResolvedAuth({ headers }, salt),
+			fingerprint: "",
 			secrets: [
 				access,
 				auth.apiKey,
@@ -471,7 +482,7 @@ export async function resolveUsageAuth(
 				authorization,
 			].filter((value): value is string => Boolean(value)),
 			model,
-		};
+		});
 	}
 	const authorization = authorizationFrom(auth);
 	if (!authorization) return undefined;
@@ -479,13 +490,13 @@ export async function resolveUsageAuth(
 	const secrets = [auth.apiKey, headerValue(auth.headers, "Authorization"), authorization].filter(
 		(value): value is string => Boolean(value),
 	);
-	return {
+	return finalize({
 		apiKey: auth.apiKey,
 		headers,
-		fingerprint: fingerprintResolvedAuth({ headers }, salt),
+		fingerprint: "",
 		secrets,
 		model,
-	};
+	});
 }
 
 export async function queryProviderUsage(
@@ -494,10 +505,46 @@ export async function queryProviderUsage(
 	signal: AbortSignal,
 	timeoutMs: number,
 	guard?: UsageRequestGuard,
-	settings?: Readonly<UsageQuerySettings>,
+	targetOrSettings?: string | Readonly<UsageQuerySettings>,
 ): Promise<UsageReport> {
+	const startedAt = Date.now();
+	let targetId =
+		typeof targetOrSettings === "string"
+			? targetOrSettings
+			: adapter.id === "fireworks"
+				? targetOrSettings?.fireworksAccountId
+				: undefined;
+	let resolvedLegacyFireworksTarget = false;
 	try {
-		return await adapter.query(auth, signal, timeoutMs, guard, settings);
+		if (
+			adapter.id === "fireworks" &&
+			typeof targetOrSettings !== "string" &&
+			adapter.targets &&
+			guard
+		) {
+			const target = await resolveUsageTarget(
+				adapter,
+				auth,
+				targetId,
+				signal,
+				remainingTimeout(timeoutMs, startedAt, "resolving the Fireworks account"),
+				guard,
+			);
+			if (target.kind === "selection-required") {
+				throw new Error("Fireworks account selection is required.");
+			}
+			targetId = target.targetId;
+			resolvedLegacyFireworksTarget = true;
+		}
+		return await adapter.query(
+			auth,
+			signal,
+			resolvedLegacyFireworksTarget
+				? remainingTimeout(timeoutMs, startedAt, `querying ${adapter.displayName} usage`)
+				: timeoutMs,
+			guard,
+			targetId,
+		);
 	} catch (error) {
 		if (isStaleExtensionContextError(error) || isAbortError(error)) throw error;
 		throw new Error(redactUsageError(errorMessage(error), auth.secrets));
@@ -696,17 +743,22 @@ async function readBoundedResponse(
 type RequestAuth = {
 	apiKey?: string;
 	headers?: Record<string, string | null>;
+	baseUrl?: string;
+	env?: Record<string, string>;
 };
 
 type StoredCredentialReader = (providerId: string) => unknown;
 
 type UsageAuthRegistry = {
+	getProvider?(providerId: string): { baseUrl?: string } | undefined;
 	getApiKeyAndHeaders?(
 		model: PiModel,
 	): Promise<({ ok: true } & RequestAuth) | { ok: false; error: string }>;
 	getProviderAuth?(providerId: string): Promise<
 		| {
-				auth: RequestAuth & { baseUrl?: string };
+				auth: RequestAuth;
+				env?: Record<string, string>;
+				source?: string;
 		  }
 		| undefined
 	>;
@@ -902,7 +954,7 @@ function hasOfficialUrlOrigin(value: string, providerId: string): boolean {
 		}
 		if (providerId === "openai-codex") return url.origin === "https://chatgpt.com";
 		if (providerId === "deepseek") return url.origin === "https://api.deepseek.com";
-		if (providerId === "fireworks") return url.origin === FIREWORKS_BILLING_SUMMARY_ORIGIN;
+		if (providerId === "fireworks") return url.origin === "https://api.fireworks.ai";
 		if (providerId === "openrouter") return url.origin === "https://openrouter.ai";
 		if (providerId === "vercel-ai-gateway") return url.origin === "https://ai-gateway.vercel.sh";
 		if (providerId === "opencode-go") return url.origin === "https://opencode.ai";
@@ -1012,98 +1064,6 @@ function remainingTimeout(
 	const remaining = timeoutMs - (Date.now() - startedAt);
 	if (remaining <= 0) throw new Error(`Timed out while ${description}.`);
 	return remaining;
-}
-
-// Fireworks requires an account slug for its billing endpoints; discover it through the
-// documented account listing, requiring an explicit slug when a key can see several accounts.
-async function resolveFireworksAccountId(
-	auth: ResolvedUsageAuth,
-	signal: AbortSignal,
-	timeoutMs: number,
-	guard: () => Promise<void>,
-	configuredAccountId: string | undefined,
-): Promise<string> {
-	if (configuredAccountId !== undefined && !isFireworksAccountId(configuredAccountId)) {
-		throw new Error("The Fireworks account setting was not a safe account slug.");
-	}
-	const startedAt = Date.now();
-	const accounts: string[] = [];
-	let pageToken: string | undefined;
-	for (let page = 0; page < FIREWORKS_MAX_ACCOUNT_PAGES; page += 1) {
-		await guard();
-		const payload = (await fetchProviderJson(
-			fireworksAccountsUrl(pageToken),
-			auth,
-			signal,
-			remainingTimeout(timeoutMs, startedAt, "fetching Fireworks accounts"),
-			"Fireworks accounts endpoint",
-			{ redirect: "error" },
-		)) as FireworksAccountsPayload;
-		for (const accountId of normalizeFireworksAccountsPayload(
-			payload as FireworksAccountsPayload,
-		)) {
-			if (accounts.includes(accountId)) {
-				throw new Error(`Fireworks accounts listing repeated ${accountId}.`);
-			}
-			accounts.push(accountId);
-			if (configuredAccountId === accountId) return accountId;
-		}
-		pageToken = fireworksNextPageToken(payload.nextPageToken);
-		if (!pageToken) break;
-	}
-	if (pageToken) {
-		throw new Error(
-			configuredAccountId
-				? `The configured Fireworks account was not found within the first ${FIREWORKS_MAX_ACCOUNT_PAGES} listing pages.`
-				: `Fireworks account listing exceeded ${FIREWORKS_MAX_ACCOUNT_PAGES} pages; set fireworksAccountId in pi-usage.json to an account returned in those pages.`,
-		);
-	}
-	if (accounts.length === 0) {
-		throw new Error("Fireworks account discovery returned no accounts for this API key.");
-	}
-	if (configuredAccountId) {
-		throw new Error(
-			"The configured Fireworks account does not match an account visible to this API key.",
-		);
-	}
-	if (accounts.length === 1) return accounts[0] as string;
-	const preview = accounts.slice(0, 8).join(", ");
-	const suffix = accounts.length > 8 ? ` …and ${accounts.length - 8} more` : "";
-	throw new Error(
-		`The Fireworks key can see ${accounts.length} accounts (${preview}${suffix}); set fireworksAccountId in pi-usage.json to one of them.`,
-	);
-}
-
-function fireworksAccountsUrl(pageToken: string | undefined): string {
-	const url = new URL("/v1/accounts", FIREWORKS_BILLING_SUMMARY_ORIGIN);
-	url.searchParams.set("pageSize", "200");
-	if (pageToken !== undefined) url.searchParams.set("pageToken", pageToken);
-	return url.toString();
-}
-
-function fireworksNextPageToken(value: unknown): string | undefined {
-	if (value === undefined || value === null) return undefined;
-	if (typeof value !== "string" || !value || value.length > 512) {
-		throw new Error("Fireworks accounts listing returned an invalid page token.");
-	}
-	return value;
-}
-
-function fireworksBillingSummaryUrl(accountId: string, startedAt: number): string {
-	const dayMs = 24 * 60 * 60 * 1000;
-	const dayFloor = (time: number) => `${new Date(time).toISOString().slice(0, 10)}T00:00:00Z`;
-	const url = new URL(
-		`/v1/accounts/${accountId}/billing/summary`,
-		FIREWORKS_BILLING_SUMMARY_ORIGIN,
-	);
-	// The endpoint aggregates by UTC date; endTime is exclusive, so the window includes today
-	// plus the preceding 29 dates.
-	url.searchParams.set(
-		"startTime",
-		dayFloor(startedAt - (FIREWORKS_SPEND_WINDOW_DAYS - 1) * dayMs),
-	);
-	url.searchParams.set("endTime", dayFloor(startedAt + dayMs));
-	return url.toString();
 }
 
 function zaiOrigin(baseUrl: string | undefined): string {

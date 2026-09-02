@@ -94,6 +94,9 @@ export function formatProviderStates(states: readonly ProviderUsageState[]): str
 		.map((state) => {
 			if (state.status === "ready") return formatUsageReport(state.report, state.displayState);
 			const label = state.displayState === "current" ? "Current" : "Configured";
+			if (state.status === "selection-required") {
+				return `${state.providerName} · ${label}\nSelection required: choose this provider's ${state.singularLabel} by viewing it individually.`;
+			}
 			const status =
 				state.status === "auth-unavailable"
 					? "Authentication unavailable"

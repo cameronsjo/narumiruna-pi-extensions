@@ -128,7 +128,7 @@ test("Baseten runtime auth accepts only official inference or management origins
 	});
 	const auth = await resolveUsageAuth(officialContext, adapter);
 	assert.deepEqual(auth?.headers, { Authorization: "Bearer current-baseten-key" });
-	assert.ok(!auth?.secrets.includes("must-not-send"));
+	assert.ok(auth?.secrets.includes("must-not-send"));
 
 	const fetchMock = vi.spyOn(globalThis, "fetch");
 	try {

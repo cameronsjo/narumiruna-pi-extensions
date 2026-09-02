@@ -4,6 +4,7 @@ import { chmod, mkdir, open, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { isFireworksAccountId } from "./providers/fireworks.js";
+import { isBoundedTargetId } from "./usage-targets.js";
 
 export const USAGE_SETTINGS_FILE = "pi-usage.json";
 export const MAX_USAGE_SETTINGS_BYTES = 64 * 1024;
@@ -11,12 +12,13 @@ export const MAX_USAGE_SETTINGS_BYTES = 64 * 1024;
 export interface UsageSettings {
 	codexFastMode: boolean;
 	codexStatusResetCountdown: boolean;
-	fireworksAccountId?: string;
+	selectedTargets: Record<string, string>;
 }
 
 export const DEFAULT_USAGE_SETTINGS: Readonly<UsageSettings> = Object.freeze({
 	codexFastMode: false,
 	codexStatusResetCountdown: true,
+	selectedTargets: Object.freeze({}),
 });
 
 export interface UsageSettingsState {
@@ -27,12 +29,20 @@ export interface UsageSettingsState {
 	issue?: string;
 }
 
+export type UsageTargetPublicationCheck = () => Promise<void>;
+
 export interface UsageSettingsRuntime {
 	get(): Readonly<UsageSettingsState>;
 	reload(signal?: AbortSignal): Promise<Readonly<UsageSettingsState>>;
 	update(
 		patch: Partial<UsageSettings>,
 		signal?: AbortSignal,
+	): Promise<Readonly<UsageSettingsState>>;
+	updateSelectedTarget(
+		providerId: string,
+		targetId: string,
+		signal?: AbortSignal,
+		checkPublishedSelection?: UsageTargetPublicationCheck,
 	): Promise<Readonly<UsageSettingsState>>;
 	flush(): Promise<void>;
 }
@@ -68,6 +78,12 @@ export function normalizeUsageSettings(value: unknown): UsageSettings | undefine
 	) {
 		return undefined;
 	}
+	const selectedTargets = normalizeSelectedTargets(value.selectedTargets);
+	if (Object.hasOwn(value, "selectedTargets") && !selectedTargets) return undefined;
+	const effectiveTargets = { ...(selectedTargets ?? {}) };
+	if (!effectiveTargets.fireworks && isFireworksAccountId(value.fireworksAccountId)) {
+		effectiveTargets.fireworks = value.fireworksAccountId;
+	}
 	return {
 		codexFastMode:
 			typeof value.codexFastMode === "boolean"
@@ -77,9 +93,7 @@ export function normalizeUsageSettings(value: unknown): UsageSettings | undefine
 			typeof value.codexStatusResetCountdown === "boolean"
 				? value.codexStatusResetCountdown
 				: DEFAULT_USAGE_SETTINGS.codexStatusResetCountdown,
-		...(isFireworksAccountId(value.fireworksAccountId)
-			? { fireworksAccountId: value.fireworksAccountId }
-			: {}),
+		selectedTargets: effectiveTargets,
 	};
 }
 
@@ -169,6 +183,39 @@ export function createUsageSettingsRuntime(
 				state = saved;
 				return structuredClone(state);
 			}),
+		updateSelectedTarget: (providerId, targetId, signal, checkPublishedSelection) =>
+			enqueue(async () => {
+				const transaction = await saveUsageTargetSelection(
+					path,
+					providerId,
+					targetId,
+					operations,
+					signal,
+				);
+				try {
+					await checkPublishedSelection?.();
+					throwIfAborted(signal);
+				} catch (error) {
+					try {
+						await restoreUsageSettingsState(
+							path,
+							transaction.saved,
+							transaction.previous,
+							operations,
+						);
+						state = transaction.previous;
+					} catch (rollbackError) {
+						state = await loadUsageSettings(path);
+						throw new AggregateError(
+							[error, rollbackError],
+							"Target selection changed after publication and pi-usage.json rollback failed",
+						);
+					}
+					throw error;
+				}
+				state = transaction.saved;
+				return structuredClone(state);
+			}),
 		flush: () => queue,
 	};
 }
@@ -179,15 +226,62 @@ async function saveUsageSettingsPatch(
 	operations: UsageSettingsFileOperations,
 	signal?: AbortSignal,
 ): Promise<UsageSettingsState> {
+	return saveUsageSettingsDocument(
+		path,
+		(document) => {
+			for (const [key, value] of Object.entries(patch)) {
+				if (value === undefined) delete document[key];
+				else document[key] = value;
+			}
+		},
+		operations,
+		signal,
+	);
+}
+
+async function saveUsageTargetSelection(
+	path: string,
+	providerId: string,
+	targetId: string,
+	operations: UsageSettingsFileOperations,
+	signal?: AbortSignal,
+): Promise<{ saved: UsageSettingsState; previous: UsageSettingsState }> {
+	if (!isProviderId(providerId) || !isBoundedTargetId(targetId)) {
+		throw new Error("Refusing to save an invalid usage target selection");
+	}
+	const previous = await loadUsageSettings(path, signal);
+	const saved = await saveUsageSettingsDocument(
+		path,
+		(document) => {
+			document.selectedTargets = {
+				...(normalizeSelectedTargets(document.selectedTargets) ?? {}),
+				[providerId]: targetId,
+			};
+			if (providerId === "fireworks") delete document.fireworksAccountId;
+		},
+		operations,
+		signal,
+		previous,
+	);
+	return { saved, previous };
+}
+
+async function saveUsageSettingsDocument(
+	path: string,
+	mutate: (document: Record<string, unknown>) => void,
+	operations: UsageSettingsFileOperations,
+	signal?: AbortSignal,
+	expected?: UsageSettingsState,
+): Promise<UsageSettingsState> {
 	const latest = await loadUsageSettings(path, signal);
 	if (latest.kind === "invalid") {
 		throw new Error("Cannot overwrite an invalid pi-usage.json; repair it and reload first");
 	}
-	const document = { ...latest.document };
-	for (const [key, value] of Object.entries(patch)) {
-		if (value === undefined) delete document[key];
-		else document[key] = value;
+	if (expected && !sameUsageSettingsDocument(latest, expected)) {
+		throw new Error("pi-usage.json changed while saving; retry the action");
 	}
+	const document = { ...latest.document };
+	mutate(document);
 	const settings = normalizeUsageSettings(document);
 	if (!settings) throw new Error("Refusing to save invalid pi-usage settings");
 	const directory = dirname(path);
@@ -218,6 +312,44 @@ async function saveUsageSettingsPatch(
 	return { kind: "loaded", path, settings, document };
 }
 
+async function restoreUsageSettingsState(
+	path: string,
+	published: UsageSettingsState,
+	previous: UsageSettingsState,
+	operations: UsageSettingsFileOperations,
+): Promise<void> {
+	if (previous.kind === "missing") {
+		const current = await loadUsageSettings(path);
+		if (!sameUsageSettingsDocument(current, published)) {
+			throw new Error("pi-usage.json changed before target selection rollback");
+		}
+		await rm(path);
+		return;
+	}
+	if (previous.kind !== "loaded" || !previous.document) {
+		throw new Error("Cannot restore invalid prior pi-usage.json settings");
+	}
+	await saveUsageSettingsDocument(
+		path,
+		(document) => {
+			for (const key of Object.keys(document)) delete document[key];
+			Object.assign(document, previous.document);
+		},
+		operations,
+		undefined,
+		published,
+	);
+}
+
+function sameUsageSettingsDocument(
+	left: Pick<UsageSettingsState, "kind" | "document">,
+	right: Pick<UsageSettingsState, "kind" | "document">,
+): boolean {
+	return (
+		left.kind === right.kind && JSON.stringify(left.document) === JSON.stringify(right.document)
+	);
+}
+
 async function chmodPrivate(path: string): Promise<void> {
 	await chmod(path, 0o600);
 }
@@ -232,4 +364,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
 	return error instanceof Error && "code" in error;
+}
+
+function normalizeSelectedTargets(value: unknown): Record<string, string> | undefined {
+	if (value === undefined) return {};
+	if (!isRecord(value)) return undefined;
+	const targets: Record<string, string> = {};
+	for (const [providerId, targetId] of Object.entries(value)) {
+		if (!isProviderId(providerId) || !isBoundedTargetId(targetId)) return undefined;
+		targets[providerId] = targetId;
+	}
+	return targets;
+}
+
+function isProviderId(value: string): boolean {
+	return /^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/u.test(value);
 }

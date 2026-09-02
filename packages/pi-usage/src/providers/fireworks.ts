@@ -2,7 +2,9 @@ import { sanitizeDisplayText } from "../core.js";
 import type {
 	FireworksAccountsPayload,
 	FireworksBillingSummaryPayload,
+	ResolvedUsageAuth,
 	UsageMetric,
+	UsageProviderAdapter,
 	UsageReport,
 } from "../types.js";
 
@@ -14,6 +16,9 @@ const INT64_MIN = -(2n ** 63n);
 const INT64_MAX = 2n ** 63n - 1n;
 const MAX_UNITS_CHARS = 20;
 const MAX_NANOS_CHARS = 11;
+const FIREWORKS_BILLING_SUMMARY_ORIGIN = "https://api.fireworks.ai";
+const FIREWORKS_SPEND_WINDOW_DAYS = 30;
+const FIREWORKS_MAX_ACCOUNT_PAGES = 5;
 
 const SERIES_KEYS = ["serverless", "dedicated", "training", "other"] as const;
 type SeriesKey = (typeof SERIES_KEYS)[number];
@@ -51,6 +56,77 @@ export function normalizeFireworksAccountsPayload(payload: FireworksAccountsPayl
 		accounts.push(accountId);
 	}
 	return accounts;
+}
+
+type FetchProviderJson = (
+	url: string,
+	auth: ResolvedUsageAuth,
+	signal: AbortSignal,
+	timeoutMs: number,
+	description: string,
+	request?: { redirect?: RequestRedirect },
+) => Promise<Record<string, unknown>>;
+
+export function createFireworksAdapter(fetchProviderJson: FetchProviderJson): UsageProviderAdapter {
+	return {
+		id: "fireworks",
+		displayName: "Fireworks",
+		semantics: { kind: "api-key", label: "Fireworks API spend" },
+		targets: {
+			singularLabel: "account",
+			pluralLabel: "accounts",
+			async list(auth, signal, timeoutMs, guard) {
+				const startedAt = Date.now();
+				const accounts: string[] = [];
+				let pageToken: string | undefined;
+				for (let page = 0; page < FIREWORKS_MAX_ACCOUNT_PAGES; page += 1) {
+					await guard();
+					const payload = (await fetchProviderJson(
+						fireworksAccountsUrl(pageToken),
+						auth,
+						signal,
+						remainingTimeout(timeoutMs, startedAt, "fetching Fireworks accounts"),
+						"Fireworks accounts endpoint",
+						{ redirect: "error" },
+					)) as FireworksAccountsPayload;
+					await guard();
+					for (const accountId of normalizeFireworksAccountsPayload(payload)) {
+						if (accounts.includes(accountId)) {
+							throw new Error(`Fireworks accounts listing repeated ${accountId}.`);
+						}
+						accounts.push(accountId);
+					}
+					pageToken = fireworksNextPageToken(payload.nextPageToken);
+					if (!pageToken) break;
+				}
+				if (pageToken) {
+					throw new Error(
+						`Fireworks account listing exceeded ${FIREWORKS_MAX_ACCOUNT_PAGES} pages.`,
+					);
+				}
+				return accounts.map((id) => ({ id, label: id }));
+			},
+		},
+		async query(auth, signal, timeoutMs, guard, targetId) {
+			if (!guard) throw new Error("Fireworks API spend requires request-boundary revalidation.");
+			if (!isFireworksAccountId(targetId)) {
+				throw new Error("Fireworks billing requires a safe selected account slug.");
+			}
+			const startedAt = Date.now();
+			await guard();
+			const billingWindowAt = Date.now();
+			const payload = (await fetchProviderJson(
+				fireworksBillingSummaryUrl(targetId, billingWindowAt),
+				auth,
+				signal,
+				remainingTimeout(timeoutMs, startedAt, "fetching Fireworks rated spend"),
+				"Fireworks billing summary endpoint",
+				{ redirect: "error" },
+			)) as FireworksBillingSummaryPayload;
+			await guard();
+			return normalizeFireworksBillingSummaryPayload(payload, targetId, Date.now());
+		},
+	};
 }
 
 export function normalizeFireworksBillingSummaryPayload(
@@ -190,6 +266,42 @@ function formatMoneyAmount(amount: bigint): string {
 	const units = magnitude / NANOS_PER_UNIT;
 	const nanos = (magnitude % NANOS_PER_UNIT).toString().padStart(9, "0").replace(/0+$/u, "");
 	return `${negative ? "-" : ""}${units.toString()}${nanos ? `.${nanos}` : ""}`;
+}
+
+function fireworksAccountsUrl(pageToken: string | undefined): string {
+	const url = new URL("/v1/accounts", FIREWORKS_BILLING_SUMMARY_ORIGIN);
+	url.searchParams.set("pageSize", "200");
+	if (pageToken !== undefined) url.searchParams.set("pageToken", pageToken);
+	return url.toString();
+}
+
+function fireworksNextPageToken(value: unknown): string | undefined {
+	if (value === undefined || value === null) return undefined;
+	if (typeof value !== "string" || !value || value.length > 512) {
+		throw new Error("Fireworks accounts listing returned an invalid page token.");
+	}
+	return value;
+}
+
+function fireworksBillingSummaryUrl(accountId: string, startedAt: number): string {
+	const dayMs = 24 * 60 * 60 * 1000;
+	const dayFloor = (time: number) => `${new Date(time).toISOString().slice(0, 10)}T00:00:00Z`;
+	const url = new URL(
+		`/v1/accounts/${accountId}/billing/summary`,
+		FIREWORKS_BILLING_SUMMARY_ORIGIN,
+	);
+	url.searchParams.set(
+		"startTime",
+		dayFloor(startedAt - (FIREWORKS_SPEND_WINDOW_DAYS - 1) * dayMs),
+	);
+	url.searchParams.set("endTime", dayFloor(startedAt + dayMs));
+	return url.toString();
+}
+
+function remainingTimeout(timeoutMs: number, startedAt: number, description: string): number {
+	const remaining = timeoutMs - (Date.now() - startedAt);
+	if (remaining <= 0) throw new Error(`Timed out while ${description}.`);
+	return remaining;
 }
 
 function asObject(value: unknown): Record<string, unknown> | undefined {

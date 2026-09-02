@@ -32,6 +32,7 @@ function memoryRuntime(
 		settings: {
 			codexFastMode: options.enabled ?? false,
 			codexStatusResetCountdown: false,
+			selectedTargets: {},
 		},
 		...(options.kind === "invalid" ? { issue: "bad file" } : { document: {} }),
 	};
@@ -58,6 +59,9 @@ function memoryRuntime(
 				document: { ...state.document, ...patch },
 			};
 			return structuredClone(state);
+		},
+		async updateSelectedTarget() {
+			throw new Error("target selection is not used in Codex Fast tests");
 		},
 		async flush() {
 			flushes += 1;
@@ -312,7 +316,7 @@ test("session replacement aborts stale loads and accepted writes before UI publi
 	releaseLoad({
 		kind: "loaded",
 		path: "/tmp/pi-usage.json",
-		settings: { codexFastMode: true, codexStatusResetCountdown: false },
+		settings: { codexFastMode: true, codexStatusResetCountdown: false, selectedTargets: {} },
 		document: { codexFastMode: true },
 	});
 	await pendingLoad;

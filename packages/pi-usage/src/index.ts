@@ -36,6 +36,7 @@ export { normalizeBasetenBillingUsagePayload } from "./providers/baseten.js";
 export { normalizeCodexBackendPayload } from "./providers/codex.js";
 export { normalizeDeepSeekBalancePayload } from "./providers/deepseek.js";
 export {
+	createFireworksAdapter,
 	normalizeFireworksAccountsPayload,
 	normalizeFireworksBillingSummaryPayload,
 } from "./providers/fireworks.js";
@@ -67,6 +68,7 @@ export type {
 	UsageSettings,
 	UsageSettingsRuntime,
 	UsageSettingsState,
+	UsageTargetPublicationCheck,
 } from "./settings.js";
 export {
 	createUsageSettingsRuntime,
@@ -90,13 +92,24 @@ export type {
 	UsageMetric,
 	UsageModel,
 	UsageProviderAdapter,
+	UsageProviderTarget,
 	UsageQuerySettings,
 	UsageReport,
+	UsageRequestGuard,
 	UsageSemantics,
 	UsageSemanticsKind,
+	UsageTargetResolver,
 	UsageUnit,
 	VercelAIGatewayCreditsPayload,
 	XaiBillingPayload,
 	XaiUserPayload,
 } from "./types.js";
 export { default } from "./usage.js";
+export type { UsageTargetResolution, UsageTargetSelectOptions } from "./usage-targets.js";
+export {
+	createUsageTargetSelectOptions,
+	isBoundedTargetId,
+	listUsageTargets,
+	normalizeUsageTargets,
+	resolveUsageTarget,
+} from "./usage-targets.js";

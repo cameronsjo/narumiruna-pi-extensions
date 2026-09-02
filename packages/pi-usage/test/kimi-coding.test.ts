@@ -303,7 +303,7 @@ test("Kimi runtime auth accepts fresh OAuth and API-key bearers only at the offi
 	});
 	const oauth = await resolveUsageAuth(oauthContext, adapter);
 	assert.deepEqual(oauth?.headers, { Authorization: "Bearer oauth-access" });
-	assert.ok(!oauth?.secrets.includes("do-not-send"));
+	assert.ok(oauth?.secrets.includes("do-not-send"));
 
 	const { ctx: apiKeyContext } = createMockContext({
 		model: KIMI_MODEL,

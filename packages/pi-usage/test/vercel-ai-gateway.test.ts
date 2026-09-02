@@ -105,7 +105,7 @@ test("Vercel AI Gateway runtime auth accepts only the official model and auth or
 	});
 	const auth = await resolveUsageAuth(officialContext, adapter);
 	assert.deepEqual(auth?.headers, { Authorization: "Bearer current-vercel-key" });
-	assert.ok(!auth?.secrets.includes("must-not-send"));
+	assert.ok(auth?.secrets.includes("must-not-send"));
 
 	const fetchMock = vi.spyOn(globalThis, "fetch");
 	try {
