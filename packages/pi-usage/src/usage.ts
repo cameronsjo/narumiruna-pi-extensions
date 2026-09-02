@@ -171,12 +171,11 @@ export default function usageExtension(
 			return;
 		}
 		if (outcome.state.status !== "ready") {
-			if (
-				safeSetStatus(
-					ctx,
-					outcome.state.status === "auth-unavailable" ? "auth unavailable" : "usage error",
-				)
-			) {
+			const chip =
+				outcome.state.status === "auth-unavailable"
+					? "auth unavailable"
+					: `usage err: ${outcome.state.message.slice(0, 50)}`;
+			if (safeSetStatus(ctx, chip)) {
 				if (shouldSchedule && sessionActive) scheduleStatusRefresh(ctx, model);
 			}
 			return;
