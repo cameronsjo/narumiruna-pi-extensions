@@ -185,14 +185,14 @@ export default function usageExtension(
 			return;
 		}
 		if (outcome.state.status !== "ready") {
-   const chip =
-       outcome.state.status === "auth-unavailable"
-           ? "auth unavailable"
-           : outcome.state.status === "selection-required"
-               ? "selection required"
-               : `usage err: ${outcome.state.message.slice(0, 50)}`;
+			const chip =
+				outcome.state.status === "auth-unavailable"
+					? "auth unavailable"
+					: outcome.state.status === "selection-required"
+						? "selection required"
+						: `usage err: ${outcome.state.message.slice(0, 50)}`;
 
-   if (safeSetStatus(ctx, chip)) {
+			if (safeSetStatus(ctx, chip)) {
 				if (shouldSchedule && sessionActive) scheduleStatusRefresh(ctx, model);
 			}
 			return;
