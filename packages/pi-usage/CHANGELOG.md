@@ -1,5 +1,11 @@
 # @narumitw/pi-usage
 
+## 0.60.2
+
+### Patch Changes
+
+- a5c4a61: Render consistent MiniMax Token Plan rows with zero countable quota as percent-based buckets, reject contradictory zero-total counts, fall back to the general group in the status chip, and show query-failed messages in the chip.
+
 ## 0.60.1
 
 ### Patch Changes
