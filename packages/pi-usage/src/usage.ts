@@ -185,16 +185,14 @@ export default function usageExtension(
 			return;
 		}
 		if (outcome.state.status !== "ready") {
-			if (
-				safeSetStatus(
-					ctx,
-					outcome.state.status === "auth-unavailable"
-						? "auth unavailable"
-						: outcome.state.status === "selection-required"
-							? "selection required"
-							: "usage error",
-				)
-			) {
+			const chip =
+				outcome.state.status === "auth-unavailable"
+					? "auth unavailable"
+					: outcome.state.status === "selection-required"
+						? "selection required"
+						: `usage err: ${outcome.state.message.slice(0, 50)}`;
+
+			if (safeSetStatus(ctx, chip)) {
 				if (shouldSchedule && sessionActive) scheduleStatusRefresh(ctx, model);
 			}
 			return;
@@ -624,7 +622,9 @@ export default function usageExtension(
 	) => {
 		void refreshCurrentStatus(ctx, model, force).catch((error) => {
 			if (isStaleExtensionContextError(error) || isAbortError(error)) return;
-			safeSetStatus(ctx, "usage error");
+			const message = errorMessage(error);
+			console.error("[pi-usage] refresh failed:", message);
+			safeSetStatus(ctx, `usage err: ${message.slice(0, 50)}`);
 		});
 	};
 

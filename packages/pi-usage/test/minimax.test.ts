@@ -258,6 +258,184 @@ test("MiniMax normalizers reject failed, malformed, or contradictory responses",
 	}
 });
 
+test("MiniMax Token Plan renders percent-based buckets when total is zero but percent is valid", () => {
+	const base = quotaPayload().model_remains[0];
+	const payload = {
+		base_resp: { status_code: 0, status_msg: "success" },
+		model_remains: [
+			{
+				...base,
+				model_name: "general",
+				current_interval_total_count: 0,
+				current_interval_usage_count: 0,
+				current_interval_remaining_percent: 38,
+				current_weekly_total_count: 0,
+				current_weekly_usage_count: 0,
+				current_weekly_remaining_percent: 32,
+			},
+			{
+				...base,
+				model_name: "video",
+				current_interval_total_count: 5,
+				current_interval_usage_count: 0,
+				current_interval_remaining_percent: 100,
+				current_weekly_total_count: 35,
+				current_weekly_usage_count: 2,
+				current_weekly_remaining_percent: 94,
+			},
+		],
+	};
+	const report = normalizeMiniMaxUsagePayload("minimax", "token-plan", payload, 1_000);
+	assert.equal(report.buckets.length, 4);
+	const general = report.buckets.filter((b) => b.groupLabel === "general");
+	const video = report.buckets.filter((b) => b.groupLabel === "video");
+	assert.equal(general.length, 2);
+	assert.equal(video.length, 2);
+	const generalInterval = general.find((b) => b.label === "Rolling window");
+	const generalWeekly = general.find((b) => b.label === "Weekly window");
+	assert.equal(generalInterval?.unit, "percent");
+	assert.equal(generalInterval?.remaining, 38);
+	assert.equal(generalInterval?.used, 62);
+	assert.equal(generalInterval?.limit, 0);
+	assert.equal(generalWeekly?.unit, "percent");
+	assert.equal(generalWeekly?.remaining, 32);
+	assert.equal(generalWeekly?.used, 68);
+	assert.equal(generalWeekly?.limit, 0);
+});
+
+test("MiniMax Token Plan percent-only buckets render with percent and resets, not 'unavailable'", () => {
+	const base = quotaPayload().model_remains[0];
+	const payload = {
+		base_resp: { status_code: 0, status_msg: "success" },
+		model_remains: [
+			{
+				...base,
+				model_name: "general",
+				current_interval_total_count: 0,
+				current_interval_usage_count: 0,
+				current_interval_remaining_percent: 38,
+				current_weekly_total_count: 0,
+				current_weekly_usage_count: 0,
+				current_weekly_remaining_percent: 32,
+			},
+		],
+	};
+	const report = normalizeMiniMaxUsagePayload("minimax", "token-plan", payload, 1_000);
+	const formatted = formatUsageReport(report, "current");
+	assert.doesNotMatch(formatted, /unavailable/iu);
+	assert.match(formatted, /Rolling window:\s+38% remaining/iu);
+	assert.match(formatted, /Weekly window:\s+32% remaining/iu);
+	assert.match(formatted, /\(resets [^)]+\)/u);
+});
+
+test("MiniMax statusline falls back to general group when no model-specific match exists", () => {
+	const base = quotaPayload().model_remains[0];
+	const payload = {
+		base_resp: { status_code: 0, status_msg: "success" },
+		model_remains: [
+			{
+				...base,
+				model_name: "general",
+				current_interval_total_count: 0,
+				current_interval_usage_count: 0,
+				current_interval_remaining_percent: 38,
+				current_weekly_total_count: 0,
+				current_weekly_usage_count: 0,
+				current_weekly_remaining_percent: 32,
+			},
+			{
+				...base,
+				model_name: "video",
+				current_interval_total_count: 5,
+				current_interval_usage_count: 0,
+				current_interval_remaining_percent: 100,
+				current_weekly_total_count: 35,
+				current_weekly_usage_count: 2,
+				current_weekly_remaining_percent: 94,
+			},
+		],
+	};
+	const report = normalizeMiniMaxUsagePayload("minimax", "token-plan", payload, 1_000);
+	assert.equal(formatUsageStatusline(report, MODELS.minimax), "minimax 38% 5h 32% wk");
+	assert.equal(formatUsageStatusline(report), "minimax 38% 5h 32% wk");
+	assert.equal(
+		formatUsageStatusline(report, { ...MODELS.minimax, provider: "openai-codex" }),
+		undefined,
+	);
+});
+
+test("MiniMax Token Plan rejects rows with zero total and no usable percent", () => {
+	const base = quotaPayload().model_remains[0];
+	const payload = {
+		base_resp: { status_code: 0, status_msg: "success" },
+		model_remains: [
+			{
+				...base,
+				model_name: "general",
+				current_interval_total_count: 0,
+				current_interval_usage_count: 0,
+				current_interval_remaining_percent: undefined,
+				current_weekly_total_count: 0,
+				current_weekly_usage_count: 0,
+				current_weekly_remaining_percent: undefined,
+			},
+		],
+	};
+	// We strip the undefined percent fields via JSON serialization; the API never
+	// returns them as undefined, but the production code defends against it.
+	const cleaned = JSON.parse(JSON.stringify(payload));
+	assert.throws(
+		() => normalizeMiniMaxUsagePayload("minimax", "token-plan", cleaned, 0),
+		/no quota and no percent/iu,
+	);
+});
+
+test("MiniMax Token Plan keeps mixed rows where one window is zero-total and the other has counts", () => {
+	const base = quotaPayload().model_remains[0];
+	const payload = {
+		base_resp: { status_code: 0, status_msg: "success" },
+		model_remains: [
+			{
+				...base,
+				model_name: "general",
+				current_interval_total_count: 0,
+				current_interval_usage_count: 0,
+				current_interval_remaining_percent: 0,
+				current_weekly_total_count: 1000,
+				current_weekly_usage_count: 200,
+				current_weekly_remaining_percent: 80,
+			},
+		],
+	};
+	const report = normalizeMiniMaxUsagePayload("minimax", "token-plan", payload, 1_000);
+	assert.equal(report.buckets.length, 2);
+	const interval = report.buckets.find((b) => b.label === "Rolling window");
+	const weekly = report.buckets.find((b) => b.label === "Weekly window");
+	assert.equal(interval?.unit, "percent");
+	assert.equal(interval?.remaining, 0);
+	assert.equal(interval?.used, 100);
+	assert.equal(weekly?.unit, "count");
+	assert.equal(weekly?.limit, 1000);
+	assert.equal(weekly?.used, 200);
+	assert.equal(weekly?.remaining, 800);
+});
+
+test("MiniMax Token Plan count buckets with remaining 0 still render", () => {
+	const payload = quotaPayload();
+	payload.model_remains[0] = {
+		...payload.model_remains[0],
+		current_interval_usage_count: 0,
+		current_weekly_usage_count: 0,
+		current_weekly_remaining_percent: 0,
+	};
+	const report = normalizeMiniMaxUsagePayload("minimax", "token-plan", payload, 1_000);
+	const formatted = formatUsageReport(report, "current");
+	assert.doesNotMatch(formatted, /unavailable/iu);
+	assert.match(formatted, /Rolling window:\s+0 of 1500 left · 0%/u);
+	assert.match(formatted, /Weekly window:\s+0 of 1000 left · 0%/u);
+	assert.equal(formatUsageStatusline(report), "minimax 0% 5h 0% wk");
+});
+
 test("MiniMax runtime auth accepts only its matching official region", async () => {
 	const fetchMock = vi.spyOn(globalThis, "fetch");
 	try {
